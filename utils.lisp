@@ -118,7 +118,7 @@
   "Search for obj in the sorted-sequence according to the predicate.
 predicate must accept two arguments, obj and an element of sorted-sequence, and
 return -1, 0, 1 depending on obj being <, =, > than the element, respectively.
-If exact is t, and obj is not found, return nil, the closest element otherwise."
+If exact is t and obj is not found, return nil, the closest element otherwise."
   (let ((len (length sorted-sequence)))
     (labels ((rec (a b)
 	       (declare (type fixnum a b))
@@ -135,7 +135,9 @@ If exact is t, and obj is not found, return nil, the closest element otherwise."
 		       (-1 (rec a (1- middle)))
 		       (0 m-elt)
 		       (1 (rec (1+ middle) b)))))))
-      (rec 0 len))))
+      (if (null sorted-sequence)
+	  nil
+	  (rec 0 len)))))
 
 ;(defun foldl  == reduce
 ; unfold p f g seed == (loop for x = seed then (g x) until (p x) collect (f x))
