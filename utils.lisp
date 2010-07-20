@@ -79,3 +79,63 @@
 		((< step 0)
 		 `(loop for ,i from ,start ,down ,stop by (- ,step) collect ,i))
 		(t (error "range step must not be 0"))))))))
+
+(defun string->number (str)
+  (declare (type string str))
+  (let ((i (read-from-string str)))
+    (and (numberp i) i)))
+
+(defun string->integer (str)
+  (declare (type string str))
+  (let ((i (read-from-string str)))
+    (and (integerp i) i)))
+
+(defun cmp (x y)
+  (declare (type number x y))
+  (if (< x y)
+      -1
+      (if (> x y)
+	  1
+	  0)))
+
+(defun within-p (val min max)
+  (declare (type real val min max))
+;  (typep val '(real min max)))
+  (and (>= val min) (<= val max)))
+
+(defun within (val min max)
+  (declare (type real val min max))
+  (if (< val min)
+      min
+      (if (> val max)
+	  max
+	  val)))
+
+(defun binary-search (obj sorted-sequence &key (predicate #'cmp) (exact t))
+  (declare (type sequence sorted-sequence)
+	   (type (function (t t) (integer -1 1)) predicate)
+	   (type boolean exact))
+  "Search for obj in the sorted-sequence according to the predicate.
+predicate must accept two arguments, obj and an element of sorted-sequence, and
+return -1, 0, 1 depending on obj being <, =, > than the element, respectively.
+If exact is t, and obj is not found, return nil, the closest element otherwise."
+  (let ((len (length sorted-sequence)))
+    (labels ((rec (a b)
+	       (declare (type fixnum a b))
+	       (if (<= b a)
+		   (let ((a-elt (elt sorted-sequence (within a 0 (1- len)))))
+		     (if (or (not exact)
+			     (= 0 (funcall predicate obj a-elt)))
+			 a-elt
+			 nil))
+		   (let* ((middle (+ (floor (- b a) 2) a))
+			  (m-elt (elt sorted-sequence middle)))
+		     (declare (type fixnum middle))
+		     (ecase (funcall predicate obj m-elt)
+		       (-1 (rec a (1- middle)))
+		       (0 m-elt)
+		       (1 (rec (1+ middle) b)))))))
+      (rec 0 len))))
+
+;(defun foldl  == reduce
+; unfold p f g seed == (loop for x = seed then (g x) until (p x) collect (f x))
