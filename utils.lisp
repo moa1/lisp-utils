@@ -1,15 +1,14 @@
-(defun repeat (args)
+(defun repeat (&rest rest)
   "Repeat the i-th argument the number of times specified by argument i+1"
-  (declare (optimize (debug 3)))
-  (declare (type list args))
-  (labels ((repeat-help (l)
-	     (if (null args)
+  (declare (type list rest))
+  (labels ((repeat-help (rest l)
+	     (if (null rest)
 		 l
-		 (let* ((o (pop args))
-			(n (pop args))
+		 (let* ((o (car rest))
+			(n (cadr rest))
 			(on (loop for i from 1 to n collect o)))
-		   (repeat-help (append l on))))))
-    (repeat-help nil)))
+		   (repeat-help (nthcdr 2 rest) (append l on))))))
+    (repeat-help rest nil)))
 
 (defun flatten (l &optional (acc nil))
   (declare (type list l acc))
