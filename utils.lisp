@@ -13,9 +13,18 @@
 (defun flatten (l &optional (acc nil))
   (declare (type list l acc))
   "Return the flattened list (i.e. no more lists in the list)"
-  (cond ((null l) acc)
-	((consp (car l)) (flatten (cdr l) (nconc acc (flatten (car l)))))
-	(t (flatten (cdr l) (nconc acc (list (car l)))))))
+  (cond ((null l) (nreverse acc))
+	((consp (car l)) (flatten (cdr l) (nconc (flatten (car l)) acc)))
+	(t (flatten (cdr l) (nconc (list (car l)) acc)))))
+
+(defun flatten-1 (l &optional (acc nil))
+  "Return the list with one level of list structure removed,
+e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
+  (if (null l)
+      (nreverse acc)
+      (flatten-1 (cdr l) (nconc (if (consp (car l))
+				    (copy-list (car l))
+				    (list (car l))) acc))))
 
 (defun unique-list-p (l &key (test #'equal))
   (declare (optimize (debug 3)))
@@ -40,13 +49,13 @@
   `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
      ,@body))
 
-(defmacro timeit (&body body)
+(defmacro timeit (repeat &body body)
   (with-gensyms (start stop)
     `(progn
        (let ((,start (get-internal-run-time)))
-	 ,@body
+	 ,@(flatten-1 (append (repeat body repeat)))
 	 (let ((,stop (get-internal-run-time)))
-	   (- ,stop ,start))))))
+	   (/ (- ,stop ,start) internal-time-units-per-second))))))
 
 ;; vielleicht sollte das ein compiler-macro sein: define-compiler-macro
 ;; man muss leider dieses macro 2x laden, damit die warnung wegen range weggeht
