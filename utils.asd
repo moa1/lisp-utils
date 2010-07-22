@@ -6,4 +6,5 @@
   :version "0.0.1"
   ;; :author
   ;; :license
-  :components ((:file "utils")))
+  :components ((:file "utils")
+	       (:file "regex-utils" :depends-on ("utils"))))
