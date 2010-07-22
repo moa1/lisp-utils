@@ -55,7 +55,7 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
        (let ((,start (get-internal-run-time)))
 	 ,@(flatten-1 (append (repeat body repeat)))
 	 (let ((,stop (get-internal-run-time)))
-	   (/ (- ,stop ,start) internal-time-units-per-second))))))
+	   (float (/ (- ,stop ,start) internal-time-units-per-second)))))))
 
 ;; vielleicht sollte das ein compiler-macro sein: define-compiler-macro
 ;; man muss leider dieses macro 2x laden, damit die warnung wegen range weggeht
@@ -234,9 +234,20 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
   (let ((lists (loop for i below g collect (list-nth (nthcdr i list) g))))
     (apply #'mapcar function lists)))
 
-;;(defun sreplace (sequence-1 sequence-2 &key (start1 0) end1 (start2 0) end2)
-;;  "like replace, but insert/delete chars, i.e. sequence-1 length may change"
-;;  (adjust-array ...
+(defun sreplace (sequence-1 sequence-2 &key (start1 0) end1 (start2 0) end2)
+  "like replace, but insert/delete chars, i.e. sequence-1 length may change"
+  (let* ((len-2 (+ start1 (- end2 start2)))
+	 (result (adjust-array (make-array (length sequence-1)
+					   :displaced-to sequence-1
+					   :element-type
+					   (array-element-type sequence-1)
+					   :fill-pointer (length sequence-1))
+			       len-2
+			       :fill-pointer len-2)))
+    (replace result sequence-2
+	     :start1 start1 :end1 end1
+	     :start2 start2 :end2 end2)))
+
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
