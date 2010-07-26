@@ -26,18 +26,22 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
 				    (copy-list (car l))
 				    (list (car l))) acc))))
 
+(defun has-key (key h)
+  (multiple-value-bind (val p) (gethash key h)
+    (declare (ignore val))
+    p))
+
 (defun unique-list-p (l &key (test #'equal))
-  (declare (optimize (debug 3)))
   (let ((h (make-hash-table :test test)))
     (labels ((helper (l)
-	       (if (consp l)
-		   (symbol-macrolet ((entry (gethash (car l) h)))
-		     (if entry
-			 nil
+	       (symbol-macrolet ((item (gethash (car l) h)))
+		 (if (multiple-value-bind (i p) item (declare (ignore i)) p)
+		     nil
+		     (if (consp l)
 			 (progn
-			   (setf entry t)
-			   (helper (cdr l)))))
-		   t)))
+			   (setf item t)
+			   (helper (cdr l)))
+			 t)))))
       (helper l))))
 
 ;;(defmacro compile-deftype
@@ -45,7 +49,7 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
     `(and list (satisfies unique-list-p)))
 
 (defmacro with-gensyms (symbols &body body)
-  (declare (type unique-list symbols))
+  ;;(declare (type unique-list symbols))
   `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
      ,@body))
 
@@ -57,37 +61,33 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
 	 (let ((,stop (get-internal-run-time)))
 	   (float (/ (- ,stop ,start) internal-time-units-per-second)))))))
 
-;; vielleicht sollte das ein compiler-macro sein: define-compiler-macro
-;; man muss leider dieses macro 2x laden, damit die warnung wegen range weggeht
-(defmacro range (start &rest rest)
-  "Return an as(des)cending number list like python range"
-  (let ((incl (if (find :incl rest) t)))
-    (declare (type boolean incl))
-    (setq rest (delete :incl rest))
-    (if (> (length rest) 2)
-	(error "range [start] stop [step] [:incl] (~A)" rest))
-    (let ((start (if (= (length rest) 0) 0 start))
-	  (stop (if (= (length rest) 0) start (car rest)))
-	  (step (if (<= (length rest) 1) 1 (cadr rest))))
-      (with-gensyms (i stepsym)
-	(let* ((up (if incl 'upto 'below))
-	       (down (if incl 'downto 'above)))
-	  (cond ((and (numberp start) (numberp stop) (numberp step))
-		 (if incl
-		     `(quote ,(range start stop step :incl))
-		     `(quote ,(range start stop step))))
-		((not (numberp step))
-		 `(let ((,stepsym ,step))
-		    (if (> ,stepsym 0)
-			(loop for ,i from ,start ,up ,stop by ,stepsym
-			   collect ,i)
-			(loop for ,i from ,start ,down ,stop by (- ,stepsym)
-			   collect ,i))))
-		((> step 0)
-		 `(loop for ,i from ,start ,up ,stop by ,step collect ,i))
-		((< step 0)
-		 `(loop for ,i from ,start ,down ,stop by (- ,step) collect ,i))
-		(t (error "range step must not be 0"))))))))
+(defun range (start &key (stop nil stop-p) (step 1) (incl nil))
+  (if (not stop-p)
+      (progn (setq stop start) (setq start 0)))
+  (if (> step 0)
+      (if incl
+	  (loop for i from start upto stop by step collect i)
+	  (loop for i from start below stop by step collect i))
+      (if incl
+	  (loop for i from start downto stop by (- step) collect i)
+	  (loop for i from start above stop by (- step) collect i))))
+
+(define-compiler-macro range (&whole form start &key (stop nil stop-p)
+				   (step 1) (incl nil))
+  (if (not stop-p)
+      (progn (setq stop start) (setq start 0)))
+  (with-gensyms (i)
+    (let* ((up (if incl 'upto 'below))
+	   (down (if incl 'downto 'above)))
+      (cond ((and (numberp start) (numberp stop) (numberp step))
+	     `(quote ,(range start :stop stop :step step :incl incl)))
+	    ((not (numberp step))
+	     form)
+	    ((> step 0)
+	     `(loop for ,i from ,start ,up ,stop by ,step collect ,i))
+	    ((< step 0)
+	     `(loop for ,i from ,start ,down ,stop by (- ,step) collect ,i))
+	    (t form)))))
 
 (defun string->number (str)
   (declare (type string str))
@@ -218,6 +218,7 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
 
 (defun const-fun (value)
   "Return a function which accepts any parameters and always returns value."
+  (warn "deprecated #'const-fun: use #'constantly instead")
   (lambda (&rest rest) (declare (ignore rest)) value))
 
 (defun list-nth (l n)
@@ -236,6 +237,7 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
 
 (defun sreplace (sequence-1 sequence-2 &key (start1 0) end1 (start2 0) end2)
   "like replace, but insert/delete chars, i.e. sequence-1 length may change"
+  ;; values of end and start must be set, if they were not passed as parameters
   (let* ((len-2 (+ start1 (- end2 start2)))
 	 (result (adjust-array (make-array (length sequence-1)
 					   :displaced-to sequence-1
@@ -244,6 +246,7 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
 					   :fill-pointer (length sequence-1))
 			       len-2
 			       :fill-pointer len-2)))
+    (format t "~A ~A~%" result len-2)
     (replace result sequence-2
 	     :start1 start1 :end1 end1
 	     :start2 start2 :end2 end2)))
@@ -257,4 +260,4 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
 ; unfold p f g seed == (loop for x = seed then (g x) until (p x) collect (f x))
 
 
-
+;; implement tests using eval-when :compile-toplevel?
