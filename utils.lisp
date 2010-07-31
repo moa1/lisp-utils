@@ -235,29 +235,76 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
   (let ((lists (loop for i below g collect (list-nth (nthcdr i list) g))))
     (apply #'mapcar function lists)))
 
-(defun sreplace (sequence-1 sequence-2 &key (start1 0) end1 (start2 0) end2)
+(defun sreplace (sequence-1 sequence-2
+		 &key (start1 0) (end1 (length sequence-1))
+		 (start2 0) (end2 (length sequence-2)))
   "like replace, but insert/delete chars, i.e. sequence-1 length may change"
-  ;; values of end and start must be set, if they were not passed as parameters
-  (let* ((len-2 (+ start1 (- end2 start2)))
-	 (result (adjust-array (make-array (length sequence-1)
-					   :displaced-to sequence-1
-					   :element-type
-					   (array-element-type sequence-1)
-					   :fill-pointer (length sequence-1))
-			       len-2
-			       :fill-pointer len-2)))
-    (format t "~A ~A~%" result len-2)
-    (replace result sequence-2
-	     :start1 start1 :end1 end1
-	     :start2 start2 :end2 end2)))
+  (let* ((len-2 (+ start1 (- end2 start2) (- (length sequence-1) end1)))
+	 (buf (adjust-array (make-array (length sequence-1)
+					:displaced-to sequence-1
+					:element-type
+					(array-element-type sequence-1)
+					:fill-pointer (length sequence-1))
+			    len-2
+			    :fill-pointer len-2))
+	 (rep-end1 (+ start1 (- end2 start2))))
+;;    (format t "~A ~A~%" buf len-2)
+;;    (format t "start1:~A end1:~A :start2:~A end2:~A~%" start1 rep-end1 start2
+;;	    end2)
+    (let* ((buf2 (replace buf sequence-2
+			  :start1 start1 :end1 rep-end1
+			  :start2 start2 :end2 end2))
+	   (start-b2 (+ start1 (- end2 start2)))
+	   (start1-tailstart (- (length sequence-1) (- len-2 rep-end1))))
+;;      (format t "buf:~A~%" buf)
+;;      (format t "end1:~A length1:~A~%" rep-end1 (length sequence-1))
+;;      (format t "start1:~A start2:~A~%" start-b2 start1-tailstart)
+      (if (/= start-b2 len-2)
+	  (replace buf2 sequence-1
+		   :start1 start-b2
+		   :start2 start1-tailstart)
+	  buf2))))
 
+
+(defmacro stupid-check (check &key (msg "stupid-check-error:"))
+  ;; this macro is full of brain-deadness
+  (with-gensyms (result)
+    (let ((msg-r msg))
+      `(let ((,result ,check))
+	 (if ,result
+	     t
+	     (error ,msg-r))))))
+
+(defun sreplace-test ()
+  ;; this function is full of brain-deadness
+  (dolist (foo
+	    '(((sreplace "abc123" "xxx") "xxx")
+	      ((sreplace "abc123" "xxx" :start1 0 :end1 3) "xxx123")
+	      ((sreplace "abc123" "xxx" :start1 0 :end1 3 :start2 1) "xx123")
+	      ((sreplace "abc123" "xxx" :start1 3 :end1 3) "abcxxx123")
+	      ((sreplace "abc123" "xyz" :start1 3 :end1 3 :start2 1 :end2 2)
+	       "abcy123")
+	      ((sreplace "abc123" "xxx" :start1 3 :end1 3) "abcxxx123")))
+    (stupid-check (equal (eval (car foo)) (eval (cadr foo)))
+		  :msg (format nil "~A" foo))))
+
+(sreplace-test)
+
+;; (sreplace "abc123" "xxx") "xxx"
+;; (sreplace "abc123" "xxx" :start1 0 :end1 3) "xxx123"
+;; (sreplace "abc123" "xxx" :start1 0 :end1 3 :start2 1) "xx123"
+;; (sreplace "abc123" "xxx" :start1 1 :end1 1) "abcxxx123"
+;; (sreplace "abc123" "xyz" :start1 3 :end1 3 :start2 1 :end2 2) "abcy123"
+;; (sreplace "abc123" "xxx" :start1 3 :end1 3) "abcxxx123"
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
-  
+
 
 ;(defun foldl  == reduce
 ; unfold p f g seed == (loop for x = seed then (g x) until (p x) collect (f x))
 
 
 ;; implement tests using eval-when :compile-toplevel?
+
+;; check out cl-series (functional!!! replacement for LOOP)

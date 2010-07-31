@@ -18,20 +18,17 @@
     (nreverse groups)))
 
 
-(defun match-replace (matcher modify-sequence replace-sequence
-		      &optional (start 0))
+(defun scan-replace (matcher modify-sequence replace-sequence)
   "replace in modify-sequence all matches of matcher with replace-sequence"
-  (error "doesnt work yet")
-  (multiple-value-bind (matched-p start len)
-      (regex:scan-str matcher modify-sequence :start start)
-    (if matched-p
-	(let ((modified
-	       (delete-if (const-fun t)
-			  (replace modify-sequence replace-sequence
-				   :start1 start)
-			  :start (+ start (length replace-sequence))
-			  :count (- len (length replace-sequence)))))
-	  (match-replace matcher modified replace-sequence
-			 (at-least (+ start (length replace-sequence) (- len))
-				   0)))
-	modify-sequence)))
+  (labels ((helper (seq start)
+	     (multiple-value-bind (matched-p start len)
+		 (regex:scan-str matcher seq :start start)
+	       (if matched-p
+		   (let* ((end1 (+ start len))
+			  (modified (sreplace seq replace-sequence
+					      :start1 start :end1 end1))
+			  (damn (coerce modified 'simple-string)))
+		     (helper damn end1))
+		   seq))))
+    (helper modify-sequence 0)))
+
