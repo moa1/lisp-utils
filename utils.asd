@@ -7,4 +7,6 @@
   ;; :author
   ;; :license
   :components ((:file "utils")
-	       (:file "regex-utils" :depends-on ("utils"))))
+	       (:file "regex-utils" :depends-on ("utils")))
+  :depends-on (cl-ppcre))
+
