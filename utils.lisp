@@ -54,11 +54,12 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
      ,@body))
 
 (defmacro timeit (repeat &body body)
+  (declare (type integer repeat))
   (with-gensyms (start stop)
     `(progn
-       (let ((,start (get-internal-run-time)))
-	 ,@(flatten-1 (append (repeat body repeat)))
-	 (let ((,stop (get-internal-run-time)))
+       (let ((,start (get-internal-real-time)))
+	 ,@(flatten-1 (append (repeat body repeat))) ; how to force evaluation?
+	 (let ((,stop (get-internal-real-time)))
 	   (float (/ (- ,stop ,start) internal-time-units-per-second)))))))
 
 (defun range (start &key (stop nil stop-p) (step 1) (incl nil))
