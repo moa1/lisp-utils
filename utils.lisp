@@ -12,19 +12,22 @@
 
 (defun flatten (l &optional (acc nil))
   (declare (type list l acc))
-  "Return the flattened list (i.e. no more lists in the list)"
+  "Return a flattened list (i.e. no nested list structure in the list)"
   (cond ((null l) (nreverse acc))
 	((consp (car l)) (flatten (cdr l) (nconc (flatten (car l)) acc)))
 	(t (flatten (cdr l) (nconc (list (car l)) acc)))))
 
-(defun flatten-1 (l &optional (acc nil))
-  "Return the list with one level of list structure removed,
-e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
-  (if (null l)
-      (nreverse acc)
-      (flatten-1 (cdr l) (nconc (if (consp (car l))
-				    (copy-list (car l))
-				    (list (car l))) acc))))
+(defun flatten-1 (l &optional acc)
+  "Return a list with the outermost level of list structure removed, only
+the modified structure is copied.
+e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
+"
+  (cond
+    ((null l) (nreverse acc))
+    (t (flatten-1 (cdr l) (if (consp (car l))
+			      (nconc (reverse (car l)) acc)
+			      (cons (car l) acc))))))
+
 
 (defun has-key (key h)
   (multiple-value-bind (val p) (gethash key h)
@@ -53,14 +56,157 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4)"
   `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
      ,@body))
 
-(defmacro timeit (repeat &body body)
+(defmacro asetf (place value-form)
+  "Setf place to value. The symbol it in value-form means the initial value."
+  `(let ((it ,place))
+     (setf ,place ,value-form)))
+
+(defmacro aif (test-form then-form &optional else-form)
+  "Like if, but the test-form value is accessible as symbol it in the other forms."
+  `(let ((it ,test-form))
+     (if it ,then-form ,else-form)))
+`
+(defun subseqbut (sequence n &optional (nl n))
+  "Return a copy of SEQUENCE, omitting the element numbers from N up to NL."
+  (nconc (subseq sequence 0 n) (subseq sequence (1+ nl))))
+
+(defmacro defanaphoric (ana-name
+			&optional form
+			&key (it-parameter 1) ana-documentation)
+  "(Re)Define the macro ANA-NAME, which first binds the parameter number
+IT-PARAMETER (starting at 1) to the symbol it, and then evaluates and uses all
+other parameters in FORM, which gets documentation ANA-DOCUMENTATION."
+  (setf form (if (null form)
+		     (read-from-string (subseq (string ana-name) 1))
+		     form))
+  (setf ana-documentation
+	(if (null ana-documentation)
+	    (let ((old-doc (or
+			    (documentation form 'function)
+			    (format nil "~A has no documentation." form))))
+	      (format nil
+		      "Like ~A, but the ~:R parameter is evaluated before all others are~%evaluated, and its value is available as symbol it in all other parameter forms.~%~%Documentation for ~A:~%~A"
+		      form it-parameter form old-doc))))
+  ;; improve with:
+  ;; (defun describe-object-parameters (f)), which returns a lambda list of f
+  ;; (defun lambda-list-enumerate (ll) return (0 (nil 1)) for (a &key (b 0) c)
+  ;; (defun lambda-list-enumlist (ll)), return (a b c) for (a &key (b 0) c)
+  ;;    !!consider macro lambda list, like (a b (c &optional d) &key (x 1) y)!!
+  ;; (let* ((ll (describe-object-parameters (ana-name)))
+  ;;        (ll-enum (lambda-list-enumerate ll))
+  ;;        (all-args (lambda-list-enumlist ll))
+  ;;        (args-head (subseq all-args 0 ,(1- it-parameter))
+  ;;        (args-tail (subseq all-args ,it-parameter))
+  ;;    ... etc ...
+  `(defmacro ,ana-name (&rest rest)
+     ,ana-documentation
+     (let ((rest-head (subseq rest 0 ,(1- it-parameter)))
+	   (rest-tail (subseq rest ,it-parameter)))
+       `(let ((it (,@(nth ,(1- it-parameter) rest))))
+	  (,',form ,@rest-head it ,@rest-tail)))))
+
+(defanaphoric arplacd)
+
+(defun variables-in-varlist (varlist)
+  (labels ((rec (varlist variables)
+	     (cond
+	       ((null varlist)
+		variables)
+	       ((symbolp (car varlist))
+		(rec (cdr varlist) (cons (car varlist) variables)))
+	       ((and (listp (car varlist)) (symbolp (caar varlist)))
+		(rec (cdr varlist) (cons (caar varlist) variables)))
+	       (t (error "not a valid varlist")))))
+    (rec varlist nil)))
+
+(defun unroll-do-makebodies (varlist endlist body)
+  (if (> (length endlist) 1)
+      (error "result-forms not yet implemented, get result of do to implement"))
+  ;; maybe implement:
+  ;; result form: to do this, let the do return the list of variable values at
+  ;; the end of the loops, and then use this list to construct a let form, in
+  ;; which all the variables are bound to their values. The body of the let form
+  ;; are the result-forms.
+  ;; An unrolled do semantically equivalent to do: At the moment, modifying the
+  ;; loop variables in the body does not influence the next step, or the end
+  ;; condition (because the variables are bound again). Unrolling the variable
+  ;; updates and end checking forms would mean slower code, and would save
+  ;; just one jmp (to the beginning of the loop). It's probably not worth it.
+  ;; 
+  ;; A note: substituting the variables with their values at each loop does not
+  ;; work, because then all variables will get substituted, also the shadowing
+  ;; ones, e.g. a local lambda form using the same variable names. Therefore
+  ;; the let at each step necessary (which is hopefully compiled away, because
+  ;; the variables are constant).
+  (let* ((variables (variables-in-varlist varlist))
+	 (v-let-list `(list ,@(loop for v in variables
+				 collect `(list ',v ,v)))))
+    ;;(format t "v-ll:~A~%" v-let-list)
+    (with-gensyms (list)
+      `(let ((,list '(progn)))
+	 (do ,varlist (,(car endlist) (list ,@variables))
+	   ;;(format t "l:~A~%" ,list)
+	   (setq ,list
+		 (append ,list
+			 `((let ,,v-let-list
+			     (declare (ignorable ,',@variables))
+			     (tagbody ,@',body))
+			   ))))
+	 ,list))))
+
+(defmacro unroll-do (varlist endlist &body body)
+  "Almost like do, but unrolls the loop. Difference is, all variables in varlist
+are bound in the unrolled bodies to their respective values for each step.
+Therefore modifying a variable in the body does not influence the next loop
+step.
+varlist: ({var|(var [init-form [step-form]])}*)
+endlist: (end-test-form result-form*)
+result-form is not yet implemented."
+  (eval (unroll-do-makebodies varlist endlist body)))
+
+(defmacro do-unrollable (unroll varlist endlist &body body)
+  "If unroll is T, then "
+  (if unroll
+      `(unroll-do ,varlist ,endlist ,@body)
+      `(do ,varlist ,endlist ,@body)))
+
+(defmacro timeit ((repeat &key s unroll) &body body)
   (declare (type integer repeat))
-  (with-gensyms (start stop)
+  "Return the total time of running body repeat times. If s is T, measure (with
+possible overhead) and return additional statistics of each execution duration.
+If unroll is T, unroll the repetitions."
+  ;;(princ "(time")
+  (with-gensyms (start stop times i)
     `(progn
-       (let ((,start (get-internal-real-time)))
-	 ,@(flatten-1 (append (repeat body repeat))) ; how to force evaluation?
-	 (let ((,stop (get-internal-real-time)))
-	   (float (/ (- ,stop ,start) internal-time-units-per-second)))))))
+       ;;(princ "it")
+       (let (,start ,stop ,@(if s `((,times (make-array ,repeat)))))
+	 (setq ,start (get-internal-real-time))
+	 (do-unrollable ,unroll
+	     ((,i 0 (1+ ,i))) ((>= ,i ,repeat))
+	   ,@(append (if s
+			 `((setf (elt ,times ,i)
+				 (get-internal-real-time))))
+		     body))
+	 (setq ,stop (get-internal-real-time))
+	 ;;(format t ")~%")
+	 (setf ,start (float (/ (- ,stop ,start)
+				internal-time-units-per-second)))
+	 ,(if s
+	      `(progn
+		 (loop for ,i below ,(1- repeat)
+		    do (asetf
+			(elt ,times ,i)
+			(float (/ (- (elt ,times (1+ ,i)) it)
+				  internal-time-units-per-second))))
+		 (asetf (elt ,times (1- ,repeat))
+			(float (/ (- ,stop it)
+				  internal-time-units-per-second)))
+		 (values ,start
+			 (reduce #'min ,times)
+			 (/ (reduce #'+ ,times)
+			    ,repeat)
+			 (reduce #'max ,times)))
+	      `,start)))))
 
 (defun range (start &key (stop nil stop-p) (step 1) (incl nil))
   (if (not stop-p)
@@ -232,6 +378,7 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
     (rec l nil)))
 
 (defun gmapcar (g function list)
+  (declare (type integer g))
   "Like mapcar, but the g function arguments are taken successively from list."
   (let ((lists (loop for i below g collect (list-nth (nthcdr i list) g))))
     (apply #'mapcar function lists)))
@@ -297,6 +444,71 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
 ;; (sreplace "abc123" "xxx" :start1 1 :end1 1) "abcxxx123"
 ;; (sreplace "abc123" "xyz" :start1 3 :end1 3 :start2 1 :end2 2) "abcy123"
 ;; (sreplace "abc123" "xxx" :start1 3 :end1 3) "abcxxx123"
+
+(defun string-tolower (string)
+  (map 'string 'char-downcase string))
+
+(defun string-toupper (string)
+  (map 'string 'char-upcase string))
+
+(defun compose-1 (last-function &rest functions)
+  (let* ((allf (cons last-function functions)) 
+	 (fs-1 (butlast allf))
+	 (f1 (car (last allf)))
+	 (doc (reduce (lambda (x y) (format nil "(~A ~A)" x y))
+		      fs-1
+		      :from-end t
+		      :initial-value (format nil "(~A &rest args)" f1))))
+    (let ((composite
+	   (lambda (&rest args)
+	     (let ((val (apply f1 args)))
+	       (reduce #'funcall fs-1 :from-end t :initial-value val)))))
+      (setf (documentation composite 'function) doc)
+      composite)))
+
+(defun maptree (function tree)
+  "Recreate the TREE from the results of FUNCTION called with each element."
+  (labels ((rec (function tree acc)
+	     (cond
+	       ((null tree) (reverse acc))
+	       ((consp (car tree)) (rec function (cdr tree)
+					(nconc (cons (rec function (car tree)
+							  nil)
+						     nil)
+					       acc)))
+	       (t (rec function (cdr tree)
+		       (cons (funcall function (car tree))
+			     acc))))))
+    (rec function tree nil)))
+
+(defmacro compose (sexp)
+  "Return a function 
+Create a lambda list from symbols 'a to 'z, and 'rest occurring in  sexp,
+and use it in a lambda expression, which is returned"
+  ;; was originally started as function... is easier as macro
+  ;; keywords as argument places wont work, they might be normal arguments
+  (labels ((variable? (x)
+	     (and (typep x 'symbol)
+		  (or (eq x 'rest)
+		      (let ((s (string x)))
+			(and (= (length s) 1)
+			     (string>= s "A")
+			     (string<= s "Z"))))
+		  x))
+	   (compose-free-variables (sexp)
+	     "return a list of symbols 'a to 'z, and rest in sexp"
+	     (let* ((l (delete-duplicates
+			(sort
+			 (mapcar #'string
+				 (remove-if (complement #'variable?)
+					    (flatten sexp)))
+			 #'string-lessp)))
+		    (s (mapcar #'intern l)))
+	       (if (find 'rest s)
+		   (nconc (delete 'rest s) (list '&rest 'rest))
+		   s))))
+    (let ((lambdalist (compose-free-variables sexp)))
+      `(lambda (,@lambdalist) ,sexp))))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "

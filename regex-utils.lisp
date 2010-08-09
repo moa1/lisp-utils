@@ -1,5 +1,4 @@
-;(asdf:oos 'asdf:load-op 'regex)
-(asdf:oos 'asdf:load-op 'cl-ppcre)
+;; no asdf:oos here, it's done in the .asd file
 
 ;; (defun match (matcher str)
 ;;   ;; (declare (optimize (debug 3)))
