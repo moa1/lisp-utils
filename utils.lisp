@@ -510,6 +510,13 @@ and use it in a lambda expression, which is returned"
     (let ((lambdalist (compose-free-variables sexp)))
       `(lambda (,@lambdalist) ,sexp))))
 
+
+(defun mapc-array (function array)
+  "return a array "
+  (let ((numelt (reduce #'* (array-dimensions array))))
+    (loop for i below numelt do
+	 (funcall function (row-major-aref array i)))))
+
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
 
