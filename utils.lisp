@@ -62,10 +62,10 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
      (setf ,place ,value-form)))
 
 (defmacro aif (test-form then-form &optional else-form)
-  "Like if, but the test-form value is accessible as symbol it in the other forms."
+  "Like IF, but TEST-FORM value is accessible as symbol IT in the other forms."
   `(let ((it ,test-form))
      (if it ,then-form ,else-form)))
-`
+
 (defun subseqbut (sequence n &optional (nl n))
   "Return a copy of SEQUENCE, omitting the element numbers from N up to NL."
   (nconc (subseq sequence 0 n) (subseq sequence (1+ nl))))
@@ -165,7 +165,7 @@ result-form is not yet implemented."
   (eval (unroll-do-makebodies varlist endlist body)))
 
 (defmacro do-unrollable (unroll varlist endlist &body body)
-  "If unroll is T, then "
+  "Like do, but unrolls loop if UNROLL is T. "
   (if unroll
       `(unroll-do ,varlist ,endlist ,@body)
       `(do ,varlist ,endlist ,@body)))
@@ -368,19 +368,24 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
   (warn "deprecated #'const-fun: use #'constantly instead")
   (lambda (&rest rest) (declare (ignore rest)) value))
 
-(defun list-nth (l n)
-  "Create a new list by taking every n-th element of l."
-  (labels ((rec (l acc)
-	     (let ((rest (nthcdr n l)))
-	       (if (consp l)
-		   (rec rest (cons (car l) acc))
+(defun list-nth (list n)
+  "Create a new list by taking every N-th element of LIST."
+  (labels ((rec (list acc)
+	     (let ((rest (nthcdr n list)))
+	       (if (consp list)
+		   (rec rest (cons (car list) acc))
 		   (nreverse acc)))))
-    (rec l nil)))
+    (rec list nil)))
+
+(defun lists-nth (list n)
+  "Create a list of N lists, where the i-th list is made of all the ith-elements
+in LIST. (LIST-NTH '(1 2 3 4 5 6) 3) == '((1 4) (2 5) (3 6))"
+  (loop for i below n collect (list-nth (nthcdr i list) n)))
 
 (defun gmapcar (g function list)
   (declare (type integer g))
   "Like mapcar, but the g function arguments are taken successively from list."
-  (let ((lists (loop for i below g collect (list-nth (nthcdr i list) g))))
+  (let ((lists (lists-nth list g)))
     (apply #'mapcar function lists)))
 
 (defun sreplace (sequence-1 sequence-2
@@ -412,38 +417,6 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
 		   :start1 start-b2
 		   :start2 start1-tailstart)
 	  buf2))))
-
-
-(defmacro stupid-check (check &key (msg "stupid-check-error:"))
-  ;; this macro is full of brain-deadness
-  (with-gensyms (result)
-    (let ((msg-r msg))
-      `(let ((,result ,check))
-	 (if ,result
-	     t
-	     (error ,msg-r))))))
-
-(defun sreplace-test ()
-  ;; this function is full of brain-deadness
-  (dolist (foo
-	    '(((sreplace "abc123" "xxx") "xxx")
-	      ((sreplace "abc123" "xxx" :start1 0 :end1 3) "xxx123")
-	      ((sreplace "abc123" "xxx" :start1 0 :end1 3 :start2 1) "xx123")
-	      ((sreplace "abc123" "xxx" :start1 3 :end1 3) "abcxxx123")
-	      ((sreplace "abc123" "xyz" :start1 3 :end1 3 :start2 1 :end2 2)
-	       "abcy123")
-	      ((sreplace "abc123" "xxx" :start1 3 :end1 3) "abcxxx123")))
-    (stupid-check (equal (eval (car foo)) (eval (cadr foo)))
-		  :msg (format nil "~A" foo))))
-
-(sreplace-test)
-
-;; (sreplace "abc123" "xxx") "xxx"
-;; (sreplace "abc123" "xxx" :start1 0 :end1 3) "xxx123"
-;; (sreplace "abc123" "xxx" :start1 0 :end1 3 :start2 1) "xx123"
-;; (sreplace "abc123" "xxx" :start1 1 :end1 1) "abcxxx123"
-;; (sreplace "abc123" "xyz" :start1 3 :end1 3 :start2 1 :end2 2) "abcy123"
-;; (sreplace "abc123" "xxx" :start1 3 :end1 3) "abcxxx123"
 
 (defun string-tolower (string)
   (map 'string 'char-downcase string))
@@ -510,12 +483,108 @@ and use it in a lambda expression, which is returned"
     (let ((lambdalist (compose-free-variables sexp)))
       `(lambda (,@lambdalist) ,sexp))))
 
+(defun mapc-array-major (function array)
+  "Consider array as a vector by viewing its elements in row-major order, and
+call function with all indices of the vector."
+  (loop for i below (array-total-size array) do
+       (funcall function i))
+  array)
 
 (defun mapc-array (function array)
-  "return a array "
-  (let ((numelt (reduce #'* (array-dimensions array))))
-    (loop for i below numelt do
-	 (funcall function (row-major-aref array i)))))
+  "Call function on all elements of array."
+  (mapc-array-major (lambda (i)
+		      (funcall function (row-major-aref array i)))
+		    array))
+
+(defun map-array (function array)
+  "Return a copy of array with all elements replaced with the return value
+of calling the function with the original element value."
+  (let ((copy (copy-array array)))
+    (mapc-array-major (lambda (i)
+			(setf (row-major-aref copy i)
+			      (funcall function (row-major-aref copy i))))
+		      array)))
+		      
+(defun unique (list &key (only nil only-p) (not nil not-p) (test 'eql))
+  "Return a list with all double elements in list removed. Equality is tested
+with test. The order of the returned elements is not specified.
+If only is T, return only the unique elements in list.
+If not is T, return only the elements that have at least one duplicate in list.
+Either only or not may be specified."
+  (assert (not (and only-p not-p)))
+  (let ((ht (make-hash-table :test test))
+	(result))
+    (if (or only not)
+	(loop for e in list do (incf (gethash e ht 0)))
+	(loop for e in list do (setf (gethash e ht) t)))
+    (cond
+      (only
+       (maphash (lambda (k v)
+		  (if (= v 1) (setf result (cons k result))))
+		ht))
+      (not
+       (maphash (lambda (k v)
+		  (if (> v 1) (setf result (cons k result))))
+		ht))
+      (t
+       (maphash (lambda (k v)
+		  (declare (ignore v))
+		  (setf result (cons k result)))
+		ht)))
+    result))
+
+(defun andf (&rest list)
+  "Like AND, but as function."
+  (labels ((rec (l last)
+	     (if (null l)
+		 last
+		 (if (eq nil (car l))
+		     nil
+		     (rec (cdr l) (car l))))))
+    (rec list t)))
+
+(defun orf (&rest list)
+  "Like OR, but as function."
+  (labels ((rec (l)
+	     (if (null l)
+		 nil
+		 (if (car l)
+		     (car l)
+		     (rec (cdr l))))))
+    (rec list)))
+
+(defun copy-array (array)
+  "Return a shallow copy of ARRAY."
+  (let ((d (array-dimensions array)))
+    (adjust-array (make-array d
+			      :adjustable t
+			      :displaced-to array)
+		  d
+		  :displaced-to nil)))  
+
+(defun equal-array (a b &key (test 'equal))
+  "Return A if the arrays A and B have equal contents, NIL otherwise."
+  (and (equal (array-dimensions a)
+	      (array-dimensions b))
+       (mapc-array-major (lambda (i)
+			   (if (not (funcall test
+					     (row-major-aref a i)
+					     (row-major-aref b i)))
+			       (return-from equal-array nil)))
+			 a)))
+
+;; write a macro that looks like a defun, but emits multiple versions of the
+;; function, each with a specified set of arguments set to specified constants
+;; (using let).
+;; Use it to optimize functions, e.g.
+;; (defun branch (b x y) (if b x y)) should become
+;;     (defun branch-a (x y) (let ((b t)) (if b x y)))
+;;     (defun branch-b (x y) (let ((b nil)) (if b x y)))
+;; and (defun branch (b x y) (case b ((t (branch-a x y)) (nil (branch-b x y)))))
+;; The names of the defined functions should be implicit, i.e. not using defun.
+;; The parameter bindings have to be specified as macro arguments.
+;; ... hmm maybe also emit compiler-macros? (maybe not, because they would only
+;; branch on compile-time-known constant data).
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
