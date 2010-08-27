@@ -571,6 +571,48 @@ Either only or not may be specified."
 			       (return-from equal-array nil)))
 			 a)))
 
+(defun all (item sequence &key from-end (start 0) end key (test #'eql))
+  "Check if all items in SEQUENCE are equal to ITEM under function TEST.
+Is equivalent to (not (position item sequence :test (complement test)))."
+  (not (position item sequence :from-end from-end :start start :end end :key key
+		:test (complement test))))
+
+(defun all-if (predicate sequence &key from-end (start 0) end key)
+  "Check if all items in SEQUENCE satisfy PREDICATE
+Is equivalent to (not (position-if (complement predicate) sequence))."
+  (not (position-if (complement predicate) sequence
+		    :from-end from-end :start start :end end :key key)))
+
+(defmacro let-array-dims (m &body body)
+  "Define the symbols cols, rows, maxcol, maxrow as the properties of M in BODY"
+  (let ((flatbody (flatten body)))
+    (labels ((find-in-body (symbol)
+	       (find symbol flatbody)))
+      ;;(format t "package:~A~%" *package*)
+      (let ((cols (aif (find-symbol "COLS" *package*) (find-in-body it)))
+	    (rows (aif (find-symbol "ROWS" *package*) (find-in-body it)))
+	    (maxcol (aif (find-symbol "MAXCOL" *package*) (find-in-body it)))
+	    (maxrow (aif (find-symbol "MAXROW" *package*) (find-in-body it)))
+	    (arrdim (gensym)))
+	(if (and maxcol (not cols))
+	    (setf cols (gensym)))
+	(if (and maxrow (not rows))
+	    (setf rows (gensym)))
+	;;(format t "cols:~A rows:~A maxcol:~A maxrow:~A~&body:~A"
+	;;	cols rows maxcol maxrow body)
+	`(let* ,(append
+		 `((,arrdim (array-dimensions ,m)))
+		 (if cols
+		     `((,cols (cadr ,arrdim))))
+		 (if rows
+		     `((,rows (car ,arrdim))))
+		 (if maxcol
+		     `((,maxcol (1- ,cols))))
+		 (if maxrow
+		     `((,maxrow (1- ,rows)))))
+	   ,@body)))))
+
+
 ;; write a macro that looks like a defun, but emits multiple versions of the
 ;; function, each with a specified set of arguments set to specified constants
 ;; (using let).

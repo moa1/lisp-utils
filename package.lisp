@@ -48,4 +48,7 @@
    #:andf
    #:orf
    #:equal-array
+   #:all
+   #:all-if
+   #:let-array-dims
    ))
