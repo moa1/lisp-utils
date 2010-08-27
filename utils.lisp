@@ -1,3 +1,7 @@
+;; this in-package is neccessary so that symbols :use-d in defpackage
+;; (see package.lisp) will be visible in this file
+(in-package :utils)
+
 (defun repeat (&rest rest)
   "Repeat the i-th argument the number of times specified by argument i+1"
   (declare (type list rest))
@@ -10,15 +14,15 @@
 		   (repeat-help (nthcdr 2 rest) (append l on))))))
     (repeat-help rest nil)))
 
-(defun flatten (l &optional (acc nil))
+(defun nflatten (l &optional (acc nil))
   (declare (type list l acc))
-  "Return a flattened list (i.e. no nested list structure in the list)"
+  "Return a flattened list (i.e. no tree structure in the list)"
   (cond ((null l) (nreverse acc))
-	((consp (car l)) (flatten (cdr l) (nconc (flatten (car l)) acc)))
-	(t (flatten (cdr l) (nconc (list (car l)) acc)))))
+	((consp (car l)) (nflatten (cdr l) (nconc (nflatten (car l)) acc)))
+	(t (nflatten (cdr l) (nconc (list (car l)) acc)))))
 
 (defun flatten-1 (l &optional acc)
-  "Return a list with the outermost level of list structure removed, only
+  "Return a tree with the outermost level of tree structure removed, only
 the modified structure is copied.
 e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
 "
@@ -51,10 +55,11 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
 (deftype unique-list ()
     `(and list (satisfies unique-list-p)))
 
-(defmacro with-gensyms (symbols &body body)
-  ;;(declare (type unique-list symbols))
-  `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
-     ,@body))
+;; is defined by alexandria
+;;(defmacro with-gensyms (symbols &body body)
+;;  ;;(declare (type unique-list symbols))
+;;  `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
+;;     ,@body))
 
 (defmacro asetf (place value-form)
   "Setf place to value. The symbol it in value-form means the initial value."
@@ -89,6 +94,7 @@ other parameters in FORM, which gets documentation ANA-DOCUMENTATION."
 		      form it-parameter form old-doc))))
   ;; improve with:
   ;; (defun describe-object-parameters (f)), which returns a lambda list of f
+  ;;   use sb-introspect:function-arglist /:function-lambda-list for this
   ;; (defun lambda-list-enumerate (ll) return (0 (nil 1)) for (a &key (b 0) c)
   ;; (defun lambda-list-enumlist (ll)), return (a b c) for (a &key (b 0) c)
   ;;    !!consider macro lambda list, like (a b (c &optional d) &key (x 1) y)!!
@@ -220,21 +226,22 @@ If unroll is T, unroll the repetitions."
 	  (loop for i from start above stop by (- step) collect i))))
 
 (define-compiler-macro range (&whole form start &key (stop nil stop-p)
-				   (step 1) (incl nil))
+				     (step 1) (incl nil))
   (if (not stop-p)
       (progn (setq stop start) (setq start 0)))
-  (with-gensyms (i)
-    (let* ((up (if incl 'upto 'below))
-	   (down (if incl 'downto 'above)))
-      (cond ((and (numberp start) (numberp stop) (numberp step))
-	     `(quote ,(range start :stop stop :step step :incl incl)))
-	    ((not (numberp step))
-	     form)
-	    ((> step 0)
-	     `(loop for ,i from ,start ,up ,stop by ,step collect ,i))
-	    ((< step 0)
-	     `(loop for ,i from ,start ,down ,stop by (- ,step) collect ,i))
-	    (t form)))))
+  (let* ((up (if incl 'upto 'below))
+	 (down (if incl 'downto 'above)))
+    (cond ((and (numberp start) (numberp stop) (numberp step))
+	   `(quote ,(range start :stop stop :step step :incl incl)))
+	  ((not (numberp step))
+	   form)
+	  ((> step 0)
+	   (with-gensyms (i)
+	     `(loop for ,i from ,start ,up ,stop by ,step collect ,i)))
+	  ((< step 0)
+	   (with-gensyms (i)
+	     `(loop for ,i from ,start ,down ,stop by (- ,step) collect ,i)))
+	  (t form))))
 
 (defun string->number (str)
   (declare (type string str))
@@ -454,7 +461,7 @@ in LIST. (LIST-NTH '(1 2 3 4 5 6) 3) == '((1 4) (2 5) (3 6))"
 			     acc))))))
     (rec function tree nil)))
 
-(defmacro compose (sexp)
+(defmacro compose* (sexp)
   "Return a function 
 Create a lambda list from symbols 'a to 'z, and 'rest occurring in  sexp,
 and use it in a lambda expression, which is returned"
@@ -474,7 +481,7 @@ and use it in a lambda expression, which is returned"
 			(sort
 			 (mapcar #'string
 				 (remove-if (complement #'variable?)
-					    (flatten sexp)))
+					    (nflatten sexp)))
 			 #'string-lessp)))
 		    (s (mapcar #'intern l)))
 	       (if (find 'rest s)
@@ -504,7 +511,7 @@ of calling the function with the original element value."
 			(setf (row-major-aref copy i)
 			      (funcall function (row-major-aref copy i))))
 		      array)))
-		      
+
 (defun unique (list &key (only nil only-p) (not nil not-p) (test 'eql))
   "Return a list with all double elements in list removed. Equality is tested
 with test. The order of the returned elements is not specified.
@@ -552,15 +559,6 @@ Either only or not may be specified."
 		     (car l)
 		     (rec (cdr l))))))
     (rec list)))
-
-(defun copy-array (array)
-  "Return a shallow copy of ARRAY."
-  (let ((d (array-dimensions array)))
-    (adjust-array (make-array d
-			      :adjustable t
-			      :displaced-to array)
-		  d
-		  :displaced-to nil)))  
 
 (defun equal-array (a b &key (test 'equal))
   "Return A if the arrays A and B have equal contents, NIL otherwise."
