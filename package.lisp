@@ -12,6 +12,7 @@
    #:has-key
    #:unique-list-p
    #:unique-list
+   #:it
    #:asetf
    #:aif
    #:subseqbut
@@ -51,4 +52,13 @@
    #:all
    #:all-if
    #:let-array-dims
+   #:vector->list
+   #:head
+   #:defun-specialize
+   #:mappair*
+   #:mapl-maxn
+   #:mapl*
+   #:progn-repeat
+   #:prind
+   #:sgn
    ))

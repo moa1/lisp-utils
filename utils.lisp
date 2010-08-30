@@ -176,20 +176,21 @@ result-form is not yet implemented."
       `(unroll-do ,varlist ,endlist ,@body)
       `(do ,varlist ,endlist ,@body)))
 
-(defmacro timeit ((repeat &key s unroll) &body body)
+(defmacro timeit ((repeat &key stats unroll) &body body)
   (declare (type integer repeat))
-  "Return the total time of running body repeat times. If s is T, measure (with
-possible overhead) and return additional statistics of each execution duration.
-If unroll is T, unroll the repetitions."
+  "Return the total time of running BODY (number REPEAT) times. If STATS is T,
+measure (with possible overhead) and additionally return statistics (min, mean,
+max) of each execution duration.
+If UNROLL is T, unroll the repetitions."
   ;;(princ "(time")
   (with-gensyms (start stop times i)
     `(progn
        ;;(princ "it")
-       (let (,start ,stop ,@(if s `((,times (make-array ,repeat)))))
+       (let (,start ,stop ,@(if stats `((,times (make-array ,repeat)))))
 	 (setq ,start (get-internal-real-time))
 	 (do-unrollable ,unroll
 	     ((,i 0 (1+ ,i))) ((>= ,i ,repeat))
-	   ,@(append (if s
+	   ,@(append (if stats
 			 `((setf (elt ,times ,i)
 				 (get-internal-real-time))))
 		     body))
@@ -197,7 +198,7 @@ If unroll is T, unroll the repetitions."
 	 ;;(format t ")~%")
 	 (setf ,start (float (/ (- ,stop ,start)
 				internal-time-units-per-second)))
-	 ,(if s
+	 ,(if stats
 	      `(progn
 		 (loop for ,i below ,(1- repeat)
 		    do (asetf
@@ -275,8 +276,8 @@ If unroll is T, unroll the repetitions."
 
 (defun within-p (val min max)
   (declare (type real val min max))
-;  (typep val '(real min max)))
-  (and (>= val min) (<= val max)))
+  (warn "deprecated #'within-p: use #'<= instead")
+  (<= min val max))
 
 (defun within (val min max)
   (declare (type real val min max))
@@ -498,14 +499,14 @@ call function with all indices of the vector."
   array)
 
 (defun mapc-array (function array)
-  "Call function on all elements of array."
+  "Call function on all elements of array in row-major order."
   (mapc-array-major (lambda (i)
 		      (funcall function (row-major-aref array i)))
 		    array))
 
 (defun map-array (function array)
   "Return a copy of array with all elements replaced with the return value
-of calling the function with the original element value."
+of calling the function with the original element value in row-major order."
   (let ((copy (copy-array array)))
     (mapc-array-major (lambda (i)
 			(setf (row-major-aref copy i)
@@ -578,13 +579,15 @@ Is equivalent to (not (position item sequence :test (complement test)))."
 		:test (complement test))))
 
 (defun all-if (predicate sequence &key from-end (start 0) end key)
-  "Check if all items in SEQUENCE satisfy PREDICATE
+  "Check if all items in SEQUENCE satisfy PREDICATE.
 Is equivalent to (not (position-if (complement predicate) sequence))."
+  ;; also (apply #'andf (mapcar predicate sequence)), but is slower
   (not (position-if (complement predicate) sequence
 		    :from-end from-end :start start :end end :key key)))
 
 (defmacro let-array-dims (m &body body)
-  "Define the symbols cols, rows, maxcol, maxrow as the properties of M in BODY"
+  "Define the symbols cols, rows, maxcol, maxrow as the properties of M in
+BODY."
   (let ((flatbody (flatten body)))
     (labels ((find-in-body (symbol)
 	       (find symbol flatbody)))
@@ -612,8 +615,19 @@ Is equivalent to (not (position-if (complement predicate) sequence))."
 		     `((,maxrow (1- ,rows)))))
 	   ,@body)))))
 
+(defun vector->list (vector)
+  "Return a list made of elements in vector."
+  (assert (typep vector 'vector))
+  (let (r)
+    (mapc-array (lambda (x) (push x r)) vector)
+    (nreverse r)))
 
-;; write a macro that looks like a defun, but emits multiple versions of the
+(defun head (list &optional (n 1))
+  "Return the first n elements from list."
+  (subseq list 0 (min n (length list))))
+
+;; write another macro that looks like a defun, but emits multiple versions of
+;; the
 ;; function, each with a specified set of arguments set to specified constants
 ;; (using let).
 ;; Use it to optimize functions, e.g.
@@ -625,6 +639,78 @@ Is equivalent to (not (position-if (complement predicate) sequence))."
 ;; The parameter bindings have to be specified as macro arguments.
 ;; ... hmm maybe also emit compiler-macros? (maybe not, because they would only
 ;; branch on compile-time-known constant data).
+(defmacro defun-specialize (((name ((parameter value) &rest plist))
+			     &rest names-and-parameters)
+			    lambda-list
+			    &body body)
+  "Define several functions specified by NAMES-AND-PARAMETERS with body BODY.
+For each function named NAME, the PARAMETERs are symbol-macrolet to the
+respective VALUEs in BODY.
+Ex: (defun-specialize
+        ((hl-head ((ht t)))
+         (hl-last ((ht nil))))
+        (list &optional n)
+      (if ht
+          (head list n)
+          (last list n)))"
+  (push (list name (cons (list parameter value) plist)) names-and-parameters)
+  (format t "names-and-parameters:~A~%" names-and-parameters)
+  `(progn 
+     ,@(loop for name-and-plist in names-and-parameters collect
+	    (destructuring-bind (name plist) name-and-plist
+	      `(defun ,name ,lambda-list
+		 (symbol-macrolet (,@plist)
+		   ,@body))))))
+
+(defun mappair* (function list)
+  (let (result)
+    (if (null list)
+	nil
+	(labels ((rec (item rest)
+		   (if (null rest)
+		       (progn (push (funcall function item (car list)) result)
+			      (nreverse result))
+		       (progn (push (funcall function item (car rest)) result)
+			      (rec (car rest) (cdr rest))))))
+	  (rec (car list) (cdr list))))))
+
+(defun mapl-maxn (n function list &rest more-lists)
+  "Call (apply #'mapl function list more-lists), but make at most n calls
+to function."
+  (apply #'mapl
+	 (lambda (&rest rest)
+	   (if (= n 0)
+	       (return-from mapl-maxn))
+	   (setf n (1- n))
+	   (apply function rest))
+	 list
+	 more-lists))
+
+(defun mapl* (n function list)
+  "Consider list as a circular list, and call function with n successive
+elements, so that each element has been used as 1st parameter. list must have a
+length of at least n/2."
+  (let* ((c (append list (head list (1- n)))))
+    (mapl-maxn (length list)
+	       (lambda (l) (apply function (head l n)))
+	       c)))
+
+(defmacro progn-repeat (form repeat &key (unroll nil))
+  `(do-unrollable ,unroll ((i 0 (1+ i))) ((>= i ,repeat)) ,form))
+
+(defmacro prind (&rest args)
+  "Print args"
+  `(progn
+     ,@(loop for a in args collect
+	    (if (eq a T)
+		`(format t "~%")
+		`(format t "~A:~A " ,(format nil "~A" a) ,a)))
+     (format t "~%")))
+
+(defun sgn (x)
+  "Return -1, 0, or 1, if X is less, equal, or greater than 0, respectively."
+  (declare (type number x))
+  (cmp x 0))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
