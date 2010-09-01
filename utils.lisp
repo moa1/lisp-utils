@@ -274,43 +274,60 @@ If UNROLL is T, unroll the repetitions."
       max
       val))
 
-(defun within-p (val min max)
-  (declare (type real val min max))
-  (warn "deprecated #'within-p: use #'<= instead")
-  (<= min val max))
+(defmacro within-p (min max &rest values)
+  "Return T if for all v in VALUES: (<= MIN v MAX), NIL otherwise"
+  ;; undeprecate after changing semantics
+  ;;(warn "deprecated #'within-p: use #'<= instead")
+  `(and ,@(loop for v in values collect `(<= ,min ,v ,max))))
 
 (defun within (val min max)
   (declare (type real val min max))
   (at-most (at-least val min) max))
 
-(defun binary-search (obj sorted-sequence &key (predicate #'cmp) (exact t))
+(defun binary-search (obj sorted-sequence &key (predicate #'cmp) (exact t)
+		      (key (lambda (x) x)) (fail (constantly nil)))
   (declare (type sequence sorted-sequence)
 	   (type (function (t t) (integer -1 1)) predicate)
-	   (type boolean exact))
-  "Search for obj in the sorted-sequence according to the predicate.
-predicate must accept two arguments, obj and an element of sorted-sequence, and
-return -1, 0, 1 depending on obj being <, =, > than the element, respectively.
-If exact is t and obj is not found, return nil, the closest element otherwise."
+	   (type boolean exact)
+	   (type (function (t) t) key)
+	   (type (function (t t) t) fail))
+  ;;(declare (optimize (speed 3)))
+  "Search for OBJ in the SORTED-SEQUENCE according to the PREDICATE.
+If KEY is given, it is called with item in SORTED-SEQUENCE and returns an ITEM.
+PREDICATE must accept two arguments, obj and an ITEM of SORTED-SEQUENCE, and
+return -1, 0, 1 depending on obj being <, =, > than the ITEM, respectively.
+If EXACT is t, and OBJ is not found, return the result of calling FAIL with the
+two nearest elements or NIL if FAIL is not given, the closest element in the
+list otherwise."
+  (if (null key)
+      (setf key (lambda (x) x)))
+  (if (null fail)
+      (setf fail (constantly nil)))
   (let ((len (length sorted-sequence)))
-    (labels ((rec (a b)
-	       (declare (type fixnum a b))
-	       (format t "a:~A b:~A~%" a b)
-	       (if (= b a)
-		   (let ((a-elt (elt sorted-sequence (within a 0 (1- len)))))
+    (labels ((rec (a b c)
+	       (declare (type fixnum a b c))
+	       ;;(format t "a:~A b:~A c:~A~%" a b c)
+	       (let* ((almost-done (<= 0 (- c a) 1))
+		      (done (and almost-done (= b c)))
+		      (b-elt (elt sorted-sequence b))
+		      (b-item (funcall key b-elt)))
+		 (if done
 		     (if (or (not exact)
-			     (= 0 (funcall predicate obj a-elt)))
-			 a-elt
-			 nil))
-		   (let* ((middle (+ (floor (- b a) 2) a))
-			  (m-elt (elt sorted-sequence middle)))
-		     (declare (type fixnum middle))
-		     (ecase (funcall predicate obj m-elt)
-		       (-1 (rec a (within (1- middle) a b)))
-		       (0 m-elt)
-		       (1 (rec (within (1+ middle) a b) b)))))))
+			     (= 0 (funcall predicate obj b-item)))
+			 b-elt
+			 (funcall fail
+				  (elt sorted-sequence a)
+				  (elt sorted-sequence c)))
+		     (ecase (funcall predicate obj b-item)
+		       (-1 (rec a (floor (lerp .5 a b)) b))
+		       (0 b-elt)
+		       (1 (let ((m (if almost-done
+				       c
+				       (floor (lerp .5 b c)))))
+			    (rec b m c))))))))
       (if (null sorted-sequence)
 	  nil
-	  (rec 0 len)))))
+	  (rec 0 (floor len 2) (1- len))))))
 
 (defun compile-binary-search (sorted-sequence &key (predicate #'cmp) (exact t))
   (let ((len (length sorted-sequence)))
@@ -342,34 +359,70 @@ If exact is t and obj is not found, return nil, the closest element otherwise."
 (defun emit-compile-binary-search (sorted-sequence
 				   predicate-emitter
 				   win-emitter
-				   emitted-fail
+				   fail-emitter
 				   &key
 				   (body-emitter nil)
 				   (exact t))
+  "Emit a binary search routine by calling code emitter functions whose combined
+results perform a binary search on SORTED-SEQUENCE.
+PREDICATE-EMITTER must accept 4 parameters (A LOWER-EMIT A-WIN HIGHER-EMIT) and
+must evaluate either LOWER-EMIT, A-WIN, or HIGHER-EMIT if the argument of the
+binary search is lower, equal, or higher to A, respectively. A is an element of
+SORTED-SEQUENCE.
+WIN-EMITTER must accept 1 parameter (WIN-ELT) and terminate the search
+successfully returning WIN-ELT, an element of SORTED-SEQUENCE.
+EMITTED-FAIL must accept 2 parameters (LOWER-ELT HIGHER-ELT) and abort the
+search, optionally returning LOWER-ELT and HIGHER-ELT as the nearest elements.
+If BODY-EMITTER is given, it must accept and evaluate 1 parameter.
+If EXACT is T and no result is found, EMITTED-FAIL is evaluated, otherwise
+WIN-EMITTER is evaluated with the closest element in SORTED-SEQUENCE."
+  (assert (not (null sorted-sequence)))
   (let ((len (length sorted-sequence)))
-    (labels ((rec (a b)
-	       (declare (type fixnum a b))
-	       (if (= b a)
-		   (let* ((a-elt (elt sorted-sequence (within a 0 (1- len))))
-			  (a-elt-win (funcall win-emitter a-elt)))
-		     (if (not exact)
-			 a-elt-win
-			 (funcall predicate-emitter a-elt
-				  emitted-fail a-elt-win emitted-fail)))
-		   (let* ((middle (+ (floor (- b a) 2) a))
-			  (m-elt (elt sorted-sequence middle))
-			  (lower-emitted (rec a (within (1- middle) a b)))
-			  (higher-emitted (rec (within (1+ middle) a b) b))
-			  (m-elt-win (funcall win-emitter m-elt)))
-		     (format t "a:~A b:~A~%" a b)
-		     (funcall predicate-emitter m-elt
-			      lower-emitted m-elt-win higher-emitted)))))
-      (let ((bsearch (if (null sorted-sequence)
-			 emitted-fail
-			 (rec 0 len))))
+    (labels ((rec (a b c)
+	       (declare (type fixnum a b c))
+	       (prind a b c)
+	       (let* ((a-elt (elt sorted-sequence a))
+		      (b-elt (elt sorted-sequence b))
+		      (c-elt (elt sorted-sequence c))
+		      (b-elt-win (funcall win-emitter b-elt))
+		      (almost-done (<= 0 (- c a) 1))
+		      (done (and almost-done (= b c)))
+		      (lower-code (if almost-done
+				      (if (not exact)
+					  b-elt-win
+					  (funcall fail-emitter a-elt b-elt))
+				      (rec a (floor (lerp .5 a b)) b)))
+		      (higher-code (if done
+				       (if (not exact)
+					   b-elt-win
+					   (funcall fail-emitter b-elt c-elt))
+				       (if almost-done
+					   (rec b c c)
+					   (rec b (floor (lerp .5 b c)) c)))))
+		 (funcall predicate-emitter
+			  b-elt lower-code b-elt-win higher-code))))
+      (let ((bsearch (rec 0 (floor len 2) (1- len))))
 	(if body-emitter
 	    (funcall body-emitter bsearch)
 	    bsearch)))))
+
+(defun binary-search-emitters (name &key (fail-result nil))
+  (flet ((predicate (a lower-emit a-win higher-emit)
+	   `(if (< search-elt ,A)
+		,lower-emit
+		(if (> search-elt ,A)
+		    ,higher-emit
+		    ,a-win)))
+	 (win (win-elt)
+	   `(values ,win-elt t))
+	 (fail (a-elt b-elt)
+	   (if fail-result
+	       `(values (cons ,a-elt ,b-elt) nil)
+	       `(values nil nil)))
+	 (body (body)
+	   `(defun ,name (search-elt)
+	      ,body)))
+    (values #'predicate #'win #'fail #'body)))
 
 (defun const-fun (value)
   "Return a function which accepts any parameters and always returns value."
@@ -513,7 +566,7 @@ of calling the function with the original element value in row-major order."
 			      (funcall function (row-major-aref copy i))))
 		      array)))
 
-(defun unique (list &key (only nil only-p) (not nil not-p) (test 'eql))
+(defun unique (sequence &key (only nil only-p) (not nil not-p) (test 'eql))
   "Return a list with all double elements in list removed. Equality is tested
 with test. The order of the returned elements is not specified.
 If only is T, return only the unique elements in list.
@@ -523,8 +576,8 @@ Either only or not may be specified."
   (let ((ht (make-hash-table :test test))
 	(result))
     (if (or only not)
-	(loop for e in list do (incf (gethash e ht 0)))
-	(loop for e in list do (setf (gethash e ht) t)))
+	(map 'null (lambda (x) (incf (gethash x ht 0))) sequence)
+	(map 'null (lambda (x) (setf (gethash x ht) t)) sequence))
     (cond
       (only
        (maphash (lambda (k v)
@@ -662,17 +715,24 @@ Ex: (defun-specialize
 		 (symbol-macrolet (,@plist)
 		   ,@body))))))
 
-(defun mappair* (function list)
-  (let (result)
+(labels ((rec (function result item rest wrap)
+	   (if (null rest)
+	       (progn (if wrap
+			  (push (funcall function item wrap) result))
+		      (nreverse result))
+	       (progn (rec function
+			   (cons (funcall function item (car rest)) result)
+			   (car rest)
+			   (cdr rest)
+			   wrap)))))
+  (defun mappair (function list)
     (if (null list)
 	nil
-	(labels ((rec (item rest)
-		   (if (null rest)
-		       (progn (push (funcall function item (car list)) result)
-			      (nreverse result))
-		       (progn (push (funcall function item (car rest)) result)
-			      (rec (car rest) (cdr rest))))))
-	  (rec (car list) (cdr list))))))
+	(rec function nil (car list) (cdr list) nil)))
+  (defun mappair* (function list)
+    (if (null list)
+	nil
+	(rec function nil (car list) (cdr list) (car list)))))
 
 (defun mapl-maxn (n function list &rest more-lists)
   "Call (apply #'mapl function list more-lists), but make at most n calls
@@ -711,6 +771,31 @@ length of at least n/2."
   "Return -1, 0, or 1, if X is less, equal, or greater than 0, respectively."
   (declare (type number x))
   (cmp x 0))
+
+(defmacro 2nd-value (&body body)
+  "Returns the 2nd value of the multiple values returned by BODY."
+  `(multiple-value-bind (a b)
+       ,@body
+     (declare (ignore a))
+     b))
+
+(defun let+-bindings (bindings body)
+  ;; type declarations are not handled, is it neccessary to declare immediately?
+  (if (null bindings)
+      body
+      (let ((binding (car bindings))
+	    (rest (let+-bindings (cdr bindings) body)))
+	(if (symbolp binding)
+	    `((let (,binding) ,@rest))
+	    (case (length binding)
+	      ((0 1) (error "binding must have name and value"))
+	      (2 `((let (,binding) ,@rest)))
+	      (otherwise `((multiple-value-bind (,@(butlast binding))
+			       ,@(last binding)
+			     ,@rest))))))))
+
+(defmacro let+ (bindings &body body)
+  (car (let+-bindings bindings body)))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "

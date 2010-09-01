@@ -12,7 +12,7 @@
    #:has-key
    #:unique-list-p
    #:unique-list
-   #:it
+   #:it ;; for anaphoretic macros
    #:asetf
    #:aif
    #:subseqbut
@@ -32,6 +32,8 @@
    #:binary-search
    #:compile-binary-search
    #:emit-compile-binary-search
+   #:binary-search-emitters
+   #:search-elt ;; for binary-search-emitters
    #:const-fun
    #:list-nth
    #:lists-nth
@@ -55,10 +57,13 @@
    #:vector->list
    #:head
    #:defun-specialize
+   #:mappair
    #:mappair*
    #:mapl-maxn
    #:mapl*
    #:progn-repeat
    #:prind
    #:sgn
+   #:2nd-value
+   #:let+
    ))
