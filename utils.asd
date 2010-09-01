@@ -11,7 +11,9 @@
   :components ((:file "package")
 	       (:file "utils" :depends-on ("package"))
 	       (:file "regex-utils" :depends-on ("package" "utils"))
+	       (:file "rational-sin-cos" :depends-on ("package" "utils"))
 	       (:file "import" :depends-on ("package"
 					    "utils"
 					    "regex-utils"
+					    "rational-sin-cos"
 					    ))))

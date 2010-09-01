@@ -770,6 +770,7 @@ length of at least n/2."
 (defun sgn (x)
   "Return -1, 0, or 1, if X is less, equal, or greater than 0, respectively."
   (declare (type number x))
+  (warn "deprecated sgn: use signum instead")
   (cmp x 0))
 
 (defmacro 2nd-value (&body body)
@@ -796,6 +797,19 @@ length of at least n/2."
 
 (defmacro let+ (bindings &body body)
   (car (let+-bindings bindings body)))
+
+(defmacro d-b-lambda (lambda-list &body body)
+  `(lambda (&rest arguments)
+     (destructuring-bind ,lambda-list arguments
+       ,@body)))
+
+(defun log2 (value)
+  "Return the log to the base 2 of VALUE."
+  (/ (log value) (log 2)))
+
+(defun pow2 (x)
+  "Return x*x."
+  (* x x))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "

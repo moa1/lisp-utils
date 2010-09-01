@@ -66,4 +66,10 @@
    #:sgn
    #:2nd-value
    #:let+
+   #:d-b-lambda
+   #:log2
+   #:pow2
+   ;; from rational-sin-cos.lisp
+   #:sin-rational
+   #:cos-rational
    ))
