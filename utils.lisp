@@ -801,7 +801,9 @@ length of at least n/2."
 (defmacro progn-repeat ((repeat &key unroll) &body body)
   "Repeat BODY (times REPEAT). If UNROLL is T, unroll the loop."
   (with-gensyms (i)
-    `(do-unrollable ,unroll ((,i 0 (1+ ,i))) ((>= ,i ,repeat)) ,@body)))
+    `(do-unrollable ,unroll ((,i 0 (1+ ,i))) ((>= ,i ,repeat))
+       ;; progn is necessary (e.g. body=(t t) is an invalid tagbody (due to do))
+       (progn ,@body))))
 
 (defmacro prind (&rest args)
   "Print args"
@@ -883,33 +885,32 @@ length of at least n/2."
 				    (concatenate 'string separator x))
 				  (cdr list))))))
 
-(defun member-tree-slow (item list &key key (test #'eql) breadthfirst)
+(defun member-tree-slow (item tree &key key (test #'eql) breadthfirst)
   (labels ((rec (list)
 	     (cond ((funcall test
 			     item
 			     (if key (funcall key (car list)) (car list)))
-		    (car list))
+		    list)
 		   ((consp (car list))
 		    (if breadthfirst
 			(or (rec (cdr list)) (rec (car list)))
 			(or (rec (car list)) (rec (cdr list)))))
 		   (t (if (consp (cdr list))
 			  (rec (cdr list)))))))
-    (rec list)))
+    (rec tree)))
 
-(defun member-tree (item list &key key (test #'eql) breadthfirst)
+(defun member-tree (item tree &key key (test #'eql) breadthfirst)
   (specializing-labels ((helper+key+test ((akey key) (atest test)))
 			(helper-key+test ((akey nil) (atest test)))
 			(helper+key-test ((akey key) (atest nil)))
 			(helper-key-test ((akey nil) (atest nil))))
       ((list)
-       (prind list)
        (cond ((if atest
 		  (funcall test
 			   item
 			   (if akey (funcall akey (car list)) (car list)))
 		  (eql item (if akey (funcall akey (car list)) (car list))))
-	      (car list))
+	      list)
 	     ((consp (car list))
 	      (if breadthfirst
 		  (or (rec (cdr list)) (rec (car list)))
@@ -917,15 +918,38 @@ length of at least n/2."
 	     ((consp (cdr list))
 	      (rec (cdr list)))
 	     (t nil)))
-    (if (null list)
+    (if (null tree)
 	nil
 	(if key
 	    (if (eq test #'eql)
-		(helper+key-test list)
-		(helper+key+test list))
+		(helper+key-test tree)
+		(helper+key+test tree))
 	    (if (eq test #'eql)
-		(helper-key-test list)
-		(helper-key+test list))))))
+		(helper-key-test tree)
+		(helper-key+test tree))))))
+
+(defmacro timecps ((repeat &key stats unroll (time .1)) &body body)
+  "Like timeit, but return calls per second. TIME is the approximate measuring
+time."
+  (with-gensyms (run iters timeit-call measure-iters)
+    `(macrolet ((,timeit-call (,iters)
+		  `(timeit (,,repeat :stats ,,stats :unroll ,,unroll)
+		     (progn-repeat (,,iters)
+		       ,',@body))))
+       (labels ((,measure-iters (,iters)
+		  (let ((,run (,timeit-call ,iters)))
+		    (if (< ,run 0.005)
+			(,measure-iters (* 2 ,iters))
+			(floor (/ ,time (/ ,run ,iters)))))))
+	 (let* ((,iters (,measure-iters 1)))
+	   ;;(prind ,iters)
+	   (let ((,run (multiple-value-list (,timeit-call ,iters))))
+	     ;;(prind ,run)
+	     (apply #'values (mapcar (lambda (,run)
+				       (if (> ,run 0)
+					   (/ ,iters ,run)
+					   nil))
+				     ,run))))))))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
