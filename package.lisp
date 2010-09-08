@@ -69,6 +69,8 @@
    #:d-b-lambda
    #:log2
    #:pow2
+   #:filter
+   #:filter-if
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

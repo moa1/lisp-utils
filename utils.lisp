@@ -811,6 +811,22 @@ length of at least n/2."
   "Return x*x."
   (* x x))
 
+(defmacro filter (&whole whole
+		   item sequence &key from-end test start end count key)
+  "Like remove, but return all the matching items instead."
+  (declare (ignore item sequence from-end test start end count key))
+  (aif (member :test whole)
+       (setf (cadr it) `(complement ,(cadr it)))
+       (asetf whole (nconc it '(:test (complement #'eql)))))
+  `(remove ,@(cdr whole)))
+
+(defmacro filter-if (&whole whole
+		     predicate sequence &key from-end start end count key)
+  "Like remove-if, but return all the matching items instead."
+  (declare (ignore predicate sequence from-end start end count key))
+  (asetf (cadr whole) `(complement ,it))
+  `(remove-if ,@(cdr whole)))
+
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
 
