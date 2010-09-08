@@ -74,6 +74,8 @@
    #:pow2
    #:filter
    #:filter-if
+   #:join
+   #:member-tree
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

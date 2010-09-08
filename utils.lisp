@@ -520,7 +520,7 @@ in LIST. (LIST-NTH '(1 2 3 4 5 6) 3) == '((1 4) (2 5) (3 6))"
 Create a lambda list from symbols 'a to 'z, and 'rest occurring in  sexp,
 and use it in a lambda expression, which is returned"
   ;; was originally started as function... is easier as macro
-  ;; keywords as argument places wont work, they might be normal arguments
+  ;; :a to :z instead of 'a to 'z wont work, they might be normal arguments
   (labels ((variable? (x)
 	     (and (typep x 'symbol)
 		  (or (eq x 'rest)
@@ -685,9 +685,12 @@ BODY."
        (destructuring-bind (name plist) name-and-plist
 	 `(,name ,lambda-list
 		 (symbol-macrolet (,@plist)
-		   ,@(if rec
-			 (subst name 'rec body)
-			 body))))))
+		   (locally
+		       #+sbcl (declare (sb-ext:muffle-conditions
+					sb-ext:code-deletion-note))
+		     ,@(if rec
+			   (subst name 'rec body)
+			   body)))))))
 
 (defmacro specializing-flet (((name bindings)
 			      &rest name-defs)
@@ -795,8 +798,10 @@ length of at least n/2."
 	       (lambda (l) (apply function (head l n)))
 	       c)))
 
-(defmacro progn-repeat (form repeat &key (unroll nil))
-  `(do-unrollable ,unroll ((i 0 (1+ i))) ((>= i ,repeat)) ,form))
+(defmacro progn-repeat ((repeat &key unroll) &body body)
+  "Repeat BODY (times REPEAT). If UNROLL is T, unroll the loop."
+  (with-gensyms (i)
+    `(do-unrollable ,unroll ((,i 0 (1+ ,i))) ((>= ,i ,repeat)) ,@body)))
 
 (defmacro prind (&rest args)
   "Print args"
@@ -815,10 +820,11 @@ length of at least n/2."
 
 (defmacro 2nd-value (&body body)
   "Returns the 2nd value of the multiple values returned by BODY."
-  `(multiple-value-bind (a b)
-       ,@body
-     (declare (ignore a))
-     b))
+  (with-gensyms (a b)
+    `(multiple-value-bind (,a ,b)
+	 ,@body
+       (declare (ignore ,a))
+       ,b)))
 
 (defun let+-bindings (bindings body)
   ;; type declarations are not handled, is it neccessary to declare immediately?
@@ -866,6 +872,60 @@ length of at least n/2."
   (declare (ignore predicate sequence from-end start end count key))
   (asetf (cadr whole) `(complement ,it))
   `(remove-if ,@(cdr whole)))
+
+(defun join (list &optional (separator " "))
+  "Join the strings in LIST, separated by SEPARATOR each."
+  (if (null list)
+      ""
+      (concatenate 'string (car list)
+		   (apply #'concatenate 'string 
+			  (mapcar (lambda (x)
+				    (concatenate 'string separator x))
+				  (cdr list))))))
+
+(defun member-tree-slow (item list &key key (test #'eql) breadthfirst)
+  (labels ((rec (list)
+	     (cond ((funcall test
+			     item
+			     (if key (funcall key (car list)) (car list)))
+		    (car list))
+		   ((consp (car list))
+		    (if breadthfirst
+			(or (rec (cdr list)) (rec (car list)))
+			(or (rec (car list)) (rec (cdr list)))))
+		   (t (if (consp (cdr list))
+			  (rec (cdr list)))))))
+    (rec list)))
+
+(defun member-tree (item list &key key (test #'eql) breadthfirst)
+  (specializing-labels ((helper+key+test ((akey key) (atest test)))
+			(helper-key+test ((akey nil) (atest test)))
+			(helper+key-test ((akey key) (atest nil)))
+			(helper-key-test ((akey nil) (atest nil))))
+      ((list)
+       (prind list)
+       (cond ((if atest
+		  (funcall test
+			   item
+			   (if akey (funcall akey (car list)) (car list)))
+		  (eql item (if akey (funcall akey (car list)) (car list))))
+	      (car list))
+	     ((consp (car list))
+	      (if breadthfirst
+		  (or (rec (cdr list)) (rec (car list)))
+		  (or (rec (car list)) (rec (cdr list)))))
+	     ((consp (cdr list))
+	      (rec (cdr list)))
+	     (t nil)))
+    (if (null list)
+	nil
+	(if key
+	    (if (eq test #'eql)
+		(helper+key-test list)
+		(helper+key+test list))
+	    (if (eq test #'eql)
+		(helper-key-test list)
+		(helper-key+test list))))))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
