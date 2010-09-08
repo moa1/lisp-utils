@@ -380,7 +380,7 @@ WIN-EMITTER is evaluated with the closest element in SORTED-SEQUENCE."
   (let ((len (length sorted-sequence)))
     (labels ((rec (a b c)
 	       (declare (type fixnum a b c))
-	       (prind a b c)
+	       ;;(prind a b c)
 	       (let* ((a-elt (elt sorted-sequence a))
 		      (b-elt (elt sorted-sequence b))
 		      (c-elt (elt sorted-sequence c))
@@ -679,6 +679,52 @@ BODY."
   "Return the first n elements from list."
   (subseq list 0 (min n (length list))))
 
+(defun function-specializer (names-and-parameters lambda-list body &key rec)
+  ;;(format t "names-and-parameters:~A~%" names-and-parameters)
+  (loop for name-and-plist in names-and-parameters collect
+       (destructuring-bind (name plist) name-and-plist
+	 `(,name ,lambda-list
+		 (symbol-macrolet (,@plist)
+		   ,@(if rec
+			 (subst name 'rec body)
+			 body))))))
+
+(defmacro specializing-flet (((name bindings)
+			      &rest name-defs)
+			     (lambda-list &body function-body)
+			     &body body)
+  "Define several local functions specified by NAME-DEFS with FUNCTION-BODY.
+For each function named NAME, the BINDINGSs are symbol-macrolet in BODY.
+Ex: (specializing-flet ((hl-head ((ht t)))
+                        (hl-last ((ht nil))))
+        ((list &optional (n 1))
+         (if ht
+             (head list n)
+             (last list n)))
+      (hl-last '(1 2 3)))"
+  (push (list name bindings) name-defs)
+  `(flet ,(function-specializer name-defs lambda-list function-body)
+     ,@body))
+
+(defmacro specializing-labels (((name bindings)
+				&rest name-defs)
+			       (lambda-list &body function-body)
+			       &body body)
+  "Define several local functions specified by NAME-DEFS with FUNCTION-BODY.
+For each function named NAME, the BINDINGSs are symbol-macrolet in BODY.
+In each FUNCTION-BODY, the symbol REC is replaced with the respective NAME.
+Ex: (specializing-labels ((hl-head ((ht t)))
+                          (hl-last ((ht nil))))
+        ((list &optional (n 1))
+         (if ht
+             (head list n)
+             (last list n)))
+      (hl-last '(1 2 3)))"
+  (push (list name bindings) name-defs)
+  `(labels ,(function-specializer name-defs lambda-list function-body
+				  :rec t)
+     ,@body))
+
 ;; write another macro that looks like a defun, but emits multiple versions of
 ;; the
 ;; function, each with a specified set of arguments set to specified constants
@@ -692,28 +738,22 @@ BODY."
 ;; The parameter bindings have to be specified as macro arguments.
 ;; ... hmm maybe also emit compiler-macros? (maybe not, because they would only
 ;; branch on compile-time-known constant data).
-(defmacro defun-specialize (((name ((parameter value) &rest plist))
-			     &rest names-and-parameters)
-			    lambda-list
-			    &body body)
-  "Define several functions specified by NAMES-AND-PARAMETERS with body BODY.
-For each function named NAME, the PARAMETERs are symbol-macrolet to the
-respective VALUEs in BODY.
-Ex: (defun-specialize
+(defmacro specializing-defun (((name bindings) &rest name-defs)
+			      lambda-list &body body)
+  "Define several local functions specified by NAME-DEFS with FUNCTION-BODY.
+For each function named NAME, the BINDINGSs are symbol-macrolet in BODY.
+In each FUNCTION-BODY, the symbol REC is replaced with the respective NAME.
+Ex: (specializing-defun
         ((hl-head ((ht t)))
          (hl-last ((ht nil))))
-        (list &optional n)
+        (list &optional (n 1))
       (if ht
           (head list n)
           (last list n)))"
-  (push (list name (cons (list parameter value) plist)) names-and-parameters)
-  (format t "names-and-parameters:~A~%" names-and-parameters)
-  `(progn 
-     ,@(loop for name-and-plist in names-and-parameters collect
-	    (destructuring-bind (name plist) name-and-plist
-	      `(defun ,name ,lambda-list
-		 (symbol-macrolet (,@plist)
-		   ,@body))))))
+  (push (list name bindings) name-defs)
+  `(progn
+     ,@(loop for s in (function-specializer name-defs lambda-list body :rec t)
+	  collect `(defun ,@s))))
 
 (labels ((rec (function result item rest wrap)
 	   (if (null rest)

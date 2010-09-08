@@ -56,7 +56,10 @@
    #:let-array-dims
    #:vector->list
    #:head
-   #:defun-specialize
+   #:rec ;; for specializing-labels, specializing-defun
+   #:specializing-flet
+   #:specializing-labels
+   #:specializing-defun
    #:mappair
    #:mappair*
    #:mapl-maxn
