@@ -1,25 +1,28 @@
-(defun find-cos (sin radius2)
-  (declare (type fixnum sin)
+(in-package :utils)
+
+(defun find-cos (sin2 radius2)
+  (declare (type integer sin2)
 	   (type integer radius2))
-  (let+ ((sin2 (pow2 sin))
-	 (q (- radius2 sin2))
+  (let+ ((q (- radius2 sin2))
 	 (r (sqrt q))
 	 (fr rr (floor r)))
-    (declare (type float r)
-	     (type fixnum fr))
-    (if (and (= rr 0.0) (= radius2 (+ (pow2 fr) sin2)))
-	fr
-	nil)))
+	(declare (type float r)
+		 (type fixnum q))
+	(if (and (= rr 0.0) (= radius2 (+ (pow2 fr) sin2)))
+	    fr
+	    nil)))
 
 (defun find-all-rational-angles (radius)
   (declare ;;(optimize (speed 3))
 	   (type fixnum radius)
 	   (inline find-cos))
-  (prind radius)
-  (let ((radius-square (* radius radius))
+  ;;(prind radius)
+  (let ((radius2 (pow2 radius))
 	table)
-    (loop for sin fixnum from 0 upto radius do
-	 (let ((cos (find-cos sin radius-square)))
+    (loop
+       for sin fixnum from 0 upto radius
+       for sin2 integer = (pow2 sin) do
+	 (let ((cos (find-cos sin2 radius2)))
 	   (if (not (null cos))
 	       (let* ((sin-v (/ sin radius))
 		      (cos-v (/ cos radius))
@@ -29,6 +32,55 @@
 		 (declare (type float angle))
 		 (push (list sin-v cos-v angle) table)))))
     table))
+
+(defun find-all-rational-unit-vectors (radius)
+  (let ((radius2 (pow2 radius))
+	table)
+    (loop
+       for x upto radius
+       for x2 = (pow2 x) do
+	 (loop
+	    for y upto (floor (sqrt (- radius2 x2)))
+	    for y2 = (pow2 y) do
+	      (let ((cos (find-cos (+ x2 y2) radius2)))
+		(if (not (null cos))
+		    (push (list (/ x radius) (/ y radius) (/ cos radius))
+			  table)))))
+    (prind radius (length table))
+    table))
+
+(defun max-unit-vector-angle-diff (radius)
+  (flet ((scalar-product (a b)
+	   (reduce #'+ (mapcar (lambda (a b)
+				 (declare (type rational a b))
+				 (* a b)) a b))))
+    (let* ((table (find-all-rational-unit-vectors radius))
+	   (l-table (length table))
+	   (scalar (loop for i fixnum below (1- l-table)
+		      for minj = (loop
+				    for j from (1+ i) below l-table
+				    for scalar = (scalar-product (elt table i)
+								 (elt table j))
+				    maximize scalar)
+		      minimize minj)))
+      (acos scalar))))
+
+(defun find-good-unit-vector-radius (&optional (start 1) (stop 256))
+  (let (minv)
+    (loop for radius from start upto stop do
+	 (let ((angle (max-unit-vector-angle-diff radius)))
+	   (if (null minv)
+	       (setf minv (list radius angle)))
+	   (if (< angle (cadr minv))
+	       (setf minv (list radius angle)))
+	   (prind radius angle)))
+    minv))
+
+(define-constant +some-unit-vector-radii+
+    '((425 0.15354379)
+      (845 0.14608113)
+      (1105 0.14608113))
+  :test #'equal)
 
 (defun max-angle-diff (radius)
   (apply #'max

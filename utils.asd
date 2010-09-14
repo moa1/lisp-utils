@@ -10,10 +10,11 @@
   :depends-on (:alexandria :cl-ppcre)
   :components ((:file "package")
 	       (:file "utils" :depends-on ("package"))
-	       (:file "regex-utils" :depends-on ("package" "utils"))
-	       (:file "rational-sin-cos" :depends-on ("package" "utils"))
+	       (:file "utils2" :depends-on ("package" "utils"))
+	       (:file "regex-utils" :depends-on ("package" "utils2"))
+	       (:file "rational-sin-cos" :depends-on ("package" "utils2"))
 	       (:file "import" :depends-on ("package"
-					    "utils"
+					    "utils2"
 					    "regex-utils"
 					    "rational-sin-cos"
 					    ))))

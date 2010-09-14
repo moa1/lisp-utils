@@ -125,14 +125,25 @@ other parameters in FORM, which gets documentation ANA-DOCUMENTATION."
 	       (t (error "not a valid varlist")))))
     (rec varlist nil)))
 
-(defun unroll-do-makebodies (varlist endlist body)
-  (if (> (length endlist) 1)
-      (error "result-forms not yet implemented, get result of do to implement"))
+(defun do-list-iterations (varlist endlist)
+  (let* ((vars (variables-in-varlist varlist))
+	 (mapping `(mapcar #'list ',vars (list ,@vars))))
+    (with-gensyms (iters)
+      (eval
+       `(let (,iters)
+	  (values 
+	   (do ,varlist (,(car endlist) ,mapping)
+	     (push ,mapping ,iters))
+	   (nreverse ,iters)))))))
+
+(defmacro unroll-do (varlist endlist &body body)
+  "Almost like do, but unrolls the loop. Difference is, all variables in varlist
+are bound in the unrolled bodies to their respective values for each step.
+Therefore modifying a variable in the body does not influence the next loop
+step.
+varlist: ({var|(var [init-form [step-form]])}*)
+endlist: (end-test-form result-form*)"
   ;; maybe implement:
-  ;; result form: to do this, let the do return the list of variable values at
-  ;; the end of the loops, and then use this list to construct a let form, in
-  ;; which all the variables are bound to their values. The body of the let form
-  ;; are the result-forms.
   ;; An unrolled do semantically equivalent to do: At the moment, modifying the
   ;; loop variables in the body does not influence the next step, or the end
   ;; condition (because the variables are bound again). Unrolling the variable
@@ -144,31 +155,17 @@ other parameters in FORM, which gets documentation ANA-DOCUMENTATION."
   ;; ones, e.g. a local lambda form using the same variable names. Therefore
   ;; the let at each step necessary (which is hopefully compiled away, because
   ;; the variables are constant).
-  (let* ((variables (variables-in-varlist varlist))
-	 (v-let-list `(list ,@(loop for v in variables
-				 collect `(list ',v ,v)))))
-    ;;(format t "v-ll:~A~%" v-let-list)
-    (with-gensyms (list)
-      `(let ((,list '(progn)))
-	 (do ,varlist (,(car endlist) (list ,@variables))
-	   ;;(format t "l:~A~%" ,list)
-	   (setq ,list
-		 (append ,list
-			 `((let ,,v-let-list
-			     (declare (ignorable ,',@variables))
-			     (tagbody ,@',body))
-			   ))))
-	 ,list))))
-
-(defmacro unroll-do (varlist endlist &body body)
-  "Almost like do, but unrolls the loop. Difference is, all variables in varlist
-are bound in the unrolled bodies to their respective values for each step.
-Therefore modifying a variable in the body does not influence the next loop
-step.
-varlist: ({var|(var [init-form [step-form]])}*)
-endlist: (end-test-form result-form*)
-result-form is not yet implemented."
-  (eval (unroll-do-makebodies varlist endlist body)))
+  (let ((vars (variables-in-varlist varlist)))
+    (multiple-value-bind (result iters)
+	(do-list-iterations varlist endlist)
+      `(progn
+	 ,@(loop for i in iters collect
+		`(let ,i
+		   (declare (ignorable ,@vars))
+		   ,@body))
+	 (let ,result
+	   (declare (ignorable ,@vars))
+	   ,@(cdr endlist))))))
 
 (defmacro do-unrollable (unroll varlist endlist &body body)
   "Like do, but unrolls loop if UNROLL is T. "
@@ -680,6 +677,7 @@ BODY."
   (subseq list 0 (min n (length list))))
 
 (defun function-specializer (names-and-parameters lambda-list body &key rec)
+  ;; Ex: (function-specializer '((test1 (a 1)) (test2 (a 2))) '() 'a)
   ;;(format t "names-and-parameters:~A~%" names-and-parameters)
   (loop for name-and-plist in names-and-parameters collect
        (destructuring-bind (name plist) name-and-plist
@@ -688,9 +686,9 @@ BODY."
 		   (locally
 		       #+sbcl (declare (sb-ext:muffle-conditions
 					sb-ext:code-deletion-note))
-		     ,@(if rec
-			   (subst name 'rec body)
-			   body)))))))
+		       ,@(if rec
+			     (subst name 'rec body)
+			     body)))))))
 
 (defmacro specializing-flet (((name bindings)
 			      &rest name-defs)
@@ -799,11 +797,15 @@ length of at least n/2."
 	       c)))
 
 (defmacro progn-repeat ((repeat &key unroll) &body body)
-  "Repeat BODY (times REPEAT). If UNROLL is T, unroll the loop."
+  "Repeat BODY (times REPEAT), at least once. If UNROLL is T, unroll the loop."
+  (declare (type (integer 1) repeat))
   (with-gensyms (i)
-    `(do-unrollable ,unroll ((,i 0 (1+ ,i))) ((>= ,i ,repeat))
-       ;; progn is necessary (e.g. body=(t t) is an invalid tagbody (due to do))
-       (progn ,@body))))
+    `(progn
+       (do-unrollable ,unroll ((,i 0 (1+ ,i))) ((>= ,i (1- ,repeat)))
+	 ;; progn is necessary
+	 ;; (e.g. body=(t t) is an invalid tagbody (due to do))
+	 (progn ,@body))
+       ,@body)))
 
 (defmacro prind (&rest args)
   "Print args"
@@ -885,50 +887,7 @@ length of at least n/2."
 				    (concatenate 'string separator x))
 				  (cdr list))))))
 
-(defun member-tree-slow (item tree &key key (test #'eql) breadthfirst)
-  (labels ((rec (list)
-	     (cond ((funcall test
-			     item
-			     (if key (funcall key (car list)) (car list)))
-		    list)
-		   ((consp (car list))
-		    (if breadthfirst
-			(or (rec (cdr list)) (rec (car list)))
-			(or (rec (car list)) (rec (cdr list)))))
-		   (t (if (consp (cdr list))
-			  (rec (cdr list)))))))
-    (rec tree)))
-
-(defun member-tree (item tree &key key (test #'eql) breadthfirst)
-  (specializing-labels ((helper+key+test ((akey key) (atest test)))
-			(helper-key+test ((akey nil) (atest test)))
-			(helper+key-test ((akey key) (atest nil)))
-			(helper-key-test ((akey nil) (atest nil))))
-      ((list)
-       (cond ((if atest
-		  (funcall test
-			   item
-			   (if akey (funcall akey (car list)) (car list)))
-		  (eql item (if akey (funcall akey (car list)) (car list))))
-	      list)
-	     ((consp (car list))
-	      (if breadthfirst
-		  (or (rec (cdr list)) (rec (car list)))
-		  (or (rec (car list)) (rec (cdr list)))))
-	     ((consp (cdr list))
-	      (rec (cdr list)))
-	     (t nil)))
-    (if (null tree)
-	nil
-	(if key
-	    (if (eq test #'eql)
-		(helper+key-test tree)
-		(helper+key+test tree))
-	    (if (eq test #'eql)
-		(helper-key-test tree)
-		(helper-key+test tree))))))
-
-(defmacro timecps ((repeat &key stats unroll (time .1)) &body body)
+(defmacro timecps ((repeat &key stats unroll (time 0.1)) &body body)
   "Like timeit, but return calls per second. TIME is the approximate measuring
 time."
   (with-gensyms (run iters timeit-call measure-iters)

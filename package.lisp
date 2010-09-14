@@ -3,7 +3,7 @@
 (defpackage :utils
   ;; this :use will make the symbols available in the package :utils,
   ;; not :common-lisp-user !
-  (:use #:common-lisp :alexandria :asdf)
+  (:use #:common-lisp :alexandria)
   (:export
    ;; from utils.lisp
    #:repeat
@@ -76,6 +76,8 @@
    #:filter-if
    #:join
    #:member-tree
+   #:timecps
+   #:define-const
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational
