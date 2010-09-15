@@ -887,52 +887,52 @@ time."
 					   nil))
 				     ,run))))))))
 
-(defvar specializing-diagnostics nil)
-
-(defmacro specializing-cond (conditions &body body)
-  "Execute BODY in all cond clauses defined by CONDITIONS."
-  `(cond ,@(loop for c in conditions collect
-		`(,c 
-		  (if specializing-diagnostics
-		      (format t "~A of ~A~%"
-			      ,(format nil "~A" c)
-			      ,(format nil "~A" conditions)))
-		  (locally
-		      #+sbcl (declare (sb-ext:muffle-conditions
-				       sb-ext:code-deletion-note))
-		      ,@body)))))
-
-(defmacro specializing-cases (symbol cases &body body)
-  "Like case, but symbol-macrolet the SYMBOL to each CASE in each case, and
-execute BODY in all cases. Automatically define a default (otherwise) case."
+(defmacro specializing-case (symbol cases &body body)
+  "Like case, but only one value allowed per CASE, and execute the same BODY in
+all cases. Before each BODY, the SYMBOL is symbol-macrolet to each CASE.
+The default (otherwise) case is automatically defined.
+Ex: (specializing-case x (1 2 nil t #'identity) (princ x))"
   (declare (type symbol symbol))
-  (warn "don't use specializing-cases, use specializing-cond instead")
-  ;;(mapc (lambda (x) (assert (or (atom (eval x)) (= 1 (length (eval x)))))) cases)
-  `(case ,symbol
-     ,@(loop for c in cases collect
-	    `(,c
-	      (if specializing-diagnostics
-		  (format t "~A == ~A of ~A~%"
-			  ,(format nil "~A" symbol)
-			  ,(format nil "~A" c)
-			  ,(format nil "~A" cases)))
-	      ;; the symbol-macrolet can only bind 1 value
-	      ;;(symbol-macrolet ((,symbol ,(if (listp c) (car c) c)))
+  `(cond
+     ,@(loop for c in cases 
+	  collect
+	  `((eql ,symbol ,c)
+	    (symbol-macrolet ((,symbol ,c))
 	      (locally
 		  #+sbcl (declare (sb-ext:muffle-conditions
 				   sb-ext:code-deletion-note))
-		  ,@body)))		;)
-     (t 
-      (if specializing-diagnostics
-	  (format t "~A otherwise of ~A~%"
-		  ,(format nil "~A" symbol)
-		  ,(format nil "~A" cases)))
+		  ,@body))))
+     (t
       (locally
 	  #+sbcl (declare (sb-ext:muffle-conditions
 			   sb-ext:code-deletion-note))
 	  ,@body))))
 
-(declaim (inline unique))
+(defmacro specializing-cond-let ((test bindings &rest tests-and-bindings)
+				 &body body)
+  "A combination of cond and symbol-macrolet.
+Ex: (specializing-cond-let
+        (((= a 1) ((a 1)))
+         (t ((a nil) (b nil))))
+      (prind a b))"
+  (let ((tests-and-bindings (append (list test bindings) tests-and-bindings)))
+    `(cond ,@(loop
+		for test-and-bindings in tests-and-bindings
+		for test = (car test-and-bindings)
+		for bindings = (cadr test-and-bindings)
+		collect `(,test (symbol-macrolet ,bindings ,@body))))))
+
+(defun unique-sfast (sequence &key (test #'eql))
+  (let ((ht (make-hash-table :test test))
+	(result))
+    (map nil
+	 (lambda (x) (setf (gethash x ht) 1))
+	 sequence)
+    (maphash (lambda (k v)
+	       (declare (ignore v)) (setf result (cons k result)))
+	     ht)
+    result))
+
 (defun unique (sequence &key only not countp (test #'eql) (key #'identity))
   "Return a list with all but one duplicate elements in SEQUENCE removed. If KEY
 is non-NIL the result of calling KEY with an element is used in the comparison.
@@ -943,62 +943,49 @@ If NOT is T, return only the elements that have at least one duplicate.
 If COUNTP is non-NIL, return only the elements whose count satisfies COUNTP.
 Only one of ONLY, NOT, or COUNTP may be non-NIL."
   (assert (>= 1 (count-if (complement #'null) (list only not countp))))
-  (specializing-cond (only not t)
-    (specializing-cond (countp t)
-      (specializing-cond ((eq key #'identity) t)
-	(flet ((uniq (sequence update-f retrieve-f test)
-		 (let ((ht (make-hash-table :test test))
-		       (result))
-		   (map nil
-			(lambda (x) (funcall update-f x ht))
-			sequence)
-		   (maphash (lambda (k v)
-			      (multiple-value-bind (include-p value)
-				  (funcall retrieve-f k v)
-				(if include-p
-				    (setf result (cons value result)))))
-			    ht)
-		   result))
-	       (update-f (x ht)
-		 (let ((hx (funcall key x)))
-		   (multiple-value-bind (hval h-p)
-		       (gethash hx ht)
-		     (macrolet ((updatef (place)
-				  `(if (not (or only not countp))
-				       (setf ,place 1)
-				       (incf ,place))))
-		       (if h-p
-			   (if (eq key #'identity)
-			       (updatef (gethash hx ht))
-			       (updatef (car hval)))
-			   (setf (gethash hx ht)
-				 (if (equal key #'identity)
-				     1
-				     (cons 1 x))))))))
+  (specializing-cond-let
+      ((only ((countp (lambda (x) (= x 1)))))
+       (not ((countp (lambda (x) (> x 1)))))
+       ((not countp) ((countp (constantly t)) (only 'default)))
+       (t ()))
+    (specializing-case key (#'identity)
+      (labels ((update-f (x ht)
+		 (let ((hx (if (eq key #'identity) x (funcall key x))))
+		   (macrolet ((updatef (place)
+				`(if (eq only 'default)
+				     (setf ,place 1)
+				     (incf ,place))))
+		     (if (eq key #'identity)
+			 (locally (declare (sb-ext:muffle-conditions
+					    style-warning))
+			   (updatef (gethash hx ht 0)))
+			 (multiple-value-bind (hval h-p)
+			     (gethash hx ht)
+			   (if h-p
+			       (updatef (car hval))
+			       (setf (gethash hx ht) (cons 1 x))))))))
 	       (retrieve-f (k v)
 		 (let ((count (if (eq key #'identity) v (car v)))
 		       (value (if (eq key #'identity) k (cdr v))))
-		   (cond (only (values (= count 1) value))
-			 (not (values (> count 1) value))
-			 (countp (values (funcall countp count) value))
-			 (t (values t value))))))
-	  ;; this declaration causes an internal bug in sbcl, but in unique-fast
-	  ;;failed AVER:
-	  ;;  "(EQ PHYSENV (LAMBDA-PHYSENV (LAMBDA-VAR-HOME THING)))"
-	  ;;(declare (inline uniq update-f retrieve-f))
-	  (uniq sequence #'update-f #'retrieve-f test))))))
-(declaim (notinline unique))
-
-(defun unique-fast (sequence &key only not (test #'eql))
-  "Return a list with all but one duplicate elements in SEQUENCE removed.
-Equality is tested with TEST and must be one of EQ, EQL, EQUAL, or EQUALP. The
-order of the returned elements is not specified.
-If ONLY is T, return only the unique elements.
-If NOT is T, return only the elements that have at least one duplicate.
-Either ONLY or NOT may be non-NIL."
-  (declare (inline unique))
-  (unique sequence :only only :not not :test test))
-  
+		   (declare (type fixnum count))
+		   (values (funcall countp count) value)))
+	       (uniq (sequence test)
+		 (let ((ht (make-hash-table :test test))
+		       (result))
+		   (map nil
+			(lambda (x) (update-f x ht))
+			sequence)
+		   ;; loop is faster for lists
+		   ;;(loop for s in sequence do (update-f s ht))
+		   (maphash (lambda (k v)
+			      (multiple-value-bind (include-p value)
+				  (retrieve-f k v)
+				(if include-p
+				    (setf result (cons value result)))))
+			    ht)
+		   result)))
+	(declare (inline uniq update-f retrieve-f))
+	(uniq sequence test)))))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "

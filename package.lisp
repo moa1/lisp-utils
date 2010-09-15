@@ -76,10 +76,9 @@
    #:join
    #:member-tree
    #:timecps
-   #:specializing-cond
    #:specializing-cases
+   #:specializing-cond-let
    #:unique
-   #:unique-fast
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational
