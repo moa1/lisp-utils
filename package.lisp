@@ -47,7 +47,6 @@
    #:mapc-array-major
    #:mapc-array
    #:map-array
-   #:unique
    #:andf
    #:orf
    #:equal-array
@@ -77,7 +76,10 @@
    #:join
    #:member-tree
    #:timecps
-   #:define-const
+   #:specializing-cond
+   #:specializing-cases
+   #:unique
+   #:unique-fast
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

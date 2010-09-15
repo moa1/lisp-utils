@@ -536,7 +536,7 @@ and use it in a lambda expression, which is returned"
 			 #'string-lessp)))
 		    (s (mapcar #'intern l)))
 	       (if (find 'rest s)
-		   (nconc (delete 'rest s) (list '&rest 'rest))
+		   (append (delete 'rest s) (list '&rest 'rest))
 		   s))))
     (let ((lambdalist (compose-free-variables sexp)))
       `(lambda (,@lambdalist) ,sexp))))
@@ -562,86 +562,6 @@ of calling the function with the original element value in row-major order."
 			(setf (row-major-aref copy i)
 			      (funcall function (row-major-aref copy i))))
 		      array)))
-
-(defun unique (sequence &key (only nil) (not nil) (countp nil) (test #'eql)
-	       (key #'identity))
-  "Return a list with all but one duplicate elements in SEQUENCE removed. If KEY
-is non-NIL the result of calling KEY with an element is used in the comparison.
-Equality is tested with TEST and must be one of EQ, EQL, EQUAL, or EQUALP. The
-order of the returned elements is not specified.
-If ONLY is T, return only the unique elements.
-If NOT is T, return only the elements that have at least one duplicate.
-If COUNTP is non-NIL, return only the elements whose count satisfies COUNTP.
-Only one of ONLY, NOT, or COUNTP may be non-NIL."
-  ;; specialize this function for:
-  ;; - not specifying key
-  ;; - specifying countp
-  ;; (- specifying only)
-  ;; (- specifying not)
-  (assert (>= 1 (count-if (complement #'null) (list only not countp))))
-  (flet ((uniq (sequence update-f retrieve-f test)
-	   (let ((ht (make-hash-table :test test))
-		 (result))
-	     (map nil
-		  (lambda (x) (funcall update-f x ht))
-		  sequence)
-	     (maphash (lambda (k v)
-			(multiple-value-bind (include-p value)
-			    (funcall retrieve-f k v)
-			  (if include-p
-			      (setf result (cons value result)))))
-		      ht)
-	     result))
-	 (update-f (x ht)
-	   (let ((hx (funcall key x)))
-	     (multiple-value-bind (hval h-p)
-		 (gethash hx ht)
-	       (macrolet ((updatef (place)
-			    `(if (not (or only not countp))
-				 (setf ,place 1)
-				 (incf ,place))))
-		 (if h-p
-		     (if (equal key #'identity)
-			 (updatef (gethash hx ht))
-			 (updatef (car hval)))
-		     (setf (gethash hx ht)
-			   (if (equal key #'identity)
-			       1
-			       (cons 1 x))))))))
-	 (retrieve-f (k v)
-	   (let ((count (if (equal key #'identity) v (car v)))
-		 (value (if (equal key #'identity) k (cdr v))))
-	     (cond (only (values (= count 1) value))
-		   (not (values (> count 1) value))
-		   (countp (values (funcall countp count) value))
-		   (t (values t value))))))
-    (uniq sequence #'update-f #'retrieve-f test)))
-
-
-;;(flet ((uniq (sequence update-f retrieve-f &key (test #'eql))
-	 ;;     (key #'identity)
-	 ;;     (store (constantly nil))
-	 ;;     (retrieve #'car))
-;; 	   (if countp
-;; 	       (map 'null (lambda (x) (incf (gethash (funcall key x) ht 0)))
-;; 		    sequence)
-;; 	       (map 'null (lambda (x) (setf (gethash (funcall key x) ht) t))
-;; 		    sequence))
-;;
-;; 	   (cond
-;; 	     (only
-;; 	      (maphash (lambda (k v)
-;; 			 (if (= v 1) (setf result (cons k result))))
-;; 		       ht))
-;; 	     (not
-;; 	      (maphash (lambda (k v)
-;; 			 (if (> v 1) (setf result (cons k result))))
-;; 		       ht))
-;; 	     (t
-;; 	      (maphash (lambda (k v)
-;; 			 (declare (ignore v))
-;; 			 (setf result (cons k result)))
-;; 		       ht)))
 
 (defun andf (&rest list)
   "Like AND, but as function."
@@ -923,15 +843,16 @@ and REPEAT must be an integer greater 0."
   (declare (ignore item sequence from-end test start end count key))
   (aif (member :test whole)
        (setf (cadr it) `(complement ,(cadr it)))
-       (asetf whole (nconc it '(:test (complement #'eql)))))
+       (asetf whole (append it '(:test (complement #'eql)))))
   `(remove ,@(cdr whole)))
 
 (defmacro filter-if (&whole whole
 		     predicate sequence &key from-end start end count key)
   "Like remove-if, but return all the matching items instead."
   (declare (ignore predicate sequence from-end start end count key))
-  (asetf (cadr whole) `(complement ,it))
-  `(remove-if ,@(cdr whole)))
+  (let ((nwhole (copy-list whole)))
+    (asetf (cadr nwhole) `(complement ,it))
+    `(remove-if ,@(cdr nwhole))))
 
 (defun join (list &optional (separator " "))
   "Join the strings in LIST, separated by SEPARATOR each."
@@ -965,6 +886,119 @@ time."
 					   (/ ,iters ,run)
 					   nil))
 				     ,run))))))))
+
+(defvar specializing-diagnostics nil)
+
+(defmacro specializing-cond (conditions &body body)
+  "Execute BODY in all cond clauses defined by CONDITIONS."
+  `(cond ,@(loop for c in conditions collect
+		`(,c 
+		  (if specializing-diagnostics
+		      (format t "~A of ~A~%"
+			      ,(format nil "~A" c)
+			      ,(format nil "~A" conditions)))
+		  (locally
+		      #+sbcl (declare (sb-ext:muffle-conditions
+				       sb-ext:code-deletion-note))
+		      ,@body)))))
+
+(defmacro specializing-cases (symbol cases &body body)
+  "Like case, but symbol-macrolet the SYMBOL to each CASE in each case, and
+execute BODY in all cases. Automatically define a default (otherwise) case."
+  (declare (type symbol symbol))
+  (warn "don't use specializing-cases, use specializing-cond instead")
+  ;;(mapc (lambda (x) (assert (or (atom (eval x)) (= 1 (length (eval x)))))) cases)
+  `(case ,symbol
+     ,@(loop for c in cases collect
+	    `(,c
+	      (if specializing-diagnostics
+		  (format t "~A == ~A of ~A~%"
+			  ,(format nil "~A" symbol)
+			  ,(format nil "~A" c)
+			  ,(format nil "~A" cases)))
+	      ;; the symbol-macrolet can only bind 1 value
+	      ;;(symbol-macrolet ((,symbol ,(if (listp c) (car c) c)))
+	      (locally
+		  #+sbcl (declare (sb-ext:muffle-conditions
+				   sb-ext:code-deletion-note))
+		  ,@body)))		;)
+     (t 
+      (if specializing-diagnostics
+	  (format t "~A otherwise of ~A~%"
+		  ,(format nil "~A" symbol)
+		  ,(format nil "~A" cases)))
+      (locally
+	  #+sbcl (declare (sb-ext:muffle-conditions
+			   sb-ext:code-deletion-note))
+	  ,@body))))
+
+(declaim (inline unique))
+(defun unique (sequence &key only not countp (test #'eql) (key #'identity))
+  "Return a list with all but one duplicate elements in SEQUENCE removed. If KEY
+is non-NIL the result of calling KEY with an element is used in the comparison.
+Equality is tested with TEST and must be one of EQ, EQL, EQUAL, or EQUALP. The
+order of the returned elements is not specified.
+If ONLY is T, return only the unique elements.
+If NOT is T, return only the elements that have at least one duplicate.
+If COUNTP is non-NIL, return only the elements whose count satisfies COUNTP.
+Only one of ONLY, NOT, or COUNTP may be non-NIL."
+  (assert (>= 1 (count-if (complement #'null) (list only not countp))))
+  (specializing-cond (only not t)
+    (specializing-cond (countp t)
+      (specializing-cond ((eq key #'identity) t)
+	(flet ((uniq (sequence update-f retrieve-f test)
+		 (let ((ht (make-hash-table :test test))
+		       (result))
+		   (map nil
+			(lambda (x) (funcall update-f x ht))
+			sequence)
+		   (maphash (lambda (k v)
+			      (multiple-value-bind (include-p value)
+				  (funcall retrieve-f k v)
+				(if include-p
+				    (setf result (cons value result)))))
+			    ht)
+		   result))
+	       (update-f (x ht)
+		 (let ((hx (funcall key x)))
+		   (multiple-value-bind (hval h-p)
+		       (gethash hx ht)
+		     (macrolet ((updatef (place)
+				  `(if (not (or only not countp))
+				       (setf ,place 1)
+				       (incf ,place))))
+		       (if h-p
+			   (if (eq key #'identity)
+			       (updatef (gethash hx ht))
+			       (updatef (car hval)))
+			   (setf (gethash hx ht)
+				 (if (equal key #'identity)
+				     1
+				     (cons 1 x))))))))
+	       (retrieve-f (k v)
+		 (let ((count (if (eq key #'identity) v (car v)))
+		       (value (if (eq key #'identity) k (cdr v))))
+		   (cond (only (values (= count 1) value))
+			 (not (values (> count 1) value))
+			 (countp (values (funcall countp count) value))
+			 (t (values t value))))))
+	  ;; this declaration causes an internal bug in sbcl, but in unique-fast
+	  ;;failed AVER:
+	  ;;  "(EQ PHYSENV (LAMBDA-PHYSENV (LAMBDA-VAR-HOME THING)))"
+	  ;;(declare (inline uniq update-f retrieve-f))
+	  (uniq sequence #'update-f #'retrieve-f test))))))
+(declaim (notinline unique))
+
+(defun unique-fast (sequence &key only not (test #'eql))
+  "Return a list with all but one duplicate elements in SEQUENCE removed.
+Equality is tested with TEST and must be one of EQ, EQL, EQUAL, or EQUALP. The
+order of the returned elements is not specified.
+If ONLY is T, return only the unique elements.
+If NOT is T, return only the elements that have at least one duplicate.
+Either ONLY or NOT may be non-NIL."
+  (declare (inline unique))
+  (unique sequence :only only :not not :test test))
+  
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
