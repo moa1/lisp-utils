@@ -18,3 +18,15 @@
 					    "regex-utils"
 					    "rational-sin-cos"
 					    ))))
+
+(defsystem :utils-tests
+  :depends-on (:utils #+sbcl sb-rt #-sbcl :rt)
+  :components ((:file "test-utils")))
+
+(defmethod asdf:perform ((op asdf:test-op) (c (eql (find-system :utils))))
+  (asdf:operate 'asdf:load-op :utils-tests)
+  (asdf:operate 'asdf:test-op :utils-tests))
+
+(defmethod asdf:perform ((op asdf:test-op) (c (eql (find-system :utils-tests))))
+  (funcall (intern "DO-TESTS" (find-package #+sbcl "SB-RT"
+                                            #-sbcl "REGRESSION-TEST"))))

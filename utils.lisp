@@ -563,36 +563,89 @@ of calling the function with the original element value in row-major order."
 			      (funcall function (row-major-aref copy i))))
 		      array)))
 
-(defun unique (sequence &key (only nil only-p) (not nil not-p) (test 'eql))
-  "Return a list with all double elements in list removed. Equality is tested
-with test. The order of the returned elements is not specified.
-If only is T, return only the unique elements in list.
-If not is T, return only the elements that have at least one duplicate in list.
-Either only or not may be specified."
-  (assert (not (and only-p not-p)))
-  (let ((ht (make-hash-table :test test))
-	(result))
-    (if (or only not)
-	(map 'null (lambda (x) (incf (gethash x ht 0))) sequence)
-	(map 'null (lambda (x) (setf (gethash x ht) t)) sequence))
-    (cond
-      (only
-       (maphash (lambda (k v)
-		  (if (= v 1) (setf result (cons k result))))
-		ht))
-      (not
-       (maphash (lambda (k v)
-		  (if (> v 1) (setf result (cons k result))))
-		ht))
-      (t
-       (maphash (lambda (k v)
-		  (declare (ignore v))
-		  (setf result (cons k result)))
-		ht)))
-    result))
+(defun unique (sequence &key (only nil) (not nil) (countp nil) (test #'eql)
+	       (key #'identity))
+  "Return a list with all but one duplicate elements in SEQUENCE removed. If KEY
+is non-NIL the result of calling KEY with an element is used in the comparison.
+Equality is tested with TEST and must be one of EQ, EQL, EQUAL, or EQUALP. The
+order of the returned elements is not specified.
+If ONLY is T, return only the unique elements.
+If NOT is T, return only the elements that have at least one duplicate.
+If COUNTP is non-NIL, return only the elements whose count satisfies COUNTP.
+Only one of ONLY, NOT, or COUNTP may be non-NIL."
+  ;; specialize this function for:
+  ;; - not specifying key
+  ;; - specifying countp
+  ;; (- specifying only)
+  ;; (- specifying not)
+  (assert (>= 1 (count-if (complement #'null) (list only not countp))))
+  (flet ((uniq (sequence update-f retrieve-f test)
+	   (let ((ht (make-hash-table :test test))
+		 (result))
+	     (map nil
+		  (lambda (x) (funcall update-f x ht))
+		  sequence)
+	     (maphash (lambda (k v)
+			(multiple-value-bind (include-p value)
+			    (funcall retrieve-f k v)
+			  (if include-p
+			      (setf result (cons value result)))))
+		      ht)
+	     result))
+	 (update-f (x ht)
+	   (let ((hx (funcall key x)))
+	     (multiple-value-bind (hval h-p)
+		 (gethash hx ht)
+	       (macrolet ((updatef (place)
+			    `(if (not (or only not countp))
+				 (setf ,place 1)
+				 (incf ,place))))
+		 (if h-p
+		     (if (equal key #'identity)
+			 (updatef (gethash hx ht))
+			 (updatef (car hval)))
+		     (setf (gethash hx ht)
+			   (if (equal key #'identity)
+			       1
+			       (cons 1 x))))))))
+	 (retrieve-f (k v)
+	   (let ((count (if (equal key #'identity) v (car v)))
+		 (value (if (equal key #'identity) k (cdr v))))
+	     (cond (only (values (= count 1) value))
+		   (not (values (> count 1) value))
+		   (countp (values (funcall countp count) value))
+		   (t (values t value))))))
+    (uniq sequence #'update-f #'retrieve-f test)))
+
+
+;;(flet ((uniq (sequence update-f retrieve-f &key (test #'eql))
+	 ;;     (key #'identity)
+	 ;;     (store (constantly nil))
+	 ;;     (retrieve #'car))
+;; 	   (if countp
+;; 	       (map 'null (lambda (x) (incf (gethash (funcall key x) ht 0)))
+;; 		    sequence)
+;; 	       (map 'null (lambda (x) (setf (gethash (funcall key x) ht) t))
+;; 		    sequence))
+;;
+;; 	   (cond
+;; 	     (only
+;; 	      (maphash (lambda (k v)
+;; 			 (if (= v 1) (setf result (cons k result))))
+;; 		       ht))
+;; 	     (not
+;; 	      (maphash (lambda (k v)
+;; 			 (if (> v 1) (setf result (cons k result))))
+;; 		       ht))
+;; 	     (t
+;; 	      (maphash (lambda (k v)
+;; 			 (declare (ignore v))
+;; 			 (setf result (cons k result)))
+;; 		       ht)))
 
 (defun andf (&rest list)
   "Like AND, but as function."
+  ;; If you use andf, consider using the built-in function every
   (labels ((rec (l last)
 	     (if (null l)
 		 last
@@ -603,6 +656,7 @@ Either only or not may be specified."
 
 (defun orf (&rest list)
   "Like OR, but as function."
+  ;; If you use orf, consider using the built-in function some
   (labels ((rec (l)
 	     (if (null l)
 		 nil
@@ -797,8 +851,10 @@ length of at least n/2."
 	       c)))
 
 (defmacro progn-repeat ((repeat &key unroll) &body body)
-  "Repeat BODY (times REPEAT), at least once. If UNROLL is T, unroll the loop."
-  (declare (type (integer 1) repeat))
+  "Repeat BODY (times REPEAT), at least once. If UNROLL is T, unroll the loop
+and REPEAT must be an integer greater 0."
+  (assert (or (and (not unroll) (or (symbolp repeat) (integerp repeat)))
+	      (and (integerp repeat) (> repeat 0))))
   (with-gensyms (i)
     `(progn
        (do-unrollable ,unroll ((,i 0 (1+ ,i))) ((>= ,i (1- ,repeat)))
