@@ -75,10 +75,14 @@
    #:filter-if
    #:join
    #:member-tree
+   #:exp-until-predicate
    #:timecps
    #:specializing-cases
    #:specializing-cond-let
    #:unique
+   #:dump-to-file
+   #:no-error
+   #:timediff
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

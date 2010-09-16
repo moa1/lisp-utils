@@ -173,17 +173,17 @@ endlist: (end-test-form result-form*)"
       `(unroll-do ,varlist ,endlist ,@body)
       `(do ,varlist ,endlist ,@body)))
 
-(defmacro timeit ((repeat &key stats unroll) &body body)
-  (declare (type integer repeat))
+(defmacro timeit ((repeat &key stats unroll disable-gc) &body body)
   "Return the total time of running BODY (number REPEAT) times. If STATS is T,
 measure (with possible overhead) and additionally return statistics (min, mean,
 max) of each execution duration.
 If UNROLL is T, unroll the repetitions."
-  ;;(princ "(time")
   (with-gensyms (start stop times i)
     `(progn
-       ;;(princ "it")
        (let (,start ,stop ,@(if stats `((,times (make-array ,repeat)))))
+	 ,(if disable-gc #+sbcl `(progn
+				   (sb-ext:gc)
+				   (sb-ext:gc-off)))
 	 (setq ,start (get-internal-real-time))
 	 (do-unrollable ,unroll
 	     ((,i 0 (1+ ,i))) ((>= ,i ,repeat))
@@ -192,7 +192,7 @@ If UNROLL is T, unroll the repetitions."
 				 (get-internal-real-time))))
 		     body))
 	 (setq ,stop (get-internal-real-time))
-	 ;;(format t ")~%")
+	 ,(if disable-gc #+sbcl `(sb-ext:gc-on))
 	 (setf ,start (float (/ (- ,stop ,start)
 				internal-time-units-per-second)))
 	 ,(if stats
@@ -864,19 +864,32 @@ and REPEAT must be an integer greater 0."
 				    (concatenate 'string separator x))
 				  (cdr list))))))
 
-(defmacro timecps ((repeat &key stats unroll (time 0.1)) &body body)
+(defun exp-until-predicate (x function predicate)
+  "Call FUNCTION with X and call PREDICATE with these results. If its result is
+nil, grow ITERS expontentially and repeat, otherwise return X and last results."
+  (let ((results (multiple-value-list (funcall function x))))
+    (if (apply predicate results)
+	(apply #'values x results)
+	(exp-until-predicate (* 2 x) function predicate))))
+
+(defmacro timecps ((repeat &key stats unroll disable-gc (time 0.1)) &body body)
   "Like timeit, but return calls per second. TIME is the approximate measuring
 time."
   (with-gensyms (run iters timeit-call measure-iters)
     `(macrolet ((,timeit-call (,iters)
-		  `(timeit (,,repeat :stats ,,stats :unroll ,,unroll)
+		  `(timeit (,,repeat :stats ,,stats
+				     :unroll ,,unroll
+				     :disable-gc ,,disable-gc)
 		     (progn-repeat (,,iters)
 		       ,',@body))))
        (labels ((,measure-iters (,iters)
-		  (let ((,run (,timeit-call ,iters)))
-		    (if (< ,run 0.005)
-			(,measure-iters (* 2 ,iters))
-			(floor (/ ,time (/ ,run ,iters)))))))
+		  (multiple-value-bind (,iters ,run)
+		      (exp-until-predicate ,iters
+					   (lambda (x) (,timeit-call x))
+					   (lambda (x &rest r)
+					     (declare (ignore r))
+					     (>= x 0.005)))
+		    (floor (/ (* ,time ,iters) ,run)))))
 	 (let* ((,iters (,measure-iters 1)))
 	   ;;(prind ,iters)
 	   (let ((,run (multiple-value-list (,timeit-call ,iters))))
@@ -986,6 +999,85 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 		   result)))
 	(declare (inline uniq update-f retrieve-f))
 	(uniq sequence test)))))
+
+(defun dump-to-file (file open-options item)
+  (if (= 0 (getf open-options :if-exists 0))
+      (setf (getf open-options :if-exists) :overwrite))
+  (if (= 0 (getf open-options :if-does-not-exist 0))
+      (setf (getf open-options :if-does-not-exist) :create))
+  (let ((stream (apply #'open file :direction :output open-options)))
+    (pprint stream)
+    (pprint item)
+    (when (not (null stream))
+	(pprint item stream)
+	(terpri stream)
+	(close stream))))
+
+(defmacro no-error (((error-type default-value) &rest error-values)
+		    &body body)
+  (let ((error-values (append (list (list error-type default-value))
+			      error-values)))
+    (with-gensyms (tag)
+      `(block ,tag
+	 (handler-bind (,@(loop for ev in error-values
+			     for e = (first ev) for v = (second ev)
+			     collect `(,e (lambda (c)
+					    (declare (ignore c))
+					    (return-from ,tag ,v)))))
+	   ,@body)))))
+
+(defun measure-timediff (time-body1 time-body2
+			 &key significance maxtime showtimes)
+  (declare (type (real 0 1) significance))
+  (labels ((measure (iters times1 times2)
+	     (push (funcall time-body1 iters) times1)
+	     (push (funcall time-body2 iters) times2)
+	     (let* ((p (no-error ((arithmetic-error 1))
+			 (statistics:t-test-two-sample-on-sequences times1
+								    times2)))
+		    (totaltime (+ (apply #'+ times1) (apply #'+ times2)))
+		    (signif (<= p significance)))
+	       (if (or signif (>= totaltime maxtime))
+		   (let* ((mean-sd-n1 (multiple-value-list
+				       (statistics:mean-sd-n times1)))
+			  (mean-sd-n2 (multiple-value-list
+				       (statistics:mean-sd-n times2)))
+			  (mean-diff (- (first mean-sd-n1) (first mean-sd-n2))))
+		     (when showtimes
+		       (prind times1) (prind times2)
+		       (if signif
+			   (format t "Body1 is ~F ms ~A per call than Body2~%"
+				   (/ (abs mean-diff) iters .001)
+				   (if (< mean-diff 0) "faster" "slower"))))
+		     (values (list p signif)
+			     (list mean-diff (/ mean-diff iters))
+			     mean-sd-n1 mean-sd-n2
+			     iters))
+		   (measure iters times1 times2)))))
+    (let ((iters (exp-until-predicate 1
+				      (lambda (i)
+					(+ (funcall time-body1 i)
+					   (funcall time-body2 i)))
+				      (lambda (x) (>= x .05)))))
+      (measure iters
+	       (list (funcall time-body1 iters))
+	       (list (funcall time-body2 iters))))))
+
+(defmacro timediff (body1 body2
+		    &key (significance .01) (maxtime .5) showtimes disable-gc)
+  (with-gensyms (iter body)
+    `(macrolet ((measure (,iter ,body)
+		  `(timeit (,,iter :disable-gc ,',disable-gc) ,@,body)))
+       (labels ((run-body1 (,iter)
+		  (measure ,iter ,body1))
+		(run-body2 (,iter)
+		  (measure ,iter ,body2)))
+	 (measure-timediff #'run-body1 #'run-body2
+			   :significance ,significance
+			   :maxtime ,maxtime
+			   :showtimes ,showtimes)))))
+
+
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "

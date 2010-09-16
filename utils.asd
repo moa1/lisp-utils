@@ -7,7 +7,7 @@
   ;; compiling the :components, but not after the defsystem in this file,
   ;; i.e. (use-package 'alexandria) won't have the intended effect
   ;; neither (defpackage :utils (:use :alexandria))
-  :depends-on (:alexandria :cl-ppcre)
+  :depends-on (:alexandria :cl-ppcre :cl-statistics)
   :components ((:file "package")
 	       (:file "utils" :depends-on ("package"))
 	       (:file "utils2" :depends-on ("package" "utils"))
