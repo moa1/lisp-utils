@@ -785,12 +785,16 @@ and REPEAT must be an integer greater 0."
 
 (defmacro prind (&rest args)
   "Print args"
-  `(progn
-     ,@(loop for a in args collect
-	    (if (eq a T)
-		`(format t "~%")
-		`(format t "~A:~A " ,(format nil "~A" a) ,a)))
-     (format t "~%")))
+  (with-gensyms (i)
+    `(progn
+       ,@(loop for a in args collect
+	      (if (eq a T)
+		  `(format t "~%")
+		  `(progn
+		     (format t "~A:" ,(format nil "~A" a))
+		     (dolist (,i (multiple-value-list ,a))
+		       (format t "~A " ,i)))))
+       (format t "~%"))))
 
 (defun sgn (x)
   "Return -1, 0, or 1, if X is less, equal, or greater than 0, respectively."
@@ -1001,20 +1005,19 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 	(uniq sequence test)))))
 
 (defun dump-to-file (file open-options item)
-  (if (= 0 (getf open-options :if-exists 0))
+  (if (eq 0 (getf open-options :if-exists 0))
       (setf (getf open-options :if-exists) :overwrite))
-  (if (= 0 (getf open-options :if-does-not-exist 0))
+  (if (eq 0 (getf open-options :if-does-not-exist 0))
       (setf (getf open-options :if-does-not-exist) :create))
   (let ((stream (apply #'open file :direction :output open-options)))
-    (pprint stream)
-    (pprint item)
     (when (not (null stream))
-	(pprint item stream)
-	(terpri stream)
-	(close stream))))
+      (pprint item stream)
+      ;;(terpri stream)
+      (close stream))))
 
 (defmacro no-error (((error-type default-value) &rest error-values)
 		    &body body)
+  (warn "deprecated no-error, use handler-case instead")
   (let ((error-values (append (list (list error-type default-value))
 			      error-values)))
     (with-gensyms (tag)
@@ -1045,6 +1048,9 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 			  (mean-diff (- (first mean-sd-n1) (first mean-sd-n2))))
 		     (when showtimes
 		       (prind times1) (prind times2)
+		       (format t "Body1 mean ~F ms. Body2 mean ~F ms.~%"
+			       (/ (first mean-sd-n1) iters .001)
+			       (/ (first mean-sd-n2) iters .001))
 		       (if signif
 			   (format t "Body1 is ~F ms ~A per call than Body2~%"
 				   (/ (abs mean-diff) iters .001)
@@ -1077,7 +1083,34 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 			   :maxtime ,maxtime
 			   :showtimes ,showtimes)))))
 
+(defun length>= (l minl)
+  "Return T if L has a length of at least MINL, NIL otherwise."
+  ;; this is faster than (>= (length l) minl)
+  (declare (optimize (speed 3) (safety 0)))
+  (declare (type fixnum minl))
+  (if (eq minl 0)
+      t
+      (if (null l)
+	  nil
+	  (length>= (cdr l) (1- minl)))))
 
+(defun choice (sequence)
+  "Return a random element of SEQUENCE"
+  (let ((i (random (length sequence))))
+    (elt sequence i)))
+
+(defmacro acond (&rest clauses)
+  "Like COND, but the test value of CLAUSES is accessible as symbol IT in the
+other clauses."
+  (labels ((gen-if (cs)
+	     (if (null cs)
+		 nil
+		 (let ((c (car cs)))
+		   `(let ((it ,(car c)))
+		      (if it
+			  ,@(cdr c)
+			  ,(gen-if (cdr cs))))))))
+    (gen-if clauses)))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
@@ -1086,6 +1119,7 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 ;(defun foldl  == reduce
 ; unfold p f g seed == (loop for x = seed then (g x) until (p x) collect (f x))
 
+; swap == rotatef
 
 ;; implement tests using eval-when :compile-toplevel?
 

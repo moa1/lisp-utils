@@ -83,6 +83,9 @@
    #:dump-to-file
    #:no-error
    #:timediff
+   #:length>=
+   #:choice
+   #:acond
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational
