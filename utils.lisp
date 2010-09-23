@@ -1035,9 +1035,10 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
   (labels ((measure (iters times1 times2)
 	     (push (funcall time-body1 iters) times1)
 	     (push (funcall time-body2 iters) times2)
-	     (let* ((p (no-error ((arithmetic-error 1))
-			 (statistics:t-test-two-sample-on-sequences times1
-								    times2)))
+	     (let* ((p (handler-case
+			   (statistics:t-test-two-sample-on-sequences times1
+								      times2)
+			 (arithmetic-error () 1)))
 		    (totaltime (+ (apply #'+ times1) (apply #'+ times2)))
 		    (signif (<= p significance)))
 	       (if (or signif (>= totaltime maxtime))
