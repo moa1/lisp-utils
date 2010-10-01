@@ -213,3 +213,31 @@
     (sort (unique +list2+ :countp (lambda (c) (>= c 32)) :key #'car)
 	  #'< :key #'car)
   nil)
+
+(deftest nflatten.0
+    (nflatten nil)
+  nil)
+
+(deftest nflatten.1
+    (nflatten '(1 (2 (3 4) 5) 6))
+  (1 2 3 4 5 6))
+
+(deftest flatten-1.0
+    (flatten-1 nil)
+  nil)
+
+(deftest flatten-1.1
+    (flatten-1 '(1 (2 (3 4) 5) 6))
+  (1 2 (3 4) 5 6))
+
+(deftest flatten-n.0
+    (flatten-n 0 '(1 (2 (3 (4 5) 6) 7) 8))
+  (1 (2 (3 (4 5) 6) 7) 8))
+
+(deftest flatten-n.1
+    (flatten-n 1 '(1 (2 (3 (4 5) 6) 7) 8))
+  (1 2 (3 (4 5) 6) 7 8))
+
+(deftest flatten-n.2
+    (flatten-n 2 '(1 (2 (3 (4 5) 6) 7) 8))
+  (1 2 3 (4 5) 6 7 8))

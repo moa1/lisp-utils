@@ -18,6 +18,7 @@
    #:subseqbut
    #:defanaphoric
    #:arplacd
+   #:avalues
    #:unroll-do
    #:do-unrollable
    #:timeit
@@ -86,6 +87,7 @@
    #:length>=
    #:choice
    #:acond
+   #:flatten-n
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

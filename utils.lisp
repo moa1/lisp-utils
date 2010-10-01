@@ -14,24 +14,27 @@
 		   (repeat-help (nthcdr 2 rest) (append l on))))))
     (repeat-help rest nil)))
 
-(defun nflatten (l &optional (acc nil))
-  (declare (type list l acc))
+(defun nflatten (l)
+  (declare (type list l))
   "Return a flattened list (i.e. no tree structure in the list)"
-  (cond ((null l) (nreverse acc))
-	((consp (car l)) (nflatten (cdr l) (nconc (nflatten (car l)) acc)))
-	(t (nflatten (cdr l) (nconc (list (car l)) acc)))))
+  (labels ((rec (l acc)
+	     (cond ((null l) acc)
+		   ((consp (car l)) (rec (cdr l) (nconc (rec (car l) nil) acc)))
+		   (t (rec (cdr l) (nconc (list (car l)) acc))))))
+    (nreverse (rec l nil))))
 
-(defun flatten-1 (l &optional acc)
+(defun flatten-1 (l)
   "Return a tree with the outermost level of tree structure removed, only
 the modified structure is copied.
 e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
 "
-  (cond
-    ((null l) (nreverse acc))
-    (t (flatten-1 (cdr l) (if (consp (car l))
-			      (nconc (reverse (car l)) acc)
-			      (cons (car l) acc))))))
-
+  (labels ((rec (l acc)
+	     (cond
+	       ((null l) (nreverse acc))
+	       (t (rec (cdr l) (if (consp (car l))
+				   (nconc (reverse (car l)) acc)
+				   (cons (car l) acc)))))))
+    (rec l nil)))
 
 (defun has-key (key h)
   (multiple-value-bind (val p) (gethash key h)
@@ -76,42 +79,43 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
   (nconc (subseq sequence 0 n) (subseq sequence (1+ nl))))
 
 (defmacro defanaphoric (ana-name
-			&optional form
+			&optional orig-form
 			&key (it-parameter 1) ana-documentation)
   "(Re)Define the macro ANA-NAME, which first binds the parameter number
 IT-PARAMETER (starting at 1) to the symbol it, and then evaluates and uses all
 other parameters in FORM, which gets documentation ANA-DOCUMENTATION."
-  (setf form (if (null form)
-		     (read-from-string (subseq (string ana-name) 1))
-		     form))
-  (setf ana-documentation
-	(if (null ana-documentation)
-	    (let ((old-doc (or
-			    (documentation form 'function)
-			    (format nil "~A has no documentation." form))))
-	      (format nil
-		      "Like ~A, but the ~:R parameter is evaluated before all others are~%evaluated, and its value is available as symbol it in all other parameter forms.~%~%Documentation for ~A:~%~A"
-		      form it-parameter form old-doc))))
-  ;; improve with:
-  ;; (defun describe-object-parameters (f)), which returns a lambda list of f
-  ;;   use sb-introspect:function-arglist /:function-lambda-list for this
-  ;; (defun lambda-list-enumerate (ll) return (0 (nil 1)) for (a &key (b 0) c)
-  ;; (defun lambda-list-enumlist (ll)), return (a b c) for (a &key (b 0) c)
-  ;;    !!consider macro lambda list, like (a b (c &optional d) &key (x 1) y)!!
-  ;; (let* ((ll (describe-object-parameters (ana-name)))
-  ;;        (ll-enum (lambda-list-enumerate ll))
-  ;;        (all-args (lambda-list-enumlist ll))
-  ;;        (args-head (subseq all-args 0 ,(1- it-parameter))
-  ;;        (args-tail (subseq all-args ,it-parameter))
-  ;;    ... etc ...
-  `(defmacro ,ana-name (&rest rest)
-     ,ana-documentation
-     (let ((rest-head (subseq rest 0 ,(1- it-parameter)))
-	   (rest-tail (subseq rest ,it-parameter)))
-       `(let ((it (,@(nth ,(1- it-parameter) rest))))
-	  (,',form ,@rest-head it ,@rest-tail)))))
+  (let* ((form (if (null orig-form)
+		   (read-from-string (subseq (string ana-name) 1))
+		   orig-form))
+	 (ana-doc
+	  (if (null ana-documentation)
+	      (let ((old-doc (or
+			      (documentation form 'function)
+			      (format nil "~A has no documentation." form))))
+		(format nil
+			"Like ~A, but the ~:R parameter is evaluated before all others are~%evaluated, and its value is available as symbol it in all other parameter forms.~%~%Documentation for ~A:~%~A"
+			form it-parameter form old-doc)))))
+    ;; improve with:
+    ;; (defun describe-object-parameters (f)), which returns a lambda list of f
+    ;;   use sb-introspect:function-arglist /:function-lambda-list for this
+    ;; (defun lambda-list-enumerate (ll) return (0 (nil 1)) for (a &key (b 0) c)
+    ;; (defun lambda-list-enumlist (ll)), return (a b c) for (a &key (b 0) c)
+    ;;    !!consider macro lambda list, like (a b (c &optional d) &key (x 1) y)!!
+    ;; (let* ((ll (describe-object-parameters (ana-name)))
+    ;;        (ll-enum (lambda-list-enumerate ll))
+    ;;        (all-args (lambda-list-enumlist ll))
+    ;;        (args-head (subseq all-args 0 ,(1- it-parameter))
+    ;;        (args-tail (subseq all-args ,it-parameter))
+    ;;    ... etc ...
+    `(defmacro ,ana-name (&rest rest)
+       ,ana-doc
+       (let ((rest-head (subseq rest 0 ,(1- it-parameter)))
+	     (rest-tail (subseq rest ,it-parameter)))
+	 `(let ((it (,@(nth ,(1- it-parameter) rest))))
+	    (,',form ,@rest-head it ,@rest-tail))))))
 
 (defanaphoric arplacd)
+(defanaphoric avalues)
 
 (defun variables-in-varlist (varlist)
   (labels ((rec (varlist variables)
@@ -279,6 +283,7 @@ If UNROLL is T, unroll the repetitions."
 
 (defun within (val min max)
   (declare (type real val min max))
+  (warn "deprecated within: use alexandria::clamp instead")
   (at-most (at-least val min) max))
 
 (defun binary-search (obj sorted-sequence &key (predicate #'cmp) (exact t)
@@ -1097,8 +1102,11 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 
 (defun choice (sequence)
   "Return a random element of SEQUENCE"
-  (let ((i (random (length sequence))))
-    (elt sequence i)))
+  (let ((len (length sequence)))
+    (if (<= len 1)
+	(elt sequence 0)
+	(let ((i (random len)))
+	  (elt sequence i)))))
 
 (defmacro acond (&rest clauses)
   "Like COND, but the test value of CLAUSES is accessible as symbol IT in the
@@ -1112,6 +1120,12 @@ other clauses."
 			  ,@(cdr c)
 			  ,(gen-if (cdr cs))))))))
     (gen-if clauses)))
+
+(defun flatten-n (n l)
+  "flatten-1 the list L N times."
+  (if (= 0 n)
+      l
+      (flatten-n (1- n) (flatten-1 l))))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
