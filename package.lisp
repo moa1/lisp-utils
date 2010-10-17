@@ -88,6 +88,9 @@
    #:choice
    #:acond
    #:flatten-n
+   #:reduce-binary-index
+   #:min-index
+   #:max-index
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

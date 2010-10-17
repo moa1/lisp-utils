@@ -955,6 +955,7 @@ Ex: (specializing-cond-let
 	     ht)
     result))
 
+;; remove-duplicates is a cl function, but has different options
 (defun unique (sequence &key only not countp (test #'eql) (key #'identity))
   "Return a list with all but one duplicate elements in SEQUENCE removed. If KEY
 is non-NIL the result of calling KEY with an element is used in the comparison.
@@ -1126,6 +1127,29 @@ other clauses."
   (if (= 0 n)
       l
       (flatten-n (1- n) (flatten-1 l))))
+
+(defun reduce-binary-index (function sequence &key (key #'identity))
+  "Return the element that satisfies the predicate FUNCTION called with it and,
+in turn, all other elements of SEQUENCE. FUNCTION must be a transitive
+predicate, i.e. if (FUNCTION a b) and (FUNCTION b c), then (FUNCTION a c).
+If KEY is given, it is used to extract the values of elements."
+  (declare (type (function (t t) boolean) function)
+	   (type (function (t) t) key)
+	   (type sequence sequence))
+  (reduce (lambda (i j)
+	    (declare (type fixnum i j))
+	    (if (funcall function
+			 (funcall key (elt sequence i))
+			 (funcall key (elt sequence j)))
+		i
+		j))
+	  (range (length sequence))))
+
+(defun min-index (sequence &key (key #'identity))
+  (reduce-binary-index #'< sequence :key key))
+
+(defun max-index (sequence &key (key #'identity))
+  (reduce-binary-index #'> sequence :key key))
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
