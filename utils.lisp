@@ -1171,20 +1171,9 @@ If KEY is given, it is used to extract the values of elements."
 
 (defsetf ith set-ith)
 
-(defun product-cases (&rest cases)
-  "Return a list of all possible cases.
-E.g if cases=('(a b c) (0 1)), the result is a permutation of ((a 0) (a 1) (b 0) (b 1) (c 0) (c 1))."
-  (labels ((rec (acc item)
-	     (if (>= (ith -1 item) (length (ith -1 cases)))
-		 acc
-		 (rec (cons (mapcar (lambda (i c) (nth i c)) item cases) acc)
-		      (progn
-			(incf (first item))
-			(dotimes (i (1- (length item)) item)
-			  (when (>= (nth i item) (length (nth i cases)))
-			    (setf (nth i item) 0)
-			    (incf (nth (1+ i) item)))))))))
-    (rec nil (repeat 0 (length cases)))))
+;; (defun product-cases ...) was here, use alexandria::map-product instead
+
+
 
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
