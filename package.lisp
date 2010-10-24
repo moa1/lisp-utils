@@ -91,6 +91,9 @@
    #:reduce-binary-index
    #:min-index
    #:max-index
+   #:split
+   #:ith
+   #:product-cases
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational
