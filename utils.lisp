@@ -834,9 +834,10 @@ and REPEAT must be an integer greater 0."
   (car (let+-bindings bindings body)))
 
 (defmacro d-b-lambda (lambda-list &body body)
-  `(lambda (&rest arguments)
-     (destructuring-bind ,lambda-list arguments
-       ,@body)))
+  (with-gensyms (arguments)
+    `(lambda (&rest ,arguments)
+       (destructuring-bind ,lambda-list ,arguments
+	 ,@body))))
 
 (defun log2 (value)
   "Return the log to the base 2 of VALUE."
@@ -1129,9 +1130,11 @@ other clauses."
       (flatten-n (1- n) (flatten-1 l))))
 
 (defun reduce-binary-index (function sequence &key (key #'identity))
-  "Return the element that satisfies the predicate FUNCTION called with it and,
-in turn, all other elements of SEQUENCE. FUNCTION must be a transitive
-predicate, i.e. if (FUNCTION a b) and (FUNCTION b c), then (FUNCTION a c).
+  "Return the index of an element of SEQUENCE. Starting with A as the first
+element, and the next element E, the predicate (FUNCTION E A) is called.
+If it returns T, A becomes E. E becomes the next element.
+FUNCTION should be transitive, i.e.
+if (FUNCTION a b) and (FUNCTION b c), then (FUNCTION a c).
 If KEY is given, it is used to extract the values of elements."
   (declare (type (function (t t) boolean) function)
 	   (type (function (t) t) key)
@@ -1143,15 +1146,15 @@ If KEY is given, it is used to extract the values of elements."
       (do ((j 1 (1+ j)))
 	  ((>= j len) index)
 	(let ((jval (funcall key (elt sequence j))))
-	  (when (not (funcall function val jval))
+	  (when (funcall function jval val)
 	    (setf index j)
 	    (setf val jval)))))))
 
 (defun min-index (sequence &key (key #'identity))
-  (reduce-binary-index #'< sequence :key key))
+  (reduce-binary-index #'<= sequence :key key))
 
 (defun max-index (sequence &key (key #'identity))
-  (reduce-binary-index #'> sequence :key key))
+  (reduce-binary-index #'>= sequence :key key))
 
 (defun split (sequence sep)
   "Return a list of subsequences of SEQUENCE, split by the element SEP"
