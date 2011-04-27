@@ -93,6 +93,7 @@
    #:max-index
    #:split
    #:ith
+   #:sigmoid
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

@@ -553,6 +553,14 @@ call function with all indices of the vector."
        (funcall function i))
   array)
 
+(defun mapc-arrays-major (function &rest arrays)
+  "Consider each array as a vector by viewing its elements in row-major order,
+and call function with all indices of the vector. Return arrays."
+  (let ((size (apply 'min (mapcar (lambda (x) (array-total-size x)) arrays))))
+    (loop for i below size do
+	 (funcall function i))
+    arrays))
+
 (defun mapc-array (function array)
   "Call function on all elements of array in row-major order."
   (mapc-array-major (lambda (i)
@@ -1173,6 +1181,10 @@ If KEY is given, it is used to extract the values of elements."
   (setf (elt sequence (if (< i 0) (+ (length sequence) i) i)) v))
 
 (defsetf ith set-ith)
+
+(defun sigmoid (x)
+  "sigmoid of x. Fails for x > 88.7 or x>709.7d0"
+  (/ 1.0 (1+ (exp x))))
 
 ;; (defun product-cases ...) was here, use alexandria::map-product instead
 
