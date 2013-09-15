@@ -3,7 +3,7 @@
 (defpackage :utils
   ;; this :use will make the symbols available in the package :utils,
   ;; not :common-lisp-user !
-  (:use #:common-lisp :alexandria)
+  (:use #:common-lisp #:alexandria)
   (:export
    ;; from utils.lisp
    #:repeat
@@ -94,6 +94,9 @@
    #:split
    #:ith
    #:sigmoid
+   #:all-eq-lengths
+   #:read-lines
+   #:extend-decision-tree
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational

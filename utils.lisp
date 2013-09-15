@@ -58,11 +58,11 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
 (deftype unique-list ()
     `(and list (satisfies unique-list-p)))
 
-;; is defined by alexandria
-;;(defmacro with-gensyms (symbols &body body)
-;;  ;;(declare (type unique-list symbols))
-;;  `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
-;;     ,@body))
+;; is defined by alexandria, but we want it independently of that
+(defmacro with-gensyms (symbols &body body)
+  ;;(declare (type unique-list symbols))
+  `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
+     ,@body))
 
 (defmacro asetf (place value-form)
   "Setf place to value. The symbol it in value-form means the initial value."
@@ -177,7 +177,7 @@ endlist: (end-test-form result-form*)"
       `(unroll-do ,varlist ,endlist ,@body)
       `(do ,varlist ,endlist ,@body)))
 
-(defmacro timeit ((repeat &key stats unroll disable-gc) &body body)
+(defmacro timeit ((repeat &key stats unroll print) &body body)
   "Return the total time of running BODY (number REPEAT) times. If STATS is T,
 measure (with possible overhead) and additionally return statistics (min, mean,
 max) of each execution duration.
@@ -185,9 +185,6 @@ If UNROLL is T, unroll the repetitions."
   (with-gensyms (start stop times i)
     `(progn
        (let (,start ,stop ,@(if stats `((,times (make-array ,repeat)))))
-	 ,(if disable-gc #+sbcl `(progn
-				   (sb-ext:gc)
-				   (sb-ext:gc-off)))
 	 (setq ,start (get-internal-real-time))
 	 (do-unrollable ,unroll
 	     ((,i 0 (1+ ,i))) ((>= ,i ,repeat))
@@ -196,7 +193,6 @@ If UNROLL is T, unroll the repetitions."
 				 (get-internal-real-time))))
 		     body))
 	 (setq ,stop (get-internal-real-time))
-	 ,(if disable-gc #+sbcl `(sb-ext:gc-on))
 	 (setf ,start (float (/ (- ,stop ,start)
 				internal-time-units-per-second)))
 	 ,(if stats
@@ -209,12 +205,20 @@ If UNROLL is T, unroll the repetitions."
 		 (asetf (elt ,times (1- ,repeat))
 			(float (/ (- ,stop it)
 				  internal-time-units-per-second)))
+		 ,@(when print `((format t "~A~%~A~%~A~%~A~%"
+					 ,start
+					 (reduce #'min ,times)
+					 (/ (reduce #'+ ,times)
+					    ,repeat)
+					 (reduce #'max ,times))))
 		 (values ,start
 			 (reduce #'min ,times)
 			 (/ (reduce #'+ ,times)
 			    ,repeat)
 			 (reduce #'max ,times)))
-	      `,start)))))
+	      `(progn 
+		 ,@(when print `((format t "~A~%" ,start)))
+		 ,start))))))
 
 (defun range (start &key (stop nil stop-p) (step 1) (incl nil))
   (if (not stop-p)
@@ -301,10 +305,6 @@ return -1, 0, 1 depending on obj being <, =, > than the ITEM, respectively.
 If EXACT is t, and OBJ is not found, return the result of calling FAIL with the
 two nearest elements or NIL if FAIL is not given, the closest element in the
 list otherwise."
-  (if (null key)
-      (setf key (lambda (x) x)))
-  (if (null fail)
-      (setf fail (constantly nil)))
   (let ((len (length sorted-sequence)))
     (labels ((rec (a b c)
 	       (declare (type fixnum a b c))
@@ -434,10 +434,9 @@ WIN-EMITTER is evaluated with the closest element in SORTED-SEQUENCE."
 (defun list-nth (list n)
   "Create a new list by taking every N-th element of LIST."
   (labels ((rec (list acc)
-	     (let ((rest (nthcdr n list)))
-	       (if (consp list)
-		   (rec rest (cons (car list) acc))
-		   (nreverse acc)))))
+	     (if (consp list)
+		 (rec (nthcdr n list) (cons (car list) acc))
+		 (nreverse acc))))
     (rec list nil)))
 
 (defun lists-nth (list n)
@@ -890,14 +889,14 @@ nil, grow ITERS expontentially and repeat, otherwise return X and last results."
 	(apply #'values x results)
 	(exp-until-predicate (* 2 x) function predicate))))
 
-(defmacro timecps ((repeat &key stats unroll disable-gc (time 0.1)) &body body)
-  "Like timeit, but return calls per second. TIME is the approximate measuring
-time."
+(defmacro timecps ((repeat &key stats unroll (time 0.1)) &body body)
+  "Like TIMEIT, but return calls per second. TIME is the approximate measuring
+time.
+Note: When :STATS is T, TIMEIT returns total, min, mean, and max as values."
   (with-gensyms (run iters timeit-call measure-iters)
     `(macrolet ((,timeit-call (,iters)
 		  `(timeit (,,repeat :stats ,,stats
-				     :unroll ,,unroll
-				     :disable-gc ,,disable-gc)
+				     :unroll ,,unroll)
 		     (progn-repeat (,,iters)
 		       ,',@body))))
        (labels ((,measure-iters (,iters)
@@ -907,7 +906,8 @@ time."
 					   (lambda (x &rest r)
 					     (declare (ignore r))
 					     (>= x 0.005)))
-		    (floor (/ (* ,time ,iters) ,run)))))
+		    ;; floor here instead of ceiling was a bug: 0 iterations were possible
+		    (ceiling (/ (* ,time ,iters) ,run)))))
 	 (let* ((,iters (,measure-iters 1)))
 	   ;;(prind ,iters)
 	   (let ((,run (multiple-value-list (,timeit-call ,iters))))
@@ -1086,10 +1086,17 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 	       (list (funcall time-body2 iters))))))
 
 (defmacro timediff (body1 body2
-		    &key (significance .01) (maxtime .5) showtimes disable-gc)
+		    &key (significance .01) (maxtime .5) showtimes)
+  "Measure the run times of BODY1 and BODY2 multiple times until one of them is significantly faster than the other, or until MAXTIME is exhausted.
+Returns many values, in this format:
+  (p-value significant)
+  (mean-diff mean-diff-of-one-iteration)
+  (mean1 standard-deviation1 iterations)
+  (mean2 standard-deviation2 iterations)
+  body-1-and-2-execution-times."
   (with-gensyms (iter body)
     `(macrolet ((measure (,iter ,body)
-		  `(timeit (,,iter :disable-gc ,',disable-gc) ,@,body)))
+		  `(timeit (,,iter) ,@,body)))
        (labels ((run-body1 (,iter)
 		  (measure ,iter ,body1))
 		(run-body2 (,iter)
@@ -1185,6 +1192,42 @@ If KEY is given, it is used to extract the values of elements."
 (defun sigmoid (x)
   "sigmoid of x. Fails for x > 88.7 or x>709.7d0"
   (/ 1.0 (1+ (exp x))))
+
+(defun all-eq-lengths (&rest sequences)
+  (apply #'= (mapcar #'length sequences)))
+
+(defun read-lines (filename)
+  "read all lines from FILENAME and return them as list of lines."
+  (with-open-file (stream filename)
+    (labels ((rec (words)
+	       (multiple-value-bind (line missing-newline-p)
+		   (read-line stream)
+		 (if missing-newline-p
+		     (nreverse (cons line words))
+		     (rec (cons line words))))))
+      (rec nil))))
+      
+(defun extend-decision-tree (tree new-leaf new-path)
+  "Given a decision tree TREE, follow a path NEW-PATH to reach leaf NEW-LEAF.
+If NEW-LEAF or NEW-PATH don't yet exist, add them to the decision tree.
+Returns the modified decision tree."
+  (if (null new-path)
+      (let ((leaves (assoc :leaves tree))) ;following types has led to tree: extend it with op
+	(if (null leaves)
+	    (acons :leaves (list new-leaf) tree) ;create new alist with :leaves containing new-leaf
+	    (progn
+	      (setf (cdr leaves) (cons new-leaf (cdr leaves)))
+	      tree
+	      ))) ;extend :leaves leaf with new-leaf
+      (let* ((top (car new-path)) ;follow tree using top
+	     (subtree (assoc top tree))
+	     (rem-path (cdr new-path)))
+	(if (null subtree)
+	    (let ((new-tree (extend-decision-tree nil new-leaf rem-path))) ;type didn't exist: create it
+	      (acons top new-tree tree))
+	    (progn
+	      (setf (cdr subtree) (extend-decision-tree (cdr subtree) new-leaf rem-path)) ;follow type and save potentially new returned tree
+	      tree)))))
 
 ;; (defun product-cases ...) was here, use alexandria::map-product instead
 
