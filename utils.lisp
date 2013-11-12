@@ -1044,12 +1044,14 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 					    (return-from ,tag ,v)))))
 	   ,@body)))))
 
-(defun measure-timediff (time-body1 time-body2
+(defparameter *measurable-time* 0.05)
+
+(defun measure-timediff (time-function1 time-function2
 			 &key significance maxtime showtimes)
   (declare (type (real 0 1) significance))
   (labels ((measure (iters times1 times2)
-	     (push (funcall time-body1 iters) times1)
-	     (push (funcall time-body2 iters) times2)
+	     (push (funcall time-function1 iters) times1)
+	     (push (funcall time-function2 iters) times2)
 	     (let* ((p (handler-case
 			   (statistics:t-test-two-sample-on-sequences times1
 								      times2)
@@ -1068,10 +1070,10 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 		       (format t "Body1 mean ~F ms. Body2 mean ~F ms.~%"
 			       (/ (first mean-sd-n1) iters .001)
 			       (/ (first mean-sd-n2) iters .001))
-		       (if signif
-			   (format t "Body1 is ~F ms ~A per call than Body2~%"
-				   (/ (abs mean-diff) iters .001)
-				   (if (< mean-diff 0) "faster" "slower"))))
+		       (when signif
+			 (format t "Body1 is ~F ms ~A per call than Body2.~%"
+				 (/ (abs mean-diff) iters .001)
+				 (if (< mean-diff 0) "faster" "slower"))))
 		     (values (list p signif)
 			     (list mean-diff (/ mean-diff iters))
 			     mean-sd-n1 mean-sd-n2
@@ -1079,29 +1081,29 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 		   (measure iters times1 times2)))))
     (let ((iters (exp-until-predicate 1
 				      (lambda (i)
-					(+ (funcall time-body1 i)
-					   (funcall time-body2 i)))
-				      (lambda (x) (>= x .05)))))
+					(+ (funcall time-function1 i)
+					   (funcall time-function2 i)))
+				      (lambda (x) (>= x *measurable-time*)))))
       (measure iters
-	       (list (funcall time-body1 iters))
-	       (list (funcall time-body2 iters))))))
+	       (list (funcall time-function1 iters))
+	       (list (funcall time-function2 iters))))))
 
-(defmacro timediff (body1 body2
+(defmacro timediff (form1 form2
 		    &key (significance .01) (maxtime .5) showtimes)
-  "Measure the run times of BODY1 and BODY2 multiple times until one of them is significantly faster than the other, or until MAXTIME is exhausted.
+  "Measure the run times of FORM1 and FORM2 multiple times until one of them is significantly faster than the other, or until MAXTIME is exhausted.
 Returns many values, in this format:
-  (p-value significant)
+  (p-value significant-p)
   (mean-diff mean-diff-of-one-iteration)
   (mean1 standard-deviation1 iterations)
   (mean2 standard-deviation2 iterations)
-  body-1-and-2-execution-times."
+  number-of-form1-and-form2-loops-to-obtain-measurable-runtime"
   (with-gensyms (iter body)
     `(macrolet ((measure (,iter ,body)
-		  `(timeit (,,iter) ,@,body)))
+		  `(timeit (,,iter) ,,body)))
        (labels ((run-body1 (,iter)
-		  (measure ,iter ,body1))
+		  (measure ,iter ,form1))
 		(run-body2 (,iter)
-		  (measure ,iter ,body2)))
+		  (measure ,iter ,form2)))
 	 (measure-timediff #'run-body1 #'run-body2
 			   :significance ,significance
 			   :maxtime ,maxtime
