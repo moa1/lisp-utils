@@ -1053,6 +1053,7 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 	     (let* ((p (handler-case
 			   (statistics:t-test-two-sample-on-sequences times1
 								      times2)
+			 (simple-error () 1) ;this occurs when one of the SD = 0.0.
 			 (arithmetic-error () 1)))
 		    (totaltime (+ (apply #'+ times1) (apply #'+ times2)))
 		    (signif (<= p significance)))
