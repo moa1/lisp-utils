@@ -59,10 +59,10 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
     `(and list (satisfies unique-list-p)))
 
 ;; is defined by alexandria, but we want it independently of that
-(defmacro with-gensyms (symbols &body body)
-  ;;(declare (type unique-list symbols))
-  `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
-     ,@body))
+;;(defmacro with-gensyms (symbols &body body)
+;;  ;;(declare (type unique-list symbols))
+;;  `(let ,(loop for symbol in symbols collect `(,symbol (gensym)))
+;;     ,@body))
 
 (defmacro asetf (place value-form)
   "Setf place to value. The symbol it in value-form means the initial value."
