@@ -1,0 +1,6 @@
+this contains various utilities.
+
+make a symlink in ~/quicklisp/local-projects to the directory lisp-utils:
+
+toni@eckplatz:~/quicklisp/local-projects$ ln -s ~/lisp-utils .
+
