@@ -3,6 +3,8 @@
 ;; The children are not ordered. 
 ;; If a circle is constructed, the behavior of the functions are undefined.
 
+;; A big note: I suspect that I implemented a normal tree, not a DAWG. (Especially in the functions DAWG->LIST, and DAWG.) Just rename the package in this case. But basically I want a tree anyways.
+
 (defpackage :dawg
   (:use :common-lisp)
   (:export :dawg-label
@@ -23,19 +25,21 @@
   (label nil) ; the node's label; can have any type.
   (value nil) ; the node's value; can have any type.
   (parent nil) ;; I would like to add ":type (or nil node)" here, but that doesn't work. nil means that this node represents the root of the dawg.
-  (children nil :type hash-table))
+  (children nil) ;; The mapping from a children's label to its node. The specific structure depends on the underlying implementation.
+  )
 
 ;;;; The following 5 functions must be replaced if CHILDREN (in structure NODE) should not be a hash-table of default type anymore, or not be a hash-table at all anymore.
 
 ;; TODO: make it possible to define a new type plus functions operating on this new type, which use user-specified versions of the following 5 functions. (see macro DEFINE-HASHTRIE of package DARTSCLHASHTREE for an example.)
 
-(defun make-empty-children ()
-  (make-hash-table :test 'eq))
+;; I somewhat artificially made this function depend on its only argument NODE, to allow converting the function to a method which depends on its type of NODE, which would not be possible in the beforehand setting, where the function didn't have a parameter.
+(defun set-empty-children (node)
+  (setf (node-children node) (make-hash-table :test 'eq)))
 
 (defun add/update-child-in-children (node child-label child-node)
   "add/update CHILD-NODE under the label CHILD-LABEL in NODE's children.
 Returns :UPDATE or :ADD, depending on whether CHILD-LABEL was present or not, respectively.
-Does _not_ modify NODE-LABEL or NODE-VALUE."
+Does _not_ modify CHILD-LABEL or CHILD-VALUE."
   (let* ((children (node-children node))
 	 (operation (if (null (nth-value 1 (gethash child-label children)))
 			:add
@@ -44,7 +48,7 @@ Does _not_ modify NODE-LABEL or NODE-VALUE."
     operation))
 
 (defun get-child-from-children (node child-label)
-  "get the child node stored under label CHILD-LABEL in the children of NODE.
+  "Get the child node stored under label CHILD-LABEL in the children of NODE.
 Returns as secondary value whether CHILD-LABEL was found."
   (gethash child-label (node-children node)))
 
@@ -84,10 +88,12 @@ Returns T or NIL, depending on whether CHILD-LABEL was present."
 
 (defun make-dawg-root ()
   "Return an empty dawg."
-  (make-node :label nil
-	     :value nil
-	     :parent nil
-	     :children (make-empty-children)))
+  (let ((root (make-node :label nil
+			 :value nil
+			 :parent nil
+			 :children nil)))
+    (set-empty-children root)
+    root))
 
 (defun dawg-reduce (dawg children-reduce-function children-initial-value node-function &key sort-children-predicate)
   "Visit DAWG in depth-first order and reduce it to one value.
@@ -115,7 +121,7 @@ An example of SORT-CHILDREN-PREDICATE is (lambda (a b) (< (dawg-value a) (dawg-v
 			children-result))))
     (rec dawg)))
 
-;;TODO (defun dawg-breadth-first-
+;;TODO (defun dawg-breadth-first-reduce ...
 ;;TODO: Is there a difference between dawg-depth-first-reduce and dawg-breadth-first-reduce? Right now, I don't think there is one, because the children must be computed before their parent.
 
 (defun dawg->list (dawg &key sort-children-predicate)
@@ -134,11 +140,12 @@ An example of SORT-CHILDREN-PREDICATE is (lambda (a b) (< (dawg-value a) (dawg-v
 
 (defun dawg-set-new-child (dawg child-label child-value)
   "Set the child with label CHILD-LABEL and value CHILD-VALUE under the dawg DAWG to an empty dawg.
-Returns the newly created child node, and :UPDATE or :ADD, depending on whether CHILD-LABEL was present or not."
+Returns the newly created child node, and :UPDATE or :ADD as second value, depending on whether CHILD-LABEL was present or not, respectively."
   (let ((child-node (make-node :label child-label
 			       :value child-value
 			       :parent dawg
-			       :children (make-empty-children))))
+			       :children nil)))
+    (set-empty-children child-node)
     (values child-node
 	    (add/update-child-in-children dawg child-label child-node))))
 
@@ -219,7 +226,7 @@ Both PATH-LABELS and the path-labels in PAIRS must be ordered by their occurrenc
     (pairs (make-dawg-from-paths (mapcar #'car pairs) (mapcar #'cadr pairs)))
     ))
 
-;; TODO: add (defun dawg-add-dawg (dawg1 dawg2)), which merges the two dawgs (on child-label collision, dawg1 is preferred). This should merge '(((a) 1) ((b) 2) ((a a) 11) ((a b) 12)) and '(((a) -1) ((a c) 13)) so that '(((a) 1) ((b) 2) ((a a) 11) ((a b) 12) ((a c) 13)) results (i.e. ((a) -1) is overridden by ((a) 1)).
+;; TODO: add (defun dawg-merge-dawg (dawg1 dawg2)), which merges the two dawgs (on child-label collision, dawg1 is preferred). This should merge '(((a) 1) ((b) 2) ((a a) 11) ((a b) 12)) and '(((a) -1) ((a c) 13)) so that '(((a) 1) ((b) 2) ((a a) 11) ((a b) 12) ((a c) 13)) results (i.e. ((a) -1) is overridden by ((a) 1)).
 
 (defun dawg-follow-parent (dawg function)
   "Follow DAWG's parent, until we reach the root.
@@ -235,7 +242,7 @@ Returns the root."
 
 ;;;; Test functions:
 (defun symbol-label-lessp (a b)
-  "Returns T, if string A is lexicographically less than string B."
+  "Returns T, if the label of node A is lexicographically less than the label of node B, NIL otherwise."
   (let* ((sa (string (dawg-label a)))
 	 (sb (string (dawg-label b)))
 	 (r (string-lessp sa sb)))
@@ -270,3 +277,9 @@ Returns the root."
       (assert-equal dawg-pairs correct))))
 
 (dawg-test)
+
+;;;; Different sub-tree storage implementation types
+;; All of the following should be possible:
+;; * Store the sub-trees as a hash-table
+;; * Store the sub-trees as an alist.
+;; * Store the sub-trees in an array, where each index corresponds to a predefined atom
