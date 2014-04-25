@@ -12,6 +12,7 @@
 	   :dawg-parent ;; I really wouldn't want to export the SETF-function of dawg-parent, b/c changing the parent of a node can make the whole data structure inconsistent.
 	   :dawg-reduce
 	   :dawg->list
+	   :list->dawg
 	   :dawg-set-new-child
 	   :dawg-follow-path
 	   :dawg-add/update-path
@@ -112,8 +113,6 @@ An example of SORT-CHILDREN-PREDICATE is (lambda (a b) (< (dawg-value a) (dawg-v
 	   (list label value (nreverse children-result)))) ;;nreverse b/c we cons'd
     (dawg-reduce dawg #'children-reduce-function nil #'node-function :sort-children-predicate sort-children-predicate)))
 
-;; TODO: (defun list->dawg (list))
-
 (defun dawg-set-new-child (dawg child-label child-value)
   "Set the child with label CHILD-LABEL and value CHILD-VALUE under the dawg DAWG to an empty dawg.
 Returns the newly created child node, and :UPDATE or :ADD as second value, depending on whether CHILD-LABEL was present or not, respectively."
@@ -124,7 +123,24 @@ Returns the newly created child node, and :UPDATE or :ADD as second value, depen
     (set-empty-children child-node)
     (values child-node
 	    (add/update-child-in-children dawg child-label child-node))))
-       
+
+(defun list->dawg (list make-dawg-root-function)
+  "Convert the list representation LIST to its corresponding dawg.
+MAKE-DAWG-ROOT-FUNCTION must be the function without parameters that returns a new root of a DAWG. (see parameter MAKE-DAWG-TYPENAME-ROOT-FUNCTION-NAME of DEFINE-DAWG.)
+If a label occurs more than once in a children list, the last occurrence is kept and the others are thrown away."
+  (labels ((rec (list dawg)
+	     (if (null list)
+		 dawg
+		 (destructuring-bind (label value children-list) list
+		   (let ((new-dawg (dawg-set-new-child dawg label value)))
+		     (dolist (child-list children-list)
+		       (rec child-list new-dawg)))
+		   dawg))))
+    (let ((dawg-root (funcall make-dawg-root-function))
+	  (root-label (car list)))
+      (rec list dawg-root)
+      (get-child-from-children dawg-root root-label))))
+
 (defun dawg-follow-path (dawg path &optional (function nil))
   "Find a path from the top of the dawg, DAWG, with the path specified by the list PATH, its elements specifying child's labels.
 Return the first dawg that doesn't have a child with a label like the CAR of the remaining path.
@@ -219,14 +235,14 @@ Returns the root."
 	  (dawg-follow-parent parent function)))))
 
 (defmacro define-dawg (dawg-typename
-		       make-dawg-typename-root-function-name
+		       make-dawg-root-function-name
 		       set-empty-children-function
 		       add/update-child-in-children-function
 		       get-child-from-children-function
 		       remove-child-from-children-function
 		       list-childs-in-children-function)
   "Define a new type of DAWG, which has node type DAWG-TYPENAME and the 5 functions modifying and accessing the children of a node.
-Also defines the function named MAKE-DAWG-TYPENAME-ROOT-FUNCTION-NAME, which returns the empty DAWG upon invocation.
+Also defines the function named MAKE-DAWG-ROOT-FUNCTION-NAME, which returns the empty DAWG upon invocation.
 The descriptions of the 5 functions modifying and accessing children are as follows:
 
   (defun set-empty-children (node)
@@ -310,7 +326,7 @@ The descriptions of the 5 functions modifying and accessing children are as foll
 	 "Set the CHILDREN of DAWG."
 	 (setf (,dawg-typename+-children dawg) children))
 
-       (defun ,make-dawg-typename-root-function-name ()
+       (defun ,make-dawg-root-function-name ()
 	 "Return an empty dawg."
 	 (let ((root (,dawg-typename+make-node :label nil
 					       :value nil
@@ -430,6 +446,11 @@ MAKE-DAWG-ROOT-FUNCTION is a function with no parameters that returns a new DAWG
       (dawg-add/update-path dawg '(a a/c) '(-1 -13))
       (dawg-add/update-path dawg '(a a/b) '(-1 -12)) 
       (assert-equal dawg '(:root :bla ((a -1 ((a/a 11 ((a/a/a 111 nil))) (a/b -12 nil) (a/c -13 nil))))))
+      ;; test LIST->DAWG.
+      (let* ((l1 '(:root :bla ((a -1 ((a/a 11 ((a/a/a 111 nil))) (a/b -12 nil) (a/c -13 nil))))))
+	     (l2 (dawg->list (list->dawg l1 make-dawg-root-function)
+			     :sort-children-predicate #'symbol-label-lessp)))
+	(assert (equal l1 l2)))
       (let ((dawg-a/a/a (dawg-follow-path dawg '(a a/a a/a/a)))
 	    (visited nil))
 	(dawg-follow-parent dawg-a/a/a (lambda (dawg) (push (dawg-label dawg) visited)))
