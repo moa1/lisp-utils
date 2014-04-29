@@ -15,7 +15,12 @@
 	   :ltree-follow-path
 	   :ltree-add/update-path
 	   :make-ltree
-	   :ltree-follow-parent))
+	   :ltree-follow-parent
+	   :define-ltree-type
+	   :ltree-hashtable ;structure
+	   :make-ltree-hashtable-root
+	   :define-ltree-type-with-children-array-storage
+	   ))
 
 (in-package :ltree)
 
@@ -47,7 +52,7 @@
 (defgeneric (setf ltree-children) (children ltree)
   (:documentation "Set the CHILDREN of ltree."))
 
-;; The 5 methods related to children handling. These functions must be overwritten by DEFINE-ltree, if theck children storage should be a custom data structure.
+;; The 5 methods related to children handling. These functions must be overwritten by DEFINE-LTREE-TYPE, if the children storage should be a custom data structure.
        
 ;; I somewhat artificially made this function depend on its only argument NODE, to allow converting the function to a method which depends on its type of NODE, which would not be possible in the beforehand setting, where the function didn't have a parameter and only returned the value representing an empty children slot.
 (defgeneric set-empty-children (node)
@@ -64,7 +69,7 @@ Returns as secondary value whether CHILD-LABEL was found."))
 
 (defgeneric remove-child-from-children (node child-label)
   (:documentation "Removes CHILD-LABEL from the children of NODE.
-Returns T or NIL, depending on whether CHILD-LABEL was present."))
+Returns T if CHILD-LABEL was present, NIL otherwise."))
 
 (defgeneric list-childs-in-children (node)
   (:documentation "Return a list with all children nodes of NODE."))
@@ -72,7 +77,7 @@ Returns T or NIL, depending on whether CHILD-LABEL was present."))
 (defgeneric new-node-from-ltree-type (ltree)
   (:documentation "Return a newly created node with the same type as LTREE and all slots initialized to their default values."))
 
-;;;; Functions in this section use the accessor functions and 5 functions handling children passed to define-ltree to modify or query node-children. For the hash-table children type see below.
+;;;; Functions in this section use the accessor functions and 5 functions handling children passed to DEFINE-LTREE-TYPE to modify or query node-children. For the hash-table children type see below.
 
 (defun ltree-reduce (ltree children-reduce-function children-initial-value node-function &key sort-children-predicate)
   "Visit LTREE in depth-first order and reduce it to one value.
@@ -134,9 +139,14 @@ If a label occurs more than once in a children list, the last occurrence is kept
 		       (rec child-list new-ltree)))
 		   ltree))))
     (let ((ltree-root (funcall make-ltree-root-function))
-	  (root-label (car list)))
-      (rec list ltree-root)
-      (get-child-from-children ltree-root root-label))))
+	  (root-label (car list))
+	  (root-value (cadr list))
+	  (children-list (caddr list)))
+      (setf (ltree-label ltree-root) root-label)
+      (setf (ltree-value ltree-root) root-value)
+      (dolist (child-list children-list)
+	(rec child-list ltree-root))
+      ltree-root)))
 
 (defun ltree-follow-path (ltree path &optional (function nil))
   "Find a path from the top of the ltree, LTREE, with the path specified by the list PATH, its elements specifying child's labels.
@@ -230,13 +240,13 @@ Returns the root."
 	  (funcall function parent)
 	  (ltree-follow-parent parent function)))))
 
-(defmacro define-ltree (ltree-typename
-		       make-ltree-root-function-name
-		       set-empty-children-function
-		       add/update-child-in-children-function
-		       get-child-from-children-function
-		       remove-child-from-children-function
-		       list-childs-in-children-function)
+(defmacro define-ltree-type (ltree-typename
+			     make-ltree-root-function-name
+			     set-empty-children-function
+			     add/update-child-in-children-function
+			     get-child-from-children-function
+			     remove-child-from-children-function
+			     list-childs-in-children-function)
   "Define a new type of LTREE, which has node type LTREE-TYPENAME and the 5 functions modifying and accessing the children of a node.
 Also defines the function named MAKE-LTREE-ROOT-FUNCTION-NAME, which returns the empty LTREE upon invocation.
 The descriptions of the 5 functions modifying and accessing children are as follows:
@@ -258,12 +268,14 @@ The descriptions of the 5 functions modifying and accessing children are as foll
 
   (defun remove-child-from-children (node child-label)
     'Removes CHILD-LABEL from the children of NODE.
-  Returns T or NIL, depending on whether CHILD-LABEL was present.'
+  Returns T if CHILD-LABEL was present, NIL otherwise.'
     ... )
 
   (defun list-childs-in-children (node)
     'Return a list with all children nodes of NODE.'
-    ... )"
+    ... )
+
+When implementing a new ltree type, you might want to use function LTREE-TEST to test some basic functionality of the type."
   (declare (type symbol ltree-typename))
 	   ;;(ftype (function (t) t) set-empty-children-function)
 	   ;;(ftype (function (t symbol t) (or :add :update)) add/update-child-in-children-function)
@@ -275,11 +287,16 @@ The descriptions of the 5 functions modifying and accessing children are as foll
 	 (ltree-typename+-value (intern (concatenate 'simple-string type-string "-VALUE")))
 	 (ltree-typename+-parent (intern (concatenate 'simple-string type-string "-PARENT")))
 	 (ltree-typename+-children (intern (concatenate 'simple-string type-string "-CHILDREN")))
-	 (ltree-typename+make-node (intern (concatenate 'simple-string "MAKE-" type-string))))
+	 (ltree-typename+make-node (gensym (concatenate 'simple-string "MAKE-" type-string))))
     `(progn
        ;; the structure
 
-       (defstruct ,ltree-typename
+       (defstruct (,ltree-typename
+		    ;; don't create potentially already otherwhere defined symbols
+		    ;; TODO: How to name selector functions with symbols made by gensym?
+		    (:constructor ,ltree-typename+make-node)
+		    (:copier nil)
+		    (:predicate nil))
 	 (label nil) ; the node's label; can have any type.
 	 (value nil) ; the node's value; can have any type.
 	 (parent nil) ;; I would like to add ":type (or nil node)" here, but that doesn't work. nil means that this node represents the root of the ltree.
@@ -325,9 +342,9 @@ The descriptions of the 5 functions modifying and accessing children are as foll
        (defun ,make-ltree-root-function-name ()
 	 "Return an empty ltree."
 	 (let ((root (,ltree-typename+make-node :label nil
-					       :value nil
-					       :parent nil
-					       :children nil)))
+						:value nil
+						:parent nil
+						:children nil)))
 	   (funcall ,set-empty-children-function root)
 	   root))
 
@@ -350,16 +367,15 @@ The descriptions of the 5 functions modifying and accessing children are as foll
        (defmethod list-childs-in-children ((node ,ltree-typename))
 	 (funcall ,list-childs-in-children-function node))
 
-       ;; auxillary functions
+       ;; auxiliary functions
 
        (defmethod new-node-from-ltree-type ((ltree ,ltree-typename))
 	 "Return a newly created node with the same type as LTREE and all slots initialized to their default values."
 	 (,ltree-typename+make-node))
-
        (defmethod print-object ((object ,ltree-typename) stream)
 	 ;; TODO: find a way to sort the children by label, possibly using the sort-children parameter of ltree->list.
 	 (print-unreadable-object (object stream :type nil :identity t)
-	   (format stream "LTREE ~s" (ltree->list object))))
+	   (format stream "~A ~s" ,type-string (ltree->list object))))
        )))
 
 ;;;; Different sub-tree storage implementation types
@@ -368,7 +384,7 @@ The descriptions of the 5 functions modifying and accessing children are as foll
 ;; * Store the sub-trees as an alist or plist.
 ;; * Store the sub-trees in an array, where each index corresponds to a predefined atom
 
-;; A default implementation using a hash-table as children storage method.
+;;;; Using a hash-table as children storage method.
 
 (defun htchilds-set-empty-children (node)
   (setf (ltree-children node) (make-hash-table :test 'eq)))
@@ -391,8 +407,8 @@ Returns as secondary value whether CHILD-LABEL was found."
 
 (defun htchilds-remove-child-from-children (node child-label)
   "Removes CHILD-LABEL from the children of NODE.
-Returns T or NIL, depending on whether CHILD-LABEL was present."
-  (remhash child-label node))
+Returns T if CHILD-LABEL was present, NIL otherwise."
+  (remhash child-label (ltree-children node)))
 
 (defun htchilds-list-childs-in-children (node)
   "Return a list with all children nodes of NODE."
@@ -405,13 +421,89 @@ Returns T or NIL, depending on whether CHILD-LABEL was present."
 
 ;; Define the ltree type ltree-hashtable.
 
-(define-ltree ltree-hashtable
+(define-ltree-type ltree-hashtable
     make-ltree-hashtable-root
   #'htchilds-set-empty-children
   #'htchilds-add/update-child-in-children
   #'htchilds-get-child-from-children
   #'htchilds-remove-child-from-children
   #'htchilds-list-childs-in-children)
+
+;;;; Using an array of symbols as children storage method.
+
+(defmacro define-ltree-type-with-children-array-storage (ltree-typename init-possible-children-symbols-function-name make-ltree-root-function-name)
+  "Define an ltree that uses an array of symbols to store children.
+LTREE-TYPENAME is the name of the struct that makes up the ltree.
+INIT-POSSIBLE-CHILDREN-SYMBOLS-FUNCTION-NAME is the name of the function that receives the list of symbols that can be stored as children labels in the ltree. It must be used exactly once, before creating any ltree of this type using MAKE-LTREE-ROOT-FUNCTION-NAME.
+MAKE-LTREE-ROOT-FUNCTION-NAME is the name of the function that returns an empty root."
+  ;; with init-possible-children-symbols-function-name it is possible to init the possible children symbols during run-time.
+  (let ((set-empty-children-fn (gensym "set-empty-children"))
+	(add/update-child-in-children-fn (gensym "add/update-child-in-children"))
+	(get-child-from-children-fn (gensym "get-child-from-children"))
+	(remove-child-from-children-fn (gensym "remove-child-from-children"))
+	(list-childs-in-children-fn (gensym "list-childs-in-children"))
+	(child-to-index (gensym "child-to-index"))
+	(number-children (gensym "number-children")))
+    `(let ((,child-to-index nil)
+	   (,number-children nil))
+       (defun ,init-possible-children-symbols-function-name (possible-children-symbols)
+	 "Initialize the list of symbols that may be used as the labels of children with POSSIBLE-CHILDREN-SYMBOLS.
+This function must be called exactly once, before the first ltree root of this type is created."
+	 (assert (listp possible-children-symbols))
+	 ;; TODO: better error message than the cryptic one returned by this assert.
+	 (assert (and (null ,child-to-index) (null ,number-children))) ;calling twice is forbidden.
+	 (setf ,child-to-index (make-hash-table :test 'eq :size (length possible-children-symbols)))
+	 (setf ,number-children (length possible-children-symbols))
+	 (loop
+	    for s in possible-children-symbols
+	    for index from 0 do
+	      (assert (and (symbolp s) (not (null s))))
+	      (setf (gethash s ,child-to-index) index)))
+       (flet ((,set-empty-children-fn (node)
+		(setf (ltree-children node) (make-array ,number-children :element-type 'symbol :initial-element nil :adjustable nil :fill-pointer nil)))
+	      (,add/update-child-in-children-fn (node child-label child-node)
+		(let* ((i (gethash child-label ,child-to-index))
+		       (children (ltree-children node))
+		       (operation (if (null (svref children i))
+				      :add
+				      :update)))
+		  (setf (svref children i) child-node)
+		  operation))
+	      (,get-child-from-children-fn (node child-label)
+		(let* ((i (gethash child-label ,child-to-index))
+		       (children (ltree-children node))
+		       (child (svref children i)))
+		  (values child (not (null child)))))
+	      (,remove-child-from-children-fn (node child-label)
+		(let* ((i (gethash child-label ,child-to-index))
+		       (children (ltree-children node))
+		       (child (svref children i)))
+		  (setf (svref children i) nil)
+		  (not (null child))))
+	      (,list-childs-in-children-fn (node)
+		(let* ((children (ltree-children node))
+		       (childs nil))
+		  (maphash (lambda (symbol index)
+			     (declare (ignore symbol))
+			     (let ((child-node (svref children index)))
+			       (when child-node
+				 (push child-node childs))))
+			   ,child-to-index)
+		  childs)))
+	 (define-ltree-type ,ltree-typename
+	     ,make-ltree-root-function-name
+	   #',set-empty-children-fn
+	   #',add/update-child-in-children-fn
+	   #',get-child-from-children-fn
+	   #',remove-child-from-children-fn
+	   #',list-childs-in-children-fn)))))
+
+;; Test define-ltree-type-with-children-array-storage:
+;;(progn
+;;  (ltree::define-ltree-type-with-children-array-storage ltree-array-1 init-ltree-array-1 make-ltree-array-1)
+;;  (init-ltree-array-1 '(ltree::a ltree::a/a ltree::a/a/a ltree::a/b ltree::a/c ltree::b))
+;;  (ltree::ltree-test #'make-ltree-array-1)
+;;  )
 
 ;;;; Test functions:
 
