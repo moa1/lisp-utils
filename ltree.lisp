@@ -451,7 +451,15 @@ MAKE-LTREE-ROOT-FUNCTION-NAME is the name of the function that returns an empty 
 This function must be called exactly once, before the first ltree root of this type is created."
 	 (assert (listp possible-children-symbols))
 	 ;; TODO: better error message than the cryptic one returned by this assert.
-	 (assert (and (null ,child-to-index) (null ,number-children))) ;calling twice is forbidden.
+	 (assert (or (and (null ,child-to-index) (null ,number-children))
+		     (let ((stored nil)
+			   (passed (loop for s in possible-children-symbols collect s)))
+		       (maphash (lambda (k v) (declare (ignore v)) (push k stored)) ,child-to-index)
+		       (flet ((symbol-lessp (a b)
+				(string-lessp (string a) (string b))))
+			 (setf passed (sort passed #'symbol-lessp))
+			 (setf stored (sort stored #'symbol-lessp))
+			 (equalp passed stored))))) ;if the init-* function is called multiple times, it must be called with the same parameter.
 	 (setf ,child-to-index (make-hash-table :test 'eq :size (length possible-children-symbols)))
 	 (setf ,number-children (length possible-children-symbols))
 	 (loop
