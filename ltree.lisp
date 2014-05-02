@@ -432,7 +432,7 @@ Returns T if CHILD-LABEL was present, NIL otherwise."
 ;;;; Using an array of symbols as children storage method.
 
 (defmacro define-ltree-type-with-children-array-storage (ltree-typename init-possible-children-symbols-function-name make-ltree-root-function-name)
-  "Define an ltree that uses an array of symbols to store children.
+  "Define an ltree that uses an array of objects (except NIL) to store children.
 LTREE-TYPENAME is the name of the struct that makes up the ltree.
 INIT-POSSIBLE-CHILDREN-SYMBOLS-FUNCTION-NAME is the name of the function that receives the list of symbols that can be stored as children labels in the ltree. It must be used exactly once, before creating any ltree of this type using MAKE-LTREE-ROOT-FUNCTION-NAME.
 MAKE-LTREE-ROOT-FUNCTION-NAME is the name of the function that returns an empty root."
@@ -465,7 +465,7 @@ This function must be called exactly once, before the first ltree root of this t
 	 (loop
 	    for s in possible-children-symbols
 	    for index from 0 do
-	      (assert (and (symbolp s) (not (null s))))
+	      (assert (not (null s)))
 	      (setf (gethash s ,child-to-index) index)))
        (flet ((,set-empty-children-fn (node)
 		(setf (ltree-children node) (make-array ,number-children :element-type 'symbol :initial-element nil :adjustable nil :fill-pointer nil)))
