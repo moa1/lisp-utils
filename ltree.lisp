@@ -81,13 +81,28 @@ Returns T if CHILD-LABEL was present, NIL otherwise."))
 
 (defun ltree-reduce (ltree children-reduce-function children-initial-value node-function &key sort-children-predicate)
   "Visit LTREE in depth-first order and reduce it to one value.
-This means that CHILDREN-REDUCE-FUNCTION is first called with CHILDREN-INITIAL-VALUE and the result of the left-most child of LTREE.
-Its returned value is then used as new CHILDREN-INITIAL-VALUE and CHILDREN-REDUCE-FUNCTION is called with it and the second-left-most child of LTREE, and so on until the right-most child is reached.
-When the childrens' values are thus reduced to one value, NODE-FUNCTION is called with the node's label, value, and the previously calculated childrens' value.
-When the whole tree was visited, the resulting value is returned.
+This means that LTREE-REDUCE calls NODE-FUNCTION with all the leaves and CHILDREN-INITIAL-VALUE.
+A node with children calculates its value by starting with CHILDREN-INITIAL-VALUE and then iteratively reducing it and the result of its children with CHILDREN-REDUCE-FUNCTION to CHILDREN-RESULT.
+The node's value as a whole is calculated by calling NODE-FUNCTION with the node and its children's value.
+The node's value is then used in its parent as a child's value in a CHILDREN-REDUCE-FUNCTION call and so on until the whole tree is processed.
+The last call is to NODE-FUNCTION with the root of LTREE and its children's value.
+
+This also means that NODE-FUNCTION is called with CHILDREN-INITIAL-VALUE on only the leaves of the tree.
+All other calls to NODE-FUNCTION are with a reduced CHILDREN-RESULT.
+The other place where CHILDREN-INITIAL-VALUE is used is as the initial value in the reduction of the child's values to the childrens' value.
+
+The algorithm goes as follows:
+CHILDREN-REDUCE-FUNCTION is first called with CHILDREN-INITIAL-VALUE and the result (returned by NODE-FUNCTION, see below) of the first child of LTREE.
+Its returned value is stored as CHILDREN-RESULT.
+CHILDREN-REDUCE-FUNCTION is called with it and the result of the second child of LTREE.
+Its returned result is stored as the new CHILDREN-RESULT, and so on until the result of the last child has been reduced to the CHILDREN-RESULT.
+If a node doesn't have any children, CHILDREN-INITIAL-VALUE is used as CHILDREN-RESULT unchanged.
+When the childrens' values are thus reduced to one value, NODE-FUNCTION is called with the node and the CHILDREN-RESULT (childrens' value).
+When the whole tree was visited, the resulting value of the root is returned.
+
 If SORT-CHILDREN-PREDICATE is non-NIL, it is used in a call to SORT to sort the children before their reduction.
 An example of SORT-CHILDREN-PREDICATE is (lambda (a b) (< (ltree-value a) (ltree-value b)))."
-  ;; TODO: specialize on a non-NIL sort-children-predicate.
+  ;; TODO: specialize on sort-children-predicate.
   (labels ((rec (ltree)
 	     ;; TODO: don't use a list for child-list, use a vector (for faster sort).
 	     (let ((child-list (list-childs-in-children ltree))
@@ -99,10 +114,7 @@ An example of SORT-CHILDREN-PREDICATE is (lambda (a b) (< (ltree-value a) (ltree
 		       (funcall children-reduce-function
 				children-result
 				(rec child))))
-	       (funcall node-function
-			(ltree-label ltree)
-			(ltree-value ltree)
-			children-result))))
+	       (funcall node-function ltree children-result))))
     (rec ltree)))
 
 ;;TODO (defun ltree-breadth-first-reduce ...
@@ -111,8 +123,8 @@ An example of SORT-CHILDREN-PREDICATE is (lambda (a b) (< (ltree-value a) (ltree
 (defun ltree->list (ltree &key sort-children-predicate)
   (flet ((children-reduce-function (initial-value child-value)
 	   (cons child-value initial-value))
-	 (node-function (label value children-result)
-	   (list label value (nreverse children-result)))) ;;nreverse b/c we cons'd
+	 (node-function (node children-result)
+	   (list (ltree-label node) (ltree-value node) (nreverse children-result)))) ;;nreverse b/c we cons'd
     (ltree-reduce ltree #'children-reduce-function nil #'node-function :sort-children-predicate sort-children-predicate)))
 
 (defun ltree-set-new-child (ltree child-label child-value)
