@@ -241,24 +241,32 @@ Both PATH-LABELS and the path-labels in PAIRS must be ordered by their occurrenc
 
 ;; TODO: add (defun ltree-merge-ltree (ltree1 ltree2)), which merges the two ltrees (on child-label collision, ltree1 is preferred). This should merge '(((a) 1) ((b) 2) ((a a) 11) ((a b) 12)) and '(((a) -1) ((a c) 13)) so that '(((a) 1) ((b) 2) ((a a) 11) ((a b) 12) ((a c) 13)) results (i.e. ((a) -1) is overridden by ((a) 1)).
 
-(defun ltree-follow-parent (ltree function)
-  "Follow LTREE's parent, until we reach the root.
-At each node, call FUNCTION with the ltree at this node.
-The function is first called with LTREE's parent, i.e. if LTREE is the root, the function is not called at all.
-Returns the root."
-  (let ((parent (ltree-parent ltree)))
-    (if (null parent)
-	ltree
-	(progn
-	  (funcall function parent)
-	  (ltree-follow-parent parent function)))))
+(defun ltree-follow-parent (ltree function &key root)
+  "Follow LTREE's parent, until we reach a node that is EQ to ROOT, or the root of the tree.
+At each node (including ROOT or the root), call FUNCTION with the ltree at this node.
+The FUNCTION is first called with LTREE's parent, i.e. if LTREE is ROOT, the function is not called at all.
+Returns ROOT."
+  (labels ((rec (ltree)
+	     (let ((parent (ltree-parent ltree)))
+	       (if (eq parent root)
+		   (if (null root)
+		       ltree
+		       (progn
+			 (funcall function parent)
+			 parent))
+		   (progn
+		     (funcall function parent)
+		     (rec parent))))))
+    (rec ltree)))
 
-(defun ltree-path-from-root (ltree)
-  "Follow the parents of LTREE recursively until the root of the tree is reached.
-Return the labels along the path."
+(defun ltree-path-from-root (ltree &key root)
+  "Follow the parents of LTREE recursively until ROOT or the root of the tree is reached.
+Return the labels along the path, including the ROOT."
   (let ((path (list (ltree-label ltree))))
-    (ltree-follow-parent ltree (lambda (node)
-				 (push (ltree-label node) path)))
+    (ltree-follow-parent ltree
+			 (lambda (node)
+			   (push (ltree-label node) path))
+			 :root root)
     path))
 
 (defmacro define-ltree-type (ltree-typename
@@ -568,8 +576,11 @@ MAKE-LTREE-ROOT-FUNCTION is a function with no parameters that returns a new LTR
 	     (l2 (ltree->list (list->ltree l1 make-ltree-root-function)
 			     :sort-children-predicate #'symbol-label-lessp)))
 	(assert (equal l1 l2)))
-      (let ((ltree-a/a/a (ltree-follow-path ltree '(a a/a a/a/a))))
-	(assert (equal (ltree-path-from-root ltree-a/a/a) '(:root a a/a a/a/a)))))
+      (let ((ltree-a/a/a (ltree-follow-path ltree '(a a/a a/a/a)))
+	    (ltree-a (ltree-follow-path ltree '(a))))
+	;; test LTREE-PATH-FROM-ROOT and LTREE-FOLLOW-PARENT in the process.
+	(assert (equal (ltree-path-from-root ltree-a/a/a) '(:root a a/a a/a/a)))
+	(assert (equal (ltree-path-from-root ltree-a/a/a :root ltree-a) '(a a/a a/a/a)))))
     (let ((ltree-paths (make-ltree make-ltree-root-function :path-labels '((a) (b) (a a) (a a) (a b)) :path-values '(1 2 11 -11 12)))
 	  (ltree-pairs (make-ltree make-ltree-root-function :pairs '(((a) 1) ((b) 2) ((a a) 11) ((a b) 12) ((a a) -11))))
 	  (correct '(NIL NIL ((A 1 ((A -11 NIL) (B 12 NIL))) (B 2 NIL)))))
