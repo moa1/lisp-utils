@@ -56,7 +56,7 @@
    #:let-array-dims
    #:vector->list
    #:head
-   #:rec ;; for specializing-labels, specializing-defun
+   #:extract-keywords
    #:specializing-flet
    #:specializing-labels
    #:specializing-defun

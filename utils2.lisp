@@ -19,20 +19,20 @@
 			(helper-key+test ((akey nil) (atest test)))
 			(helper+key-test ((akey key) (atest nil)))
 			(helper-key-test ((akey nil) (atest nil))))
-      ((list)
-       (cond ((if atest
-		  (funcall test
-			   item
-			   (if akey (funcall akey (car list)) (car list)))
-		  (eql item (if akey (funcall akey (car list)) (car list))))
-	      list)
-	     ((consp (car list))
-	      (if breadthfirst
-		  (or (rec (cdr list)) (rec (car list)))
-		  (or (rec (car list)) (rec (cdr list)))))
-	     ((consp (cdr list))
-	      (rec (cdr list)))
-	     (t nil)))
+      (rec (list)
+	   (cond ((if atest
+		      (funcall test
+			       item
+			       (if akey (funcall akey (car list)) (car list)))
+		      (eql item (if akey (funcall akey (car list)) (car list))))
+		  list)
+		 ((consp (car list))
+		  (if breadthfirst
+		      (or (rec (cdr list)) (rec (car list)))
+		      (or (rec (car list)) (rec (cdr list)))))
+		 ((consp (cdr list))
+		  (rec (cdr list)))
+		 (t nil)))
     (if (null tree)
 	nil
 	(if key

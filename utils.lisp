@@ -662,8 +662,31 @@ BODY."
   "Return the first n elements from list."
   (subseq list 0 (min n (length list))))
 
-(defun function-specializer (names-and-parameters lambda-list body &key rec)
-  ;; Ex: (function-specializer '((test1 (a 1)) (test2 (a 2))) '() 'a)
+(defun extract-keywords (list)
+  "Return two values: The first represents keyword bindings occurring in LIST as an alist, the second the LIST without the keyword bindings.
+Ex: (extract-keywords '((1 2) :a b (3 4) :c d))
+    == (values '((:c . d) (:a . b)) '((1 2) (3 4)))"
+  (let ((keyword-bindings nil)
+	(new-list nil))
+    (labels ((rec (list)
+	       (when (not (null list))
+		 (if (keywordp (car list))
+		     (progn
+		       (if (or (null (cdr list)) (not (symbolp (cadr list))))
+			   (error "Symbol expected after keyword ~A." (car list))
+			   (push (cons (car list) (cadr list)) keyword-bindings))
+		       (rec (cddr list)))
+		     (progn
+		       (push (car list) new-list)
+		       (rec (cdr list)))))))
+      (rec list)
+      (values keyword-bindings (nreverse new-list)))))
+
+(defun function-specializer (names-and-parameters lambda-list body &key recurse-symbol)
+  "Return a function form suitable for flet or labels.
+RECURSE-SYMBOL must be a symbol. If it is non-NIL, its occurrences in BODY are replaced by the respective defined function name.
+Example: (function-specializer '((test1 (a 1)) (test2 (a 2))) '() 'a)"
+  (declare (type symbol recurse-symbol))
   ;;(format t "names-and-parameters:~A~%" names-and-parameters)
   (loop for name-and-plist in names-and-parameters collect
        (destructuring-bind (name plist) name-and-plist
@@ -672,8 +695,8 @@ BODY."
 		   (locally
 		       #+sbcl (declare (sb-ext:muffle-conditions
 					sb-ext:code-deletion-note))
-		       ,@(if rec
-			     (subst name 'rec body)
+		       ,@(if recurse-symbol
+			     (subst name recurse-symbol body)
 			     body)))))))
 
 (defmacro specializing-flet (((name bindings)
@@ -688,28 +711,33 @@ Ex: (specializing-flet ((hl-head ((ht t)))
          (if ht
              (head list n)
              (last list n)))
-      (hl-last '(1 2 3)))"
+      (hl-last '(1 2 3)))
+Note that out of specializing-flet, specializing-labels and specializing-defun,
+only specializing-flet doesn't accept a recursion-symbol (because functions
+defined via flet cannot recurse)."
   (push (list name bindings) name-defs)
   `(flet ,(function-specializer name-defs lambda-list function-body)
      ,@body))
 
 (defmacro specializing-labels (((name bindings)
 				&rest name-defs)
-			       (lambda-list &body function-body)
+			       (recurse-symbol lambda-list &body function-body)
 			       &body body)
   "Define several local functions specified by NAME-DEFS with FUNCTION-BODY.
 For each function named NAME, the BINDINGSs are symbol-macrolet in BODY.
-In each FUNCTION-BODY, the symbol REC is replaced with the respective NAME.
-Ex: (specializing-labels ((hl-head ((ht t)))
-                          (hl-last ((ht nil))))
-        ((list &optional (n 1))
-         (if ht
-             (head list n)
-             (last list n)))
-      (hl-last '(1 2 3)))"
+If RECURSE-SYMBOL is non-NIL, then its occurrences in each FUNCTION-BODY are replaced with the respective NAME.
+Ex: (specializing-labels ((add ((op :add)))
+                          (sub ((op :sub))))
+        (rec (list result)
+          (if (null list)
+              result
+              (rec (cdr list) (ecase op
+                                (:add (+ result (car list)))
+	                        (:sub (- result (car list)))))))
+      (add '(1 2 3) 0))"
   (push (list name bindings) name-defs)
   `(labels ,(function-specializer name-defs lambda-list function-body
-				  :rec t)
+				  :recurse-symbol recurse-symbol)
      ,@body))
 
 ;; write another macro that looks like a defun, but emits multiple versions of
@@ -726,10 +754,10 @@ Ex: (specializing-labels ((hl-head ((ht t)))
 ;; ... hmm maybe also emit compiler-macros? (maybe not, because they would only
 ;; branch on compile-time-known constant data).
 (defmacro specializing-defun (((name bindings) &rest name-defs)
-			      lambda-list &body body)
+			      recurse-symbol lambda-list &body body)
   "Define several local functions specified by NAME-DEFS with FUNCTION-BODY.
 For each function named NAME, the BINDINGSs are symbol-macrolet in BODY.
-In each FUNCTION-BODY, the symbol REC is replaced with the respective NAME.
+In each FUNCTION-BODY, if non-NIL, the symbol RECURSE-SYMBOL is replaced with the respective NAME.
 Ex: (specializing-defun
         ((hl-head ((ht t)))
          (hl-last ((ht nil))))
@@ -739,7 +767,7 @@ Ex: (specializing-defun
           (last list n)))"
   (push (list name bindings) name-defs)
   `(progn
-     ,@(loop for s in (function-specializer name-defs lambda-list body :rec t)
+     ,@(loop for s in (function-specializer name-defs lambda-list body :recurse-symbol recurse-symbol)
 	  collect `(defun ,@s))))
 
 (labels ((rec (function result item rest wrap)
