@@ -97,6 +97,9 @@
    #:all-eq-lengths
    #:read-lines
    #:extend-decision-tree
+   #:min-keep-type
+   #:max-keep-type
+   #:timesec
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational
