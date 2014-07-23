@@ -1278,32 +1278,42 @@ Returns the modified decision tree."
 	(setf m number)))
     m))
 
-(defun timesec (function &key (min-out-of 18) (compile-p nil) (measurable-seconds 0.05) (measurable-repeats 5))
+(defconstant +timeitf-compile-batch+ 128 "timeitf's number of calls without a loop which are compiled.")
+
+(defun timeitf (function repeats &optional (compile-batch +timeitf-compile-batch+))
+  "Return the number of seconds needed to execute FUNCTION REPEATS times.
+Do this by compiling a function which calls up to COMPILE-BATCH times in a row without a loop."
+  (let* ((calls-batch (floor repeats compile-batch))
+	 (calls-remain (- repeats (* calls-batch compile-batch)))
+	 (p (if (< repeats compile-batch)
+		`(lambda () ,@(loop for i below repeats collect `(funcall ,function)))
+		(let ((p-batch (loop for i below compile-batch collect `(funcall ,function)))
+		      (p-remain (loop for i below calls-remain collect `(funcall ,function))))
+		  `(lambda ()
+		     (loop for i below ,calls-batch do ,@p-batch)
+		     ,@p-remain)))))
+    (multiple-value-bind (compiled-time-function warnings-p failure-p) (compile nil p)
+      (declare (ignore warnings-p))
+      (when failure-p
+	(error "compiling p failed"))
+      (let ((start (get-internal-real-time)))
+	(funcall compiled-time-function)
+	(let ((stop (get-internal-real-time)))
+	  (/ (- stop start) internal-time-units-per-second))))))
+
+(defun timesec (function &key (min-out-of 18) (compile-batch +timeitf-compile-batch+) (measurable-seconds 0.05) (measurable-repeats 5))
   ;; min-out-of is 18, so that a measurement with measurable-seconds=0.05 takes about 2 seconds. This is because function min-repeats-measurable takes about 0.05sec * 2.
   "Measure how long a function takes at least to execute, out of MIN-OUT-OF times.
-Return the seconds per repeat, the same number as a long-float, and the number of repeats which was needed to get a running time of at least MEASURABLE-SECONDS for all of MEASURABLE-REPEATS tries."
-  (labels ((time-it (repeats &optional (compile-p nil))
-	     "Return the number of seconds needed to execute FUNCTION REPEATS times"
-	     (let* ((p (if compile-p
-			   `(lambda () ,@(loop for i below repeats collect `(funcall ,function)))
-			   `(lambda () (loop for i below ,repeats do (funcall ,function))))))
-	       (multiple-value-bind (compiled-time-function warnings-p failure-p) (compile nil p)
-		 (declare (ignore warnings-p))
-		 (when failure-p
-		   (error "compiling p failed"))
-		 (let ((start (get-internal-real-time)))
-		   (funcall compiled-time-function)
-		   (let ((stop (get-internal-real-time)))
-		     (/ (- stop start) internal-time-units-per-second))))))
-	   (min-repeats-measurable (min-seconds number-measurable)
+Return the seconds per repeat, the same number as a long-float, and the number of repeats which was needed to get a running time of at least MEASURABLE-SECONDS for all of MEASURABLE-REPEATS tries.
+COMPILE-BATCH is the number of compiled calls to FUNCTION which are made not by a loop."
+  (labels ((min-repeats-measurable (min-seconds number-measurable)
 	     "Exponentially increase number of repeats until calling FUNCTION this often takes at least MIN-SECONDS seconds in all of NUMBER-MEASURABLE tries."
 	     (do* ((rep 1 (* rep 2))) (nil nil)
-	       (when (loop for j below number-measurable always (let ((sec (time-it rep compile-p)))
+	       (when (loop for j below number-measurable always (let ((sec (timeitf function rep compile-batch)))
 								  (>= sec min-seconds)))
-		 (return-from min-repeats-measurable rep))))
-	   )
+		 (return-from min-repeats-measurable rep)))))
     (let* ((rep (min-repeats-measurable measurable-seconds measurable-repeats))
-	   (times (loop for i below min-out-of collect (time-it rep compile-p)))
+	   (times (loop for i below min-out-of collect (timeitf function rep compile-batch)))
 	   (min (/ (apply #'min-keep-type times) rep)))
       (values min (coerce min 'long-float) rep))))
 

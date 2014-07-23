@@ -99,6 +99,7 @@
    #:extend-decision-tree
    #:min-keep-type
    #:max-keep-type
+   #:timeitf
    #:timesec
    ;; from rational-sin-cos.lisp
    #:sin-rational
