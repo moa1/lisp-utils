@@ -21,6 +21,9 @@
 	   :ltree-hashtable ;structure
 	   :make-ltree-hashtable-root
 	   :define-ltree-type-with-children-array-storage
+	   :ltree-reduce-leaves
+	   :ltree-list-leaves
+	   :ltree-visit-nodes
 	   ))
 
 (in-package :ltree)
@@ -589,3 +592,34 @@ MAKE-LTREE-ROOT-FUNCTION is a function with no parameters that returns a new LTR
       (assert-equal ltree-pairs correct))))
 
 (ltree-test #'make-ltree-hashtable-root)
+
+;;;; ltree auxiliary functions
+
+(defun ltree-reduce-leaves (ltree reduce-function initial-value &key sort-children-predicate)
+  "Visit the leaves of LTREE.
+Initialize VALUE with INITIAL-VALUE.
+For each leaf, call REDUCE-FUNCTION with the current leaf and VALUE, and set VALUE to the result.
+Iterate until all leaves are visited, and return VALUE."
+  (flet ((node-function (node children-value)
+	   (when children-value ;non-leaves are constantly nil
+	     (setf initial-value (funcall reduce-function node initial-value)))))
+   (ltree-reduce ltree (constantly nil) t #'node-function :sort-children-predicate sort-children-predicate))
+  initial-value)
+
+(defun ltree-list-leaves (ltree &key sort-children-predicate)
+  "List all leaves of LTREE."
+  (let ((leaves nil))
+    (flet ((reduce-function (node v)
+	     (declare (ignore v))
+	     (push node leaves)))
+      (ltree-reduce-leaves ltree
+			   #'reduce-function
+			   nil
+			   :sort-children-predicate sort-children-predicate)
+      leaves)))
+
+(defun ltree-visit-nodes (ltree node-function)
+  "Visit all the nodes of LTREE in arbitrary order, calling NODE-FUNCTION on each.
+Return NIL."
+  ;; TODO: add parameter &key sort-children-predicate, which should be passed to ltree-reduce-leaves.
+  (ltree-reduce ltree (constantly nil) nil (lambda (node value) (declare (ignore value)) (funcall node-function node))))
