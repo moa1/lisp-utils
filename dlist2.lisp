@@ -180,22 +180,29 @@ Note that this is like dodcons, but instead of binding VAR to the current dcons 
        (let ((,var (dcons-data ,dcons-var)))
 	 ,@body))))
 
-(defmacro dodcons-between ((var first-dcons last-dcons &optional result-form from-end) &body body)
+(defmacro dodcons-between ((var first-dcons last-dcons &key result-form from-end) &body body)
   "Iterates over the dconses delimited by FIRST-DCONS and LAST-DCONS, both excluded."
-  (once-only (first-dcons last-dcons from-end)
-    `(if ,from-end
-	 (do ((,var (prev ,last-dcons) (prev ,var)))
-	     ((eq ,var ,first-dcons) ,result-form)
-	   ,@body)
-	 (do ((,var (next ,first-dcons) (next ,var)))
-	     ((eq ,var ,last-dcons) ,result-form)
-	   ,@body))))
+  
+    ;; TODO: Only include one branch when from-end is a constant (so that style-warnings about unreachable code go away).
+  (let ((do-from-last (once-only (first-dcons last-dcons)
+			`(do ((,var (prev ,last-dcons) (prev ,var)))
+			     ((eq ,var ,first-dcons) ,result-form)
+			   ,@body)))
+	(do-from-first (once-only (first-dcons last-dcons)
+			 `(do ((,var (next ,first-dcons) (next ,var)))
+			      ((eq ,var ,last-dcons) ,result-form)
+			    ,@body))))
+      (case from-end
+	((t) do-from-last)
+	((nil) do-from-first)
+	(t (once-only (from-end)
+	     `(if ,from-end ,do-from-last ,do-from-first))))))
 
 (defun copy-dlist (dlist &key deep-copy from-end)
   (let* ((first (dcons-list))
 	 (cur first)
 	 (last (dcons-next first)))
-    (dodcons (dcons dlist nil from-end)
+    (dodcons-between (dcons (dlist-first dlist) (dlist-last dlist) :from-end from-end)
       (let* ((data (dcons-data dcons))
 	     (new (if (and deep-copy (or (dlistp data) (dconsp data)))
 		      (copy-dlist data)
@@ -214,8 +221,67 @@ Note that this is like dodcons, but instead of binding VAR to the current dcons 
   "Convert DLIST to a list.
 If DEEP is true, dlists inside of DLIST are also converted to a list."
   (let ((l nil))
-    (dodlist (var dlist l t)
-      (push (if (and deep (or (dlistp var) (dconsp var)))
-		(dlist->list var :deep t)
-		var)
-	    l))))
+    (dodcons-between (dcons (dlist-first dlist) (dlist-last dlist) :from-end t)
+      (let ((data (dcons-data dcons)))
+	(push (if (and deep (or (dlistp data) (dconsp data)))
+		  (dlist->list data :deep t)
+		  data)
+	      l)))
+    l))
+
+(defun dlist-nconc (&rest dlists)
+  "Append DLISTS by modifying their first(last) dconses to point to the last(first) dcons of the previous(next) dlist.
+If all DLISTS are dlists, runtime is proportional to the number of DLISTS. If some DLISTS are dconses, runtime will be proportional to the number of elements in the dconses plus the number of dlists in DLISTS."
+  (if (null dlists)
+      (dlist)
+      (labels ((rec (dlist-1 dlists)
+		 (if (null dlists)
+		     dlist-1
+		     (let ((dlist-2 (car dlists)))
+		       ;;(print (dlist-last dlist-2))
+		       (setf (next (prev (dlist-last dlist-1))) (next (dlist-first dlist-2)))
+		       (setf (prev (next (dlist-first dlist-2))) (prev (dlist-last dlist-1)))
+		       (setf (dlist-last dlist-1) (dlist-last dlist-2)) ;this takes O(n) if dlist-2 is a dcons.
+		       ;;(print dlist-1)
+		       (rec dlist-1 (cdr dlists))))))
+	(let ((dlist-1 (car dlists)))
+	  (when (dconsp dlist-1)
+	    (setf dlist-1 (make-instance 'dlist :first (dlist-first dlist-1) :last (dlist-last dlist-1))))
+	  (rec dlist-1 (cdr dlists))))))
+
+(let* ((d1 (dcons-list 1 2 (dcons-list 3 4 5) 6))
+       (l1 (make-instance 'dlist :first (next d1) :last (prev (dlist-last d1))))
+       (l2 (dlist 7 8 9))
+       (d3 (dcons-list 10 11)))
+  (assert (equal (dlist->list (dlist-nconc d1 l2 d3) :deep t) '(1 2 (3 4 5) 6 7 8 9 10 11)))
+  (assert (equal (dlist->list (dlist-nconc l1 l2 d3) :deep t) '(2 (3 4 5) 7 8 9 10 11))))
+
+(defun dlist-append (&rest dlists)
+  "Like dlist-nconc, but shallow-copies DLISTS before appending."
+  (let ((dlists (loop for dlist in dlists collect (copy-dlist dlist :deep-copy nil))))
+    (apply #'dlist-nconc dlists)))
+
+(let* ((d1 (dcons-list 1 2 (dcons-list 3 4 5) 6))
+       (l1 (make-instance 'dlist :first (next d1) :last (prev (dlist-last d1))))
+       (l2 (dlist 7 8 9))
+       (d3 (dcons-list 10 11)))
+  (assert (equal (dlist->list (dlist-append d1 l2 d3) :deep t) '(1 2 (3 4 5) 6 7 8 9 10 11)))
+  (assert (equal (dlist->list (dlist-append l1 l2 d3) :deep t) '(2 (3 4 5) 7 8 9 10 11))))
+
+(defun dlist-length (dlist)
+  (let ((i 0))
+    (dodcons-between (var (dlist-first dlist) (dlist-last dlist))
+      (incf i))
+    i))
+
+(let* ((d1 (dcons-list 1 2 (dcons-list 3 4 5) 6))
+       (l1 (make-instance 'dlist :first (next d1) :last (prev (dlist-last d1))))
+       (l2 (dlist 7 8 9)))
+  (assert (eq (dlist-length d1) 4))
+  (assert (eq (dlist-length l1) 2))
+  (assert (eq (dlist-length l2) 3)))
+
+;;(defun dlist-nth (n dlist &key from-end)
+  "If FROM-END is NIL, return the Nth element of DLIST.
+If FROM-END is T, return the Nth element from the end of DLIST."
+;;  (dodcons-between (dcons (dlist-first dlist) 
