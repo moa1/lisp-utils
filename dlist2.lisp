@@ -46,6 +46,7 @@
   "Print a doubly linked list.
 Doesn't yet print whether DCONS has any circularities in it (but detects them already)."
   (declare (ignore depth))
+  ;; TODO: rewrite this function to not print the initial and ending NIL.
   ;; FIXME: rewrite this function to print a reader-readable format (or define a reader function or whatever is supposed work).
   (let ((visited nil))
     ;; FIXME: only detect loops if *PRINT-CIRCLE* is true.
@@ -147,9 +148,12 @@ Returns the newly created DCONS."
   "If FROM-END is NIL, delete the first element of DLIST and return the new first element.
 Otherwise, delete the last element of DLIST and return the new last element."
   (once-only (dlist from-end)
-    `(if ,from-end
-	 (dcons-delete-return-next (prev (dlist-last ,dlist)))
-	 (dcons-delete-return-prev (next (dlist-first ,dlist))))))
+    (with-gensyms (p)
+      `(if ,from-end
+	   (let ((,p (prev (dlist-last ,dlist))))
+	     (prog1 (data ,p) (dcons-delete-return-next ,p)))
+	   (let ((,p (next (dlist-first ,dlist))))
+	     (prog1 (data ,p) (dcons-delete-return-prev ,p)))))))
 
 ;; DLIST-FIRST and DLIST-LAST for DLISTs are already defined by defclass.
 
@@ -182,8 +186,6 @@ Note that this is like dodcons, but instead of binding VAR to the current dcons 
 
 (defmacro dodcons-between ((var first-dcons last-dcons &key result-form from-end) &body body)
   "Iterates over the dconses delimited by FIRST-DCONS and LAST-DCONS, both excluded."
-  
-    ;; TODO: Only include one branch when from-end is a constant (so that style-warnings about unreachable code go away).
   (let ((do-from-last (once-only (first-dcons last-dcons)
 			`(do ((,var (prev ,last-dcons) (prev ,var)))
 			     ((eq ,var ,first-dcons) ,result-form)
@@ -281,7 +283,167 @@ If all DLISTS are dlists, runtime is proportional to the number of DLISTS. If so
   (assert (eq (dlist-length l1) 2))
   (assert (eq (dlist-length l2) 3)))
 
-;;(defun dlist-nth (n dlist &key from-end)
+(defun nthdcons (n dlist &key from-end)
+  "If FROM-END is NIL, return the Nth dcons of DLIST.
+If FROM-END is T, return the Nth dcons from the end of DLIST."
+  (let ((i 0))
+    (dodcons-between (dcons (dlist-first dlist) (dlist-last dlist) :from-end from-end)
+      (when (= i n)
+	(return-from nthdcons (values dcons t)))
+      (incf i)))
+  (values nil nil))
+
+(defun dlist-nth (n dlist &key from-end)
   "If FROM-END is NIL, return the Nth element of DLIST.
 If FROM-END is T, return the Nth element from the end of DLIST."
-;;  (dodcons-between (dcons (dlist-first dlist) 
+  (multiple-value-bind (dcons inside-dlist-p)
+      (nthdcons n dlist :from-end from-end)
+    (if inside-dlist-p
+	(values (data dcons) t)
+	(values nil nil))))
+
+(let* ((d1 (dcons-list 1 2 (dcons-list 2.3 2.6) 3))
+       (l1 (make-instance 'dlist :first (next d1) :last (prev (dlist-last d1)))))
+  (assert (equal (dlist-nth 0 d1) 1))
+  (assert (equal (dlist-nth 1 d1) 2))
+  (assert (equal (dlist-nth 0 d1 :from-end t) 3))
+  (assert (equal (dlist-nth 0 l1) 2))
+  (assert (equal (dlist-nth 1 l1 :from-end t) 2)))
+
+(defun (setf dlist-nth) (val n dlist &key from-end)
+  (multiple-value-bind (dcons inside-dlist-p)
+      (nthdcons n dlist :from-end from-end)
+    (declare (ignore inside-dlist-p))
+    (setf (data dcons) val) ;signals an error if dcons is no dcons (i.e. if it was outside the range)
+    ))
+
+(defun dlist-nreverse (dlist)
+  "Reverse dlist destructively."
+  (let ((front (dlist-first dlist))
+	(back (dlist-last dlist)))
+    (tagbody
+       start
+       (when (eq front back)
+	 (return-from dlist-nreverse dlist))
+       (setf front (next front))
+       (when (eq front back)
+	 (return-from dlist-nreverse dlist))
+       (setf back (prev back))
+       (psetf (data front) (data back)
+	      (data back) (data front))
+       (go start))))
+
+(let* ((d1 (dcons-list 1 2 3 4))
+       (l1 (make-instance 'dlist :first (next d1) :last (prev (dlist-last d1))))
+       (d2 (dlist 1 2 3)))
+  (assert (equal (dlist->list (dlist-nreverse d1)) '(4 3 2 1)))
+  (dlist-nreverse l1)
+  (assert (equal (dlist->list d1) '(4 2 3 1)))
+  (assert (equal (dlist->list (dlist-nreverse d2)) '(3 2 1))))
+
+(defun dlist-reverse (dlist)
+  "Reverse dlist non-destructively."
+  (dlist-nreverse (copy-dlist dlist)))
+
+(let* ((d1 (dcons-list 1 2 3 4))
+       (l1 (make-instance 'dlist :first (next d1) :last (prev (dlist-last d1))))
+       (d2 (dlist 1 2 3)))
+  (assert (equal (dlist->list (dlist-reverse d1)) '(4 3 2 1)))
+  (assert (equal (dlist->list d1) '(1 2 3 4)))
+  (dlist-reverse l1)
+  (assert (equal (dlist->list d1) '(1 2 3 4)))
+  (assert (equal (dlist->list (dlist-reverse d2)) '(3 2 1))))
+
+(defun dlist-equal (dlist1 dlist2 &key (test #'equal))
+  "Recursively compares DLIST1 and DLIST2 and returns T if they are equal, and NIL if not."
+  (declare (type (or dlist dcons) dlist1 dlist2))
+  (flet ((compare (dlist1 dlist2 dlist1-dlist-p dlist2-dlist-p)
+	   (do ((dcons1 (dlist-first dlist1) (next dcons1))
+		(dcons2 (dlist-first dlist2) (next dcons2)))
+	       ((or (if dlist1-dlist-p (eq dcons1 (dlist-last dlist1)) (null (next dcons1)))
+		    (if dlist2-dlist-p (eq dcons2 (dlist-last dlist2)) (null (next dcons2))))
+		(and (null (next dcons1)) (null (next dcons2)))) ;both at end?
+
+	     (let ((data1 (data dcons1)) (data2 (data dcons2)))
+	       (if (and (or (dconsp data1) (dlistp data1))
+			(or (dconsp data2) (dlistp data2)))
+		   (when (not (dlist-equal data1 data2))
+		     (return-from dlist-equal nil))
+		   (when (not (funcall test data1 data2))
+		     (return-from dlist-equal nil)))))))
+    ;; When compiling this function, SBCL gives warnings, but only when the following inline-declaration is present.
+    (declare (inline compare))
+    (if (dconsp dlist1)
+	(if (dconsp dlist2)
+	    (compare dlist1 dlist2 nil nil)
+	    (compare dlist1 dlist2 nil t))
+	(if (dconsp dlist2)
+	    (compare dlist1 dlist2 t nil)
+	    (compare dlist1 dlist2 t t)))))
+	    
+(defun dlist= (&rest dlists)
+  "Compares all MORE-DLISTS, recursively descending into sub-lists, and returns T if they are all equal, and NIL if not."
+  (if (null dlists)
+      t
+      (let ((dlist1 (car dlists)))
+	(loop for dlist in (cdr dlists) always
+	     (dlist-equal dlist1 dlist)))))
+
+(defun make-dlist (size &key initial-element)
+  (let ((d (dlist)))
+    (loop for i below size do (dlist-push initial-element d))
+    d))
+
+(defun mapdcons (function dlist &rest more-dlists-and-from-end)
+  "Creates a new dlist by applying FUNCTION to the 1st dconses of DLIST and MORE-DLISTS-AND-FROM-END, then the 2nd dconses etc..
+Returns the newly created dlist.
+If MORE-DLISTS-AND-FROM-END contains the keyword :FROM-END, the next element in MORE-DLISTS-AND-FROM-END is taken as the direction indicator, and :FROM-END and the direction indicator are removed from MORE-DLISTS-AND-FROM-END before creating the new dlist. If the direction indicator is non-NIL, DLIST and MORE-DLISTS-AND-FROM-END are iterated over from the end."
+  ;;(print (list "mapdcons dlist" dlist "more-dlists-and-from-end" more-dlists-and-from-end))
+  (labels ((rec (args from-end dlists)
+	     (if (null args)
+		 (values from-end (nreverse dlists))
+		 (let ((a (car args)))
+		   (if (eq a :from-end)
+		       (rec (cddr args) (cadr args) dlists)
+		       (rec (cdr args) from-end (cons a dlists)))))))
+    (multiple-value-bind (from-end dlists)
+	(rec more-dlists-and-from-end nil (list dlist))
+      ;;(print (list "mapdcons from-end" from-end "dlists" dlists))
+      (if (null (cdr dlists))
+	  (let ((result (dlist)))
+	    (dodcons (var (car dlists) result from-end)
+	      (dlist-push (funcall function var) result :at-end t)))
+	  (let ((result (dlist))
+		(pointers (mapcar (if from-end #'dlist-last #'dlist-first)
+				  dlists))
+		(ends (mapcar (if from-end #'dlist-first #'dlist-last) dlists)))
+	    (loop do
+		 (setf pointers (mapcar (if from-end #'dcons-prev #'dcons-next)
+					pointers))
+		 (loop for p in pointers for e in ends do
+		      (when (eq p e)
+			(return-from mapdcons result)))
+		 (dlist-push (apply function pointers) result :at-end t)))))))
+
+(defun mapdcon (function dlist &rest more-dlists-and-from-end)
+  "Like MAPDCONS, but returns DLIST."
+  ;; TODO: implement without using mapdcons, because it conses up the result, which is the thrown away (when returning dlist). 
+  (apply #'mapdcons function dlist more-dlists-and-from-end)
+  dlist)
+
+(defun mapdlist (function dlist &rest more-dlists-and-from-end)
+  "Like MAPDCONS, but applies function to the DATA of DLIST and MORE-DLISTS-AND-FROM-END."
+  ;; TODO: implement without using a (slow) lambda.
+  (apply #'mapdcons
+	 (lambda (&rest rest) (apply function (mapcar #'dcons-data rest)))
+	 dlist
+	 more-dlists-and-from-end))
+
+(let ((d1 (dlist 1 2 3))
+      (d2 (dlist 3 4)))
+  (assert (equal (dlist->list (mapdcons (lambda (a b) (+ (data a) (data b))) d1 d2))
+		 '(4 6)))
+  (assert (equal (dlist->list (mapdlist #'+ d1 d2 :from-end t))
+		 '(7 5)))
+  (assert (equal (dlist->list (mapdcon (lambda (a b) (setf (data a) (+ (data a) (data b)))) d1 :from-end 1 d2))
+		 '(1 5 7))))
