@@ -2,7 +2,7 @@
 (ql:quickload :alexandria)
 (use-package :alexandria)
 
-;;;; This package is like package dlist, but implements the structure dlist a bit differently. For example, when wanting to store (dlist 1 2 3), instead of having the first dcons like this (make-dcons :prev nil :data 1 :next DCONS-2), the first dcons is DCONS-START == (make-dcons :prev nil :data nil :next DCONS-1) with DCONS-1 == (make-dcons :prev DCONS-START :data 1 :next DCONS-2). Likewise, the end of the dcons is capped by an "empty" dcons as well. Finally, (dlist-first D) returns DCONS-START instead of DCONS-1, and (dlist-last D) returns DCONS-END instead of DCONS-3. This has the advantage that an empty dlist does not need to be NIL. Therefore the user can always be sure about the type of the object at hand. It also simplifies code that is using dlist, since it doesn't have to check the special case of NIL before recursing on a dcons.
+;;;; This package is like package dlist, but implements the structure dlist a bit differently. For example, when wanting to store (dlist 1 2 3), instead of having the first dcons like this (make-dcons :prev nil :data 1 :next DCONS-2), the first dcons is DCONS-START == (make-dcons :prev nil :data nil :next DCONS-1) with DCONS-1 == (make-dcons :prev DCONS-START :data 1 :next DCONS-2). Likewise, the end of the dcons is capped by an "empty" dcons as well. Finally, (dlist-first D) returns DCONS-START instead of DCONS-1, and (dlist-last D) returns DCONS-END instead of DCONS-3. This has the advantage that an empty dlist does not need to be NIL. Therefore the user can always be sure about the type of the object at hand. It also simplifies code that is using dlist, since it doesn't have to check the special case of NIL before recursing on a dcons. Finally, some programs become faster (for example pushing onto and popping off a dlist), some slower (programs that create a lot of small dlists).
 
 (defstruct dcons
   "An element of a doubly linked list, with data DATA, previous element PREV, and next element NEXT."
@@ -16,31 +16,52 @@
   "Return whether OBJECT is a dcons."
   (dcons-p object))
 
+(define-compiler-macro dconsp (object)
+  `(dcons-p ,object))
+
 ;; For compatibility with package dlist.
 ;; TODO: Do I need DECLARE, DECLAIM, or PROCLAIM here if I want PREV to be inlined everywhere?
 (declaim (inline prev))
 (defun prev (dcons)
   (dcons-prev dcons))
 
+(define-compiler-macro prev (dcons)
+  `(dcons-prev ,dcons))
+
 (declaim (inline (setf prev)))
 (defun (setf prev) (val dcons)
   (setf (dcons-prev dcons) val))
+
+(define-compiler-macro (setf prev) (val dcons)
+  `(setf (dcons-prev ,dcons) ,val))
 
 (declaim (inline next))
 (defun next (dcons)
   (dcons-next dcons))
 
+(define-compiler-macro next (dcons)
+  `(dcons-next ,dcons))
+
 (declaim (inline (setf next)))
 (defun (setf next) (val dcons)
   (setf (dcons-next dcons) val))
+
+(define-compiler-macro (setf next) (val dcons)
+  `(setf (dcons-next ,dcons) ,val))
 
 (declaim (inline next))
 (defun data (dcons)
   (dcons-data dcons))
 
+(define-compiler-macro data (dcons)
+  `(dcons-data ,dcons))
+
 (declaim (inline (setf data)))
 (defun (setf data) (val dcons)
   (setf (dcons-data dcons) val))
+
+(define-compiler-macro (setf data) (val dcons)
+  `(setf (dcons-data ,dcons) ,val))
 
 (defun print-dcons (dcons stream depth)
   "Print a doubly linked list.
