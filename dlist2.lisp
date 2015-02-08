@@ -1,8 +1,51 @@
-(load "~/quicklisp/setup.lisp")
-(ql:quickload :alexandria)
-(use-package :alexandria)
+;;(load "~/quicklisp/setup.lisp")
+;;(ql:quickload :alexandria)
+;;(use-package :alexandria)
 
 ;;;; This package is like package dlist, but implements the structure dlist a bit differently. For example, when wanting to store (dlist 1 2 3), instead of having the first dcons like this (make-dcons :prev nil :data 1 :next DCONS-2), the first dcons is DCONS-START == (make-dcons :prev nil :data nil :next DCONS-1) with DCONS-1 == (make-dcons :prev DCONS-START :data 1 :next DCONS-2). Likewise, the end of the dcons is capped by an "empty" dcons as well. Finally, (dlist-first D) returns DCONS-START instead of DCONS-1, and (dlist-last D) returns DCONS-END instead of DCONS-3. This has the advantage that an empty dlist does not need to be NIL. Therefore the user can always be sure about the type of the object at hand. It also simplifies code that is using dlist, since it doesn't have to check the special case of NIL before recursing on a dcons. Finally, some programs become faster (for example pushing onto and popping off a dlist), some slower (programs that create a lot of small dlists).
+
+(defpackage :dlist2
+  (:use :common-lisp :alexandria)
+  (:export :dcons
+	   :dconsp
+	   :prev
+	   :next
+	   :data
+	   :dlist
+	   :dlistp
+	   :dcons-list
+	   :dcons-prepend
+	   :dcons-append
+	   :dcons-insert-between
+	   :dcons-delete-return-prev
+	   :dcons-delete-return-next
+	   :dlist-push
+	   :dlist-pop
+	   :dlist-first
+	   :dlist-last
+	   :dodcons
+	   :dodlist
+	   :dodcons-between
+	   :copy-dlist
+	   ;; :dlist is defined above already
+	   :dlist->list
+	   :list->dlist
+	   :dlist-nconc
+	   :dlist-append
+	   :dlist-length
+	   :nthdcons
+	   :dlist-nth
+	   :dlist-nreverse
+	   :dlist-reverse
+	   :dlist-equal
+	   :dlist=
+	   :make-dlist
+	   :mapdcons
+	   :mapdcon
+	   :mapdlist))
+
+(in-package :dlist2)
+
 
 (defstruct dcons
   "An element of a doubly linked list, with data DATA, previous element PREV, and next element NEXT."
@@ -49,7 +92,7 @@
 (define-compiler-macro (setf next) (val dcons)
   `(setf (dcons-next ,dcons) ,val))
 
-(declaim (inline next))
+(declaim (inline data))
 (defun data (dcons)
   (dcons-data dcons))
 
@@ -92,9 +135,13 @@ Doesn't yet print whether DCONS has any circularities in it (but detects them al
    (last :initarg :last :accessor dlist-last))
   (:documentation "A doubly-linked list, defined by the elements between FIRST and LAST."))
 
+(declaim (inline dlistp))
 (defun dlistp (object)
   "Returns whether OBJECT is a dlist."
   (typep object 'dlist))
+
+(define-compiler-macro dlistp (object)
+  `(typep ,object 'dlist))
 
 (defmethod print-object ((l dlist) stream)
   (print-unreadable-object (l stream :type nil :identity nil)
@@ -112,7 +159,6 @@ Doesn't yet print whether DCONS has any circularities in it (but detects them al
       (setf (next cur) last)
       (values first last))))
 
-;; TODO: instead of (declaim (inline XY)), write compiler-macros for the following functions which are callable from outside the package.
 (declaim (inline dcons-prepend))
 (defun dcons-prepend (data dcons)
   "Replace PREV of DCONS with a newly-created dcons with data DATA and next DCONS."
@@ -243,6 +289,7 @@ Note that this is like dodcons, but instead of binding VAR to the current dcons 
 (defun dlist->list (dlist &key deep)
   "Convert DLIST to a list.
 If DEEP is true, dlists inside of DLIST are also converted to a list."
+  ;; TODO: specialize on DEEP == NIL and DEEP != NIL.
   (let ((l nil))
     (dodcons-between (dcons (dlist-first dlist) (dlist-last dlist) :from-end t)
       (let ((data (dcons-data dcons)))
@@ -251,6 +298,23 @@ If DEEP is true, dlists inside of DLIST are also converted to a list."
 		  data)
 	      l)))
     l))
+
+(defun list->dlist (l)
+  "Deeply convert list L to a dlist."
+  ;; Note: this hangs on converting circular lists:
+  ;; (let ((*PRINT-CIRCLE* t))
+  ;;   (let ((l (list 1 2 3)))
+  ;;     (setf (cdr (last l)) l)
+  ;;     (print l)
+  ;;     (list->dlist l)))
+  (declare (type list l))
+  (if (null l)
+      nil
+      (let ((content (loop for e in l collect
+			  (if (listp e)
+			      (list->dlist e)
+			      e))))
+	(apply #'dlist content))))
 
 (defun dlist-nconc (&rest dlists)
   "Append DLISTS by modifying their first(last) dconses to point to the last(first) dcons of the previous(next) dlist.
