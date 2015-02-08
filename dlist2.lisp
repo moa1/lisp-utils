@@ -308,13 +308,11 @@ If DEEP is true, dlists inside of DLIST are also converted to a list."
   ;;     (print l)
   ;;     (list->dlist l)))
   (declare (type list l))
-  (if (null l)
-      nil
-      (let ((content (loop for e in l collect
-			  (if (listp e)
-			      (list->dlist e)
-			      e))))
-	(apply #'dlist content))))
+  (let ((content (loop for e in l collect
+		      (if (listp e)
+			  (list->dlist e)
+			  e))))
+    (apply #'dlist content)))
 
 (defun dlist-nconc (&rest dlists)
   "Append DLISTS by modifying their first(last) dconses to point to the last(first) dcons of the previous(next) dlist.
