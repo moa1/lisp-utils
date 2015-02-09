@@ -146,7 +146,14 @@ Doesn't yet print whether DCONS has any circularities in it (but detects them al
 (defmethod print-object ((l dlist) stream)
   (print-unreadable-object (l stream :type nil :identity nil)
     (format stream "DLIST")
-    (print-dcons (dlist-first l) stream 0)))
+    (let ((first (dlist-first l))
+	  (last (dlist-last l))
+	  (visited nil))
+      ;; FIXME: only detect loops if *PRINT-CIRCLE* is true.
+      ;; FIXME: print where the loop occurs (using "#1=OBJ ...more-objs... #1#" syntax).
+      (do ((cur (next first) (next cur))) ((or (eq cur last) (null cur) (find cur visited)))
+	(push cur visited)
+	(format stream " ~A" (data cur))))))
 
 (defun dcons-list (&rest args)
   (let* ((first (make-dcons :prev nil :data nil :next nil))
