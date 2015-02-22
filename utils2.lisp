@@ -1,4 +1,5 @@
 (in-package :utils)
+(use-package :alexandria)
 
 (defun member-tree-slow (item tree &key key (test #'eql) breadthfirst)
   (labels ((rec (list)

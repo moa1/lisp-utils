@@ -1,4 +1,5 @@
 (in-package :utils)
+(use-package :alexandria)
 
 (defun find-cos (sin2 radius2)
   (declare (type integer sin2)

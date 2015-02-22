@@ -1,6 +1,6 @@
-;;(load "~/quicklisp/setup.lisp")
-;;(ql:quickload :alexandria)
-;;(use-package :alexandria)
+(load "~/quicklisp/setup.lisp")
+(ql:quickload :alexandria)
+(use-package :alexandria)
 
 ;;;; This package is like package dlist, but implements the structure dlist a bit differently. For example, when wanting to store (dlist 1 2 3), instead of having the first dcons like this (make-dcons :prev nil :data 1 :next DCONS-2), the first dcons is DCONS-START == (make-dcons :prev nil :data nil :next DCONS-1) with DCONS-1 == (make-dcons :prev DCONS-START :data 1 :next DCONS-2). Likewise, the end of the dcons is capped by an "empty" dcons as well. Finally, (dlist-first D) returns DCONS-START instead of DCONS-1, and (dlist-last D) returns DCONS-END instead of DCONS-3. This has the advantage that an empty dlist does not need to be NIL. Therefore the user can always be sure about the type of the object at hand. It also simplifies code that is using dlist, since it doesn't have to check the special case of NIL before recursing on a dcons. Finally, some programs become faster (for example pushing onto and popping off a dlist), some slower (programs that create a lot of small dlists).
 
@@ -205,18 +205,20 @@ Doesn't yet print whether DCONS has any circularities in it (but detects them al
     (setf (dcons-next prev) next)))
 
 (defmacro dlist-push (data dlist &key at-end)
-  "If AT-END evaluates to NIL, replaces pushes OBJ onto the beginning of DLIST.
+  "If AT-END evaluates to NIL, pushes OBJ onto the beginning of DLIST.
 Otherwise, pushes OBJ onto the end of DLIST.
-Returns the newly created DCONS."
+Returns DLIST."
   (once-only (data dlist at-end)
     (with-gensyms (end cap)
       `(if ,at-end
 	   (let* ((,cap (dlist-last ,dlist))
 		  (,end (dcons-prev ,cap)))
-	     (dcons-insert-between ,end ,data ,cap))
+	     (dcons-insert-between ,end ,data ,cap)
+	     ,dlist)
 	   (let* ((,cap (dlist-first ,dlist))
 		  (,end (dcons-next ,cap)))
-	     (dcons-insert-between ,cap ,data ,end))))))
+	     (dcons-insert-between ,cap ,data ,end)
+	     ,dlist)))))
 
 (defmacro dlist-pop (dlist &key from-end)
   "If FROM-END is NIL, delete the first element of DLIST and return the new first element.
@@ -260,6 +262,7 @@ Note that this is like dodcons, but instead of binding VAR to the current dcons 
 
 (defmacro dodcons-between ((var first-dcons last-dcons &key result-form from-end) &body body)
   "Iterates over the dconses delimited by FIRST-DCONS and LAST-DCONS, both excluded."
+  ;; TODO: add (declare (type dcons ...))
   (let ((do-from-last (once-only (first-dcons last-dcons)
 			`(do ((,var (prev ,last-dcons) (prev ,var)))
 			     ((eq ,var ,first-dcons) ,result-form)
@@ -275,16 +278,22 @@ Note that this is like dodcons, but instead of binding VAR to the current dcons 
 	     `(if ,from-end ,do-from-last ,do-from-first))))))
 
 (defun copy-dlist (dlist &key deep-copy from-end)
+  ;; probably do not TODO (see below): make this function "defun copy-dlist (dlist &key deep-copy copy-list from-end)", then, if copy-list is non-NIL, deep-copy normal lists also (and recursively pass :copy-list on to the called function), otherwise only deep-copy dlists or dconses if deep-copy is non-NIL. But actually this sucks, because it doesn't copy other structures (which are unknown here). See package metacopy for a more general approach (but I think it may be slow).
   (let* ((first (dcons-list))
 	 (cur first)
 	 (last (dcons-next first)))
     (macrolet ((copy-it (deep-copy)
-		 `(dodcons-between (dcons (dlist-first dlist) (dlist-last dlist) :from-end from-end)
-		    (let* ((data (dcons-data dcons))
-			   (new (if (and ,deep-copy (or (dlistp data) (dconsp data)))
-				    (copy-dlist data :deep-copy ,deep-copy :from-end from-end)
-				    data)))
-		      (setf cur (dcons-insert-between cur new last))))))
+		 `(progn
+		    (dodcons-between (dcons (dlist-first dlist) (dlist-last dlist) :from-end from-end)
+		      (let* ((data (dcons-data dcons))
+			     (new-data (if (and ,deep-copy (or (dlistp data) (dconsp data)))
+					   (copy-dlist data :deep-copy ,deep-copy :from-end from-end)
+					   data))
+			     (new-dcons (make-dcons :prev cur :data new-data :next nil)))
+			(setf (dcons-next cur) new-dcons)
+			(setf cur new-dcons)))
+		    (setf (dcons-next cur) last)
+		    (setf (dcons-prev last) cur))))
       (if deep-copy
 	  (copy-it t)
 	  (copy-it nil)))
@@ -318,6 +327,7 @@ If DEEP is true, dlists inside of DLIST are also converted to a list."
   ;;     (setf (cdr (last l)) l)
   ;;     (print l)
   ;;     (list->dlist l)))
+  ;; TODO: do not cons up the result and then convert using (apply #'dlist ..), but append it directly to a newly created DLIST.
   (declare (type list l))
   (let ((content (loop for e in l collect
 		      (if (listp e)
@@ -437,7 +447,7 @@ If FROM-END is T, return the Nth element from the end of DLIST."
 
 (defun dlist-reverse (dlist)
   "Reverse dlist non-destructively."
-  (dlist-nreverse (copy-dlist dlist)))
+  (copy-dlist dlist :deep-copy nil :from-end t))
 
 (let* ((d1 (dcons-list 1 2 3 4))
        (l1 (make-instance 'dlist :first (next d1) :last (prev (dlist-last d1))))
@@ -448,6 +458,8 @@ If FROM-END is T, return the Nth element from the end of DLIST."
   (assert (equal (dlist->list d1) '(1 2 3 4)))
   (assert (equal (dlist->list (dlist-reverse d2)) '(3 2 1))))
 
+(defgeneric dlist-equal (dlist1 dlist2 &key test)
+  (:documentation "Recursively compares DLIST1 and DLIST2 and returns T if they are equal, and NIL if not."))
 (flet ((compare (test d1 d2 d1-dlist-p d2-dlist-p)
 	 ;;(print (list "(dlist-first d1)" (dlist-first d1) "(dlist-first d2)" (dlist-first d2)))
 	 (do ((dcons1 (next (dlist-first d1)) (next dcons1))
@@ -466,8 +478,6 @@ If FROM-END is T, return the Nth element from the end of DLIST."
 		   (return-from compare nil)))))))
   (declare (inline compare))
   ;; When compiling this function, SBCL gives warnings, but only when the following inline-declaration is present.
-  (defgeneric dlist-equal (dlist1 dlist2 &key test)
-    (:documentation "Recursively compares DLIST1 and DLIST2 and returns T if they are equal, and NIL if not."))
   (defmethod dlist-equal ((dlist1 dcons) (dlist2 dcons) &key (test #'equal))
     (compare test dlist1 dlist2 nil nil))
   (defmethod dlist-equal ((dlist1 dcons) (dlist2 dlist) &key (test #'equal))
@@ -481,7 +491,25 @@ If FROM-END is T, return the Nth element from the end of DLIST."
        (l1 (make-instance 'dlist :first (next d1) :last (next (next (next d1)))))
        (d2 (dcons-list 2)))
   (assert (dlist-equal l1 d2))
-  (assert (not (dlist-equal (dlist) (dlist 'x 'y)))))
+  (assert (not (dlist-equal (dlist) (dlist 'x 'y))))
+  (assert (dlist-equal (dlist 1 (make-array 1 :initial-contents `((dlist 2))) 3)
+		       (dlist 1 (make-array 1 :initial-contents `((dlist 2))) 3)
+		       :test #'equalp))
+  ;; Note that
+  ;; (let ((d1 (dlist 1 (make-consts :list (dlist 2)) 3))
+  ;;      (d2 (dlist 1 (make-consts :list (dlist 2)) 3)))
+  ;;   (dlist-equal d1 d2 :test #'equalp)))
+  ;; is not true, since the const-structures are not equalp, since their :list-slots are not equalp.
+  )
+
+#|
+;; TODO: maybe add this method when package EQUALS is also loaded. It is much more general and better (and probably a bit slower) than eq/eql/equal/equalp.
+(defmethod equals:equals ((x dlist2:dlist) (y dlist2:dlist) &key recursive &allow-other-keys)
+  (declare (ignore recursive))
+  ;; TODO: implement :recursive here.
+  (print "equals dlist2")
+  (dlist2:dlist-equal x y :test #'equals:equals))
+|#
 
 (defun dlist= (&rest dlists)
   "Compares all MORE-DLISTS, recursively descending into sub-lists, and returns T if they are all equal, and NIL if not."

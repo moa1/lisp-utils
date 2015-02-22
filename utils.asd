@@ -12,12 +12,7 @@
 	       (:file "utils" :depends-on ("package"))
 	       (:file "utils2" :depends-on ("package" "utils"))
 	       (:file "regex-utils" :depends-on ("package" "utils2"))
-	       (:file "rational-sin-cos" :depends-on ("package" "utils2"))
-	       (:file "import" :depends-on ("package"
-					    "utils2"
-					    "regex-utils"
-					    "rational-sin-cos"
-					    ))))
+	       (:file "rational-sin-cos" :depends-on ("package" "utils2"))))
 
 (defsystem :utils-tests
   :depends-on (:utils #+sbcl sb-rt #-sbcl :rt)
