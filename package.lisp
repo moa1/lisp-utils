@@ -1,5 +1,3 @@
-(in-package :common-lisp-user)
-
 (defpackage :utils
   ;; this :use will make the symbols available in the package :utils,
   ;; not :common-lisp-user !
@@ -105,3 +103,7 @@
    #:sin-rational
    #:cos-rational
    ))
+
+;; apparently this needs to be replicated in each file of package :UTILS.
+(in-package :utils)
+(use-package :alexandria)

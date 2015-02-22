@@ -1,6 +1,7 @@
 ;; this in-package is neccessary so that symbols :use-d in defpackage
 ;; (see package.lisp) will be visible in this file
 (in-package :utils)
+(use-package :alexandria)
 
 (defun repeat (&rest rest)
   "Repeat the i-th argument the number of times specified by argument i+1"
@@ -1303,6 +1304,7 @@ Do this by compiling a function which calls up to COMPILE-BATCH times in a row w
 
 (defun timesec (function &key (min-out-of 18) (compile-batch +timeitf-compile-batch+) (measurable-seconds 0.05) (measurable-repeats 5))
   ;; min-out-of is 18, so that a measurement with measurable-seconds=0.05 takes about 2 seconds. This is because function min-repeats-measurable takes about 0.05sec * 2.
+  ;; TODO: maybe use SBCL's SB-VM::with-cycle-counter to measure the number of elapsed cpu cycles. Example: (sb-vm::with-cycle-counter (+ 1 100)). The first value is the first value of the body, the second value the number of elapsed cpu cycles when evaluating the body.
   "Measure how long a function takes at least to execute, out of MIN-OUT-OF times.
 Return the seconds per repeat, the same number as a long-float, and the number of repeats which was needed to get a running time of at least MEASURABLE-SECONDS for all of MEASURABLE-REPEATS tries.
 COMPILE-BATCH is the number of compiled calls to FUNCTION which are made not by a loop."
