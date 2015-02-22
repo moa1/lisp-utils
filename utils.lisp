@@ -1017,8 +1017,8 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 				     (setf ,place 1)
 				     (incf ,place))))
 		     (if (eq key #'identity)
-			 (locally (declare (sb-ext:muffle-conditions
-					    style-warning))
+			 #+sbcl (locally (declare (sb-ext:muffle-conditions
+						   style-warning))
 			   (updatef (gethash hx ht 0)))
 			 (multiple-value-bind (hval h-p)
 			     (gethash hx ht)
