@@ -1050,7 +1050,7 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 
 (defun dump-to-file (file open-options item)
   (if (eq 0 (getf open-options :if-exists 0))
-      (setf (getf open-options :if-exists) :overwrite))
+      (setf (getf open-options :if-exists) :supersede))
   (if (eq 0 (getf open-options :if-does-not-exist 0))
       (setf (getf open-options :if-does-not-exist) :create))
   (let ((stream (apply #'open file :direction :output open-options)))
