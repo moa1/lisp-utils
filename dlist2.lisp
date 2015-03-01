@@ -1,6 +1,6 @@
-(load "~/quicklisp/setup.lisp")
-(ql:quickload :alexandria)
-(use-package :alexandria)
+;;(load "~/quicklisp/setup.lisp")
+;;(ql:quickload :alexandria)
+;;(use-package :alexandria)
 
 ;;;; This package is like package dlist, but implements the structure dlist a bit differently. For example, when wanting to store (dlist 1 2 3), instead of having the first dcons like this (make-dcons :prev nil :data 1 :next DCONS-2), the first dcons is DCONS-START == (make-dcons :prev nil :data nil :next DCONS-1) with DCONS-1 == (make-dcons :prev DCONS-START :data 1 :next DCONS-2). Likewise, the end of the dcons is capped by an "empty" dcons as well. Finally, (dlist-first D) returns DCONS-START instead of DCONS-1, and (dlist-last D) returns DCONS-END instead of DCONS-3. This has the advantage that an empty dlist does not need to be NIL. Therefore the user can always be sure about the type of the object at hand. It also simplifies code that is using dlist, since it doesn't have to check the special case of NIL before recursing on a dcons. Finally, some programs become faster (for example pushing onto and popping off a dlist), some slower (programs that create a lot of small dlists).
 
@@ -17,9 +17,13 @@
 	   :dcons-prepend
 	   :dcons-append
 	   :dcons-insert-between
+	   :dcons-existing-insert-between
 	   :dcons-delete-return-prev
 	   :dcons-delete-return-next
+	   :dcons-delete
+	   :dlist-push-return-new-dcons
 	   :dlist-push
+	   :dlist-pop-dcons
 	   :dlist-pop
 	   :dlist-first
 	   :dlist-last
@@ -188,9 +192,18 @@ Doesn't yet print whether DCONS has any circularities in it (but detects them al
     (setf (dcons-prev next) new)
     new))
 
+(declaim (inline dcons-existing-insert-between))
+(defun dcons-existing-insert-between (prev dcons next)
+  "Connect the dconses PREV, the existing DCONS, and NEXT, in that order."
+  (setf (dcons-prev dcons) prev)
+  (setf (dcons-next dcons) next)
+  (setf (dcons-next prev) dcons)
+  (setf (dcons-prev next) dcons))
+
 (declaim (inline dcons-delete-return-prev))
 (defun dcons-delete-return-prev (dcons)
-  "Remove DCONS from the doubly linked list and return (dcons-prev DCONS)."
+  "Remove DCONS from the doubly linked list and return (dcons-prev DCONS).
+Does not change next- and prev-pointers of DCONS."
   (let ((prev (dcons-prev dcons))
 	(next (dcons-next dcons)))
     (setf (dcons-next prev) next)
@@ -198,38 +211,54 @@ Doesn't yet print whether DCONS has any circularities in it (but detects them al
 
 (declaim (inline dcons-delete-return-next))
 (defun dcons-delete-return-next (dcons)
-  "Remove DCONS from the doubly linked list and return (dcons-next DCONS)."
+  "Remove DCONS from the doubly linked list and return (dcons-next DCONS).
+Does not change next- and prev-pointers of DCONS."
   (let ((prev (dcons-prev dcons))
 	(next (dcons-next dcons)))
     (setf (dcons-prev next) prev)
     (setf (dcons-next prev) next)))
 
-(defmacro dlist-push (data dlist &key at-end)
-  "If AT-END evaluates to NIL, pushes OBJ onto the beginning of DLIST.
-Otherwise, pushes OBJ onto the end of DLIST.
-Returns DLIST."
+(setf (symbol-function 'dcons-delete) #'dcons-delete-return-prev)
+
+(defmacro dlist-push-return-new-dcons (data dlist &key at-end)
+  "If AT-END evaluates to NIL, pushes DATA onto the beginning of DLIST.
+Otherwise, pushes DATA onto the end of DLIST.
+Returns the newly created dcons which contains DATA."
   (once-only (data dlist at-end)
     (with-gensyms (end cap)
       `(if ,at-end
 	   (let* ((,cap (dlist-last ,dlist))
 		  (,end (dcons-prev ,cap)))
-	     (dcons-insert-between ,end ,data ,cap)
-	     ,dlist)
+	     (dcons-insert-between ,end ,data ,cap))
 	   (let* ((,cap (dlist-first ,dlist))
 		  (,end (dcons-next ,cap)))
-	     (dcons-insert-between ,cap ,data ,end)
-	     ,dlist)))))
+	     (dcons-insert-between ,cap ,data ,end))))))
 
-(defmacro dlist-pop (dlist &key from-end)
-  "If FROM-END is NIL, delete the first element of DLIST and return the new first element.
-Otherwise, delete the last element of DLIST and return the new last element."
+(defmacro dlist-push (data dlist &key at-end)
+  "If AT-END evaluates to NIL, pushes DATA onto the beginning of DLIST.
+Otherwise, pushes DATA onto the end of DLIST.
+Returns DLIST."
+  `(progn
+     (dlist-push-return-new-dcons ,data ,dlist :at-end ,at-end)
+     ,dlist))
+
+(defmacro dlist-pop-dcons (dlist &key from-end)
+  "If FROM-END is NIL, delete the first element of DLIST.
+Otherwise, delete the last element of DLIST.
+Return the deleted dcons."
   (once-only (dlist from-end)
     (with-gensyms (p)
       `(if ,from-end
 	   (let ((,p (prev (dlist-last ,dlist))))
-	     (prog1 (data ,p) (dcons-delete-return-next ,p)))
+	     (prog1 ,p (dcons-delete ,p)))
 	   (let ((,p (next (dlist-first ,dlist))))
-	     (prog1 (data ,p) (dcons-delete-return-prev ,p)))))))
+	     (prog1 ,p (dcons-delete ,p)))))))
+
+(defmacro dlist-pop (dlist &key from-end)
+  "If FROM-END is NIL, delete the first element of DLIST.
+Otherwise, delete the last element of DLIST.
+Return the data of the deleted dcons."
+  `(dcons-data (dlist-pop-dcons ,dlist :from-end ,from-end)))
 
 ;; DLIST-FIRST and DLIST-LAST for DLISTs are already defined by defclass.
 
