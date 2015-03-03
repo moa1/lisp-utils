@@ -51,7 +51,8 @@
 (in-package :dlist2)
 
 
-(defstruct dcons
+(defstruct (dcons
+	     (:constructor make-dcons (prev data next)))
   "An element of a doubly linked list, with data DATA, previous element PREV, and next element NEXT."
   (prev nil :type (or null dcons))
   (data nil :type t)
@@ -160,34 +161,34 @@ Doesn't yet print whether DCONS has any circularities in it (but detects them al
 	(format stream " ~A" (data cur))))))
 
 (defun dcons-list (&rest args)
-  (let* ((first (make-dcons :prev nil :data nil :next nil))
+  (let* ((first (make-dcons nil nil nil))
 	 (cur first))
     (loop for arg in args do
-	 (let ((new (make-dcons :prev cur :data arg :next nil)))
+	 (let ((new (make-dcons cur arg nil)))
 	   (setf (next cur) new)
 	   (setf cur new)))
-    (let ((last (make-dcons :prev cur :data nil :next nil)))
+    (let ((last (make-dcons cur nil nil)))
       (setf (next cur) last)
       (values first last))))
 
 (declaim (inline dcons-prepend))
 (defun dcons-prepend (data dcons)
   "Replace PREV of DCONS with a newly-created dcons with data DATA and next DCONS."
-  (let ((new (make-dcons :prev nil :data data :next dcons)))
+  (let ((new (make-dcons nil data dcons)))
     (setf (dcons-prev dcons) new)
     new))
 
 (declaim (inline dcons-append))
 (defun dcons-append (data dcons)
   "Replace NEXT of DCONS with a newly-created dcons with data DATA and prev DCONS."
-  (let ((new (make-dcons :prev dcons :data data :next nil)))
+  (let ((new (make-dcons dcons data nil)))
     (setf (dcons-next dcons) new)
     new))
 
 (declaim (inline dcons-insert-between))
 (defun dcons-insert-between (prev data next)
   "Connect the dconses PREV, a newly created DCONS, and NEXT, in that order. Return the newly created DCONS."
-  (let ((new (make-dcons :prev prev :data data :next next)))
+  (let ((new (make-dcons prev data next)))
     (setf (dcons-next prev) new)
     (setf (dcons-prev next) new)
     new))
@@ -318,7 +319,7 @@ Note that this is like dodcons, but instead of binding VAR to the current dcons 
 			     (new-data (if (and ,deep-copy (or (dlistp data) (dconsp data)))
 					   (copy-dlist data :deep-copy ,deep-copy :from-end from-end)
 					   data))
-			     (new-dcons (make-dcons :prev cur :data new-data :next nil)))
+			     (new-dcons (make-dcons cur new-data nil)))
 			(setf (dcons-next cur) new-dcons)
 			(setf cur new-dcons)))
 		    (setf (dcons-next cur) last)
