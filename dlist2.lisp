@@ -51,6 +51,8 @@
 (in-package :dlist2)
 
 
+;; TODO: maybe remove all exported references to DCONS from dlist2.lisp, so that it is compatible with a different implementation of DCONS.
+
 (defstruct (dcons
 	     (:constructor make-dcons (prev data next)))
   "An element of a doubly linked list, with data DATA, previous element PREV, and next element NEXT."
