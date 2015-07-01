@@ -834,7 +834,8 @@ and REPEAT must be an integer greater 0."
 		  `(progn
 		     (format t "~A:" ,(format nil "~A" a))
 		     (dolist (,i (multiple-value-list ,a))
-		       (format t "~A " ,i)))))
+		       (prin1 ,i)
+		       (princ " ")))))
        (format t "~%"))))
 
 (defun sgn (x)
@@ -1058,6 +1059,12 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
       (pprint item stream)
       ;;(terpri stream)
       (close stream))))
+
+(defun dump-list (list filename &key (control-string "~A ") (open-options))
+  "Write list LIST to file FILENAME (overwriting if it exists) using the control string CONTROL-STRING for each item in the list."
+  (with-open-file (stream filename :direction :output :if-exists (getf open-options :if-exists :supersede) :if-does-not-exist (getf open-options :if-does-not-exist :create))
+    (loop for i in list do
+	 (format stream control-string i))))
 
 (defmacro no-error (((error-type default-value) &rest error-values)
 		    &body body)
@@ -1302,24 +1309,39 @@ Do this by compiling a function which calls up to COMPILE-BATCH times in a row w
 	(let ((stop (get-internal-real-time)))
 	  (/ (- stop start) internal-time-units-per-second))))))
 
-(defun timesec (function &key (min-out-of 18) (compile-batch +timeitf-compile-batch+) (measurable-seconds 0.05) (measurable-repeats 5))
+(defun time-min-repeats-measurable (function min-seconds number-measurable compile-batch)
+  "Exponentially increase number of repeats until calling FUNCTION this often takes at least MIN-SECONDS seconds in all of NUMBER-MEASURABLE tries."
+  (do* ((rep 1 (* rep 2))) (nil nil)
+    (when (loop for j below number-measurable always (let ((sec (timeitf function rep compile-batch)))
+						       (>= sec min-seconds)))
+      (return-from time-min-repeats-measurable rep))))
+
+(defun timesec (function &key (min-out-of 18) (measurable-seconds 0.05) (measurable-repeats 5) (compile-batch +timeitf-compile-batch+))
   ;; min-out-of is 18, so that a measurement with measurable-seconds=0.05 takes about 2 seconds. This is because function min-repeats-measurable takes about 0.05sec * 2.
   ;; TODO: maybe use SBCL's SB-VM::with-cycle-counter to measure the number of elapsed cpu cycles. Example: (sb-vm::with-cycle-counter (+ 1 100)). The first value is the first value of the body, the second value the number of elapsed cpu cycles when evaluating the body.
   "Measure how long a function takes at least to execute, out of MIN-OUT-OF times.
 Return the seconds per repeat, the same number as a long-float, and the number of repeats which was needed to get a running time of at least MEASURABLE-SECONDS for all of MEASURABLE-REPEATS tries.
 COMPILE-BATCH is the number of compiled calls to FUNCTION which are made not by a loop."
-  (labels ((min-repeats-measurable (min-seconds number-measurable)
-	     "Exponentially increase number of repeats until calling FUNCTION this often takes at least MIN-SECONDS seconds in all of NUMBER-MEASURABLE tries."
-	     (do* ((rep 1 (* rep 2))) (nil nil)
-	       (when (loop for j below number-measurable always (let ((sec (timeitf function rep compile-batch)))
-								  (>= sec min-seconds)))
-		 (return-from min-repeats-measurable rep)))))
-    (let* ((rep (min-repeats-measurable measurable-seconds measurable-repeats))
-	   (times (loop for i below min-out-of collect (timeitf function rep compile-batch)))
-	   (min (/ (apply #'min-keep-type times) rep)))
-      (values min (coerce min 'long-float) rep))))
+  (let* ((rep (time-min-repeats-measurable function measurable-seconds measurable-repeats compile-batch))
+	 (times (loop for i below min-out-of collect (timeitf function rep compile-batch)))
+	 (min (/ (apply #'min-keep-type times) rep)))
+    (values min (coerce min 'long-float) rep)))
 
-
+(defun time-distribution (function &key (min-time 2.0) (min-measures 20))
+  (labels ((timeit (function)
+	     ;;(cl-user::gc) very slow
+	     (nth-value 1
+			(sb-vm::with-cycle-counter
+			  (funcall function)))))
+    (let ((times nil))
+      (do* ((i 0 (1+ i))
+	    (start (get-internal-real-time))
+	    (now (get-internal-real-time) (get-internal-real-time))
+	    (elapsed (/ (- now start) internal-time-units-per-second) (/ (- now start) internal-time-units-per-second)))
+	   ((and (> elapsed min-time) (>= i min-measures)))
+	(push (timeit function) times))
+      times)))
+  
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
 
