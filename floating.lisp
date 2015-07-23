@@ -15,7 +15,7 @@
 
 
 (defun floating (stream number colonp atp 
-                 &optional (*print-base* 10) (num-digits 10)
+                 &optional (*print-base* *print-base*) (num-digits 10)
                  &rest args)
   "Taken from [https://stackoverflow.com/questions/21103985/floating-point-formatted-to-base-16] by Joshua Taylor."
   (declare (ignore colonp args))
