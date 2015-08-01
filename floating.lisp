@@ -34,7 +34,7 @@
   ;; updating quotient and remainder by multiplying the remainder by
   ;; the base and taking the floor again until either the remainder
   ;; becomes zero, or we've reached the maximum number of digits.
-  (multiple-value-bind (quotient remainder) (floor number 1.0)
+  (multiple-value-bind (quotient remainder) (floor number)
     (write quotient :stream stream)
     (write-char #\. stream)
     (do ((num-digits num-digits (1- num-digits)))
