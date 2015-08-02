@@ -156,15 +156,18 @@ SUFFIX is a string that is to be appended to the digits."
 (defun parse-float-as-rational (string &optional (radix 10))
   "Return the floating point number encoded by STRING.
 Return the exact rational number encoded by STRING."
-  (let* ((.-pos (position #\. string)))
+  ;; TODO: this also parses (parse-float-as-rational "  -2.   123")==-2000123/1000000. Make it throw an error instead.
+  (let* ((.-pos (position #\. string))
+	 (--pos (position #\- string)))
     (if (null .-pos)
 	(parse-integer string :radix radix :junk-allowed nil)
-	(let* ((intstr (subseq string 0 .-pos))
+	(let* ((intstr (subseq string (if (null --pos) 0 (1+ --pos)) .-pos))
 	       (fracstr (subseq string (1+ .-pos))))
-	  (+ (parse-integer (if (string= intstr "") "0" intstr) :radix radix :junk-allowed nil)
-	     (let ((frac (if (string= fracstr "") "0" fracstr)))
-	       (/ (parse-integer frac :radix radix :junk-allowed nil)
-		  (expt radix (length frac)))))))))
+	  (* (if (null --pos) 1 -1)
+	     (+ (parse-integer (if (string= intstr "") "0" intstr) :radix radix :junk-allowed nil)
+		(let ((frac (if (string= fracstr "") "0" fracstr)))
+		  (/ (parse-integer frac :radix radix :junk-allowed nil)
+		     (expt radix (length frac))))))))))
 
 (defun parse-float (string &optional (radix 10))
   (float (parse-float-as-rational string radix)))
