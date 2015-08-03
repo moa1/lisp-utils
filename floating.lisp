@@ -1,14 +1,13 @@
-;; Print and parse floating-point numbers in any radix and with any precision. This is useful for persistent exact floats.
-;; The function to return a string readable by C is (hex-c-readable FLOAT-NUMBER).
-;; The function to parse a string printed by hex-c-readable or printf in C is (parse-hex-c-readable STRING).
+;; Print and parse floating-point numbers in radixes 2-36 and with any precision. This is useful for storing exact floats.
+;; The function to return a string readable by C is (hex-c-readable REAL-NUMBER).
+;; The function to parse a string printed by hex-c-readable or printf in C and return a number is (parse-hex-c-readable STRING).
 
 (defpackage :floating
   (:use :common-lisp)
   (:export :*print-precision*
 	   :*print-rounding*
 	   :print-real
-	   :floating
-	   :floating-hex-to-c-readable
+	   :pprint-real
 	   :hex-c-readable
 	   :parse-float-as-rational
 	   :parse-float
@@ -17,6 +16,7 @@
 (in-package :floating)
 
 (defun digitize-integer (integer)
+  "Return the list of digits that INTEGER has in base *PRINT-BASE*."
   (declare (type (and unsigned-byte integer) integer))
   (let ((output-list nil))
     (flet ((output-digit (d)
@@ -34,6 +34,9 @@
 (defvar *print-rounding* :round "*PRINT-ROUNDING* controls how the last digit of the fraction is rounded, with possible values :TRUNCATE (truncate after *PRINT-PRECISION*), :ELLIPSIS (truncate after *PRINT-PRECISION* and print \"...\" if the rest is not 0) or :ROUND (round last digit to the nearest possible digit).")
 
 (defun propagate-rest! (l)
+  "Propagate the rest through the digits in L, modifying it.
+Given a list of integers, increment the first by 1, and if it overflows base *PRINT-BASE*, increment the next as well, until a digit is below *PRINT-BASE*.
+Return T if there was still a rest after incrementing the last digit, NIL otherwise."
   (if (null l)
       t
       (let ((new-digit (1+ (car l))))
@@ -97,6 +100,8 @@ SUFFIX is a string that is to be appended to the digits."
   (defconstant +print-radix-symbols+ "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 
 (defun print-real (number &optional stream)
+  "Print the NUMBER of type real to the stream STREAM.
+Regards *PRINT-BASE*, *PRINT-PRECISION*, *PRINT-ROUNDING*."
   (declare (type real number))
   ;;(princ (aref +print-radix-symbols+ d) stream))))
   (when (minusp number)
@@ -122,11 +127,10 @@ SUFFIX is a string that is to be appended to the digits."
 	  (princ suffix stream)))))
   number)
 
-(defun floating (stream number colonp atp 
-                 &optional (*print-base* *print-base*) (*print-precision* *print-precision*)
-                 &rest args)
+(defun pprint-real (stream number colonp atp
+		    &optional (*print-base* *print-base*) (*print-precision* *print-precision*)
+		    &rest args)
   (declare (ignore colonp atp args))
-  ;; TODO: check how I have to use COLONP and ATP: See [file:///home/toni/text/soft/HyperSpec/Body/22_ced.htm].
   (print-real number stream))
 
 (defparameter +test-numbers+ '(-1024.0 -4.0 -3.0 -2.0 -1.0 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 1.0 2.0 3.0 4.0 1024.0))
@@ -134,18 +138,17 @@ SUFFIX is a string that is to be appended to the digits."
 (defun test-print ()
   (let ((tests +test-numbers+))
     (loop for f in tests do
-	 (format t "~A == ~16/floating/ ~A~%" f f (multiple-value-list (integer-decode-float f))))
+	 (format t "~A == ~16/floating:pprint-real/ ~A~%" f f (multiple-value-list (integer-decode-float f))))
     (loop for f in tests do
-	 (format t "\"~16/floating/\", " f))))
-
-(defun floating-hex-to-c-readable (hex-string)
-  "Given a floating-point hexadecimal number represented by HEX-STRING, return a string S-IN-C that is readable by 'sscanf(S-IN-C, \"%a\", &f)'."
-  (if (string= "-" (subseq hex-string 0 1))
-      (concatenate 'string "-0x" (subseq hex-string 1))
-      (concatenate 'string "0x" hex-string)))
+	 (format t "\"~16/floating:pprint-real/\", " f))))
 
 (defun hex-c-readable (number)
-  (floating-hex-to-c-readable (with-output-to-string (stream) (floating stream number nil nil 16))))
+  "Given a floating-point hexadecimal number represented by HEX-STRING, return a string S-IN-C that is readable by 'sscanf(S-IN-C, \"%a\", &f)'."
+  (let ((string (with-output-to-string (stream)
+		  (let ((*print-base* 16)) (print-real number stream)))))
+    (if (string= "-" (subseq string 0 1))
+	(concatenate 'string "-0x" (subseq string 1))
+	(concatenate 'string "0x" string))))
 
 (defun test-print-c-readable ()
   (let ((tests +test-numbers+))
