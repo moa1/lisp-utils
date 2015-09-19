@@ -1107,9 +1107,10 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 			       (/ (first mean-sd-n1) iters .001)
 			       (/ (first mean-sd-n2) iters .001))
 		       (when signif
-			 (format t "Body1 is ~F ms ~A per call than Body2.~%"
+			 (format t "Body1 is ~F ms ~A (~3F speedup) per call than Body2.~%"
 				 (/ (abs mean-diff) iters .001)
-				 (if (< mean-diff 0) "faster" "slower"))))
+				 (if (< mean-diff 0) "faster" "slower")
+				 (/ (first mean-sd-n2) (first mean-sd-n1)))))
 		     (values (list p signif)
 			     (list mean-diff (/ mean-diff iters))
 			     mean-sd-n1 mean-sd-n2
