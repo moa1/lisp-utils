@@ -323,10 +323,10 @@ Example: (parse-declare '(type fixnum a b c) nil nil nil)"
 		      (t (error "unknown HEAD")))
 		  (multiple-value-bind (body parsed-declspecs new-variables new-functions)
 		      (parse-declaration-in-body body new-variables functions parent :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+		    (setf (form-bindings current) parsed-bindings)
+		    (setf (form-declspecs current) parsed-declspecs)
 		    (let ((parsed-body (loop for form in body collect
 					    (reparse form current :variables new-variables :functions new-functions))))
-		      (setf (form-bindings current) parsed-bindings)
-		      (setf (form-declspecs current) parsed-declspecs)
 		      (setf (form-body current) parsed-body)
 		      current))))))
 	   )))
