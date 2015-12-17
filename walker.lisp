@@ -129,7 +129,7 @@ Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-names
 
 (defun parse-declaration-in-body (body variables functions parent &key customparsep-function customparse-function)
   "Parses declarations in the beginning of BODY.
-Returns two values: the rest of the BODY that does not start with a DECLARE-expression, and a list of DECLSPEC-objects.
+Returns four values: the rest of the BODY that does not start with a DECLARE-expression, a list of DECLSPEC-objects, the updated VARIABLES and FUNCTIONS.
 Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of VARIABLES and FUNCTIONS."
   (declare (optimize (debug 3)))
   (assert (listp body) () "Malformed BODY:~%~A" body)
@@ -140,11 +140,15 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 	   (varlookup/create (symbol)
 	     (if (lexboundp symbol)
 		 (namespace-lookup symbol variables)
-		 (make-instance 'var :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
+		 (let ((new-sym (make-instance 'var :name symbol :freep t :declspecs nil)))
+		   (setf variables (augment-namespace-with-sym new-sym variables)) ;do not bind :DEFINITION
+		   new-sym)))
 	   (funlookup/create (symbol)
 	     (if (lexfboundp symbol)
 		 (namespace-lookup symbol functions)
-		 (make-instance 'fun :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
+		 (let ((new-sym (make-instance 'fun :name symbol :freep t :declspecs nil)))
+		   (setf functions (augment-namespace-with-sym new-sym functions)) ;do not bind :DEFINITION
+		   new-sym)))
 	   (parse-declspec-type (expr)
 	     "parse a single declaration-specifier.
 Example: (parse-declare '(type fixnum a b c) nil nil nil)"
@@ -189,7 +193,7 @@ Example: (parse-declare '(type fixnum a b c) nil nil nil)"
 		 ((and (listp head) (eq (car head) 'declare))
 		  (let* ((declspecs (cdr head)))
 		    (parse-declare rest (parse-declspecs declspecs collected-declspecs))))
-		 (t (values body (nreverse collected-declspecs)))))))
+		 (t (values body (nreverse collected-declspecs) variables functions))))))
     (parse-declare body nil)))
 
 (multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) nil nil nil)
@@ -317,10 +321,10 @@ Example: (parse-declare '(type fixnum a b c) nil nil nil)"
 						      parsed-binding))))
 			 (values parsed-bindings new-variables)))
 		      (t (error "unknown HEAD")))
-		  (multiple-value-bind (body parsed-declspecs)
+		  (multiple-value-bind (body parsed-declspecs new-variables new-functions)
 		      (parse-declaration-in-body body new-variables functions parent :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 		    (let ((parsed-body (loop for form in body collect
-					    (reparse form current :variables new-variables))))
+					    (reparse form current :variables new-variables :functions new-functions))))
 		      (setf (form-bindings current) parsed-bindings)
 		      (setf (form-declspecs current) parsed-declspecs)
 		      (setf (form-body current) parsed-body)
