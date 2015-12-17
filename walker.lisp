@@ -18,6 +18,8 @@
 	   (declared-type-of var)) ;returns NIL, but should be SINGLE-FLOAT.
 |#
 
+;; Note that the classes VAR, FUN and so on should be named VARIABLE, FUNCTION and so on, but SBCL pollutes the CL package.
+
 ;; How to define DEFUN from special forms:
 ;;CL-USER> (macroexpand '(setf (symbol-function 'test) (lambda () 5)))
 ;;(LET* ((#:NEW596 (LAMBDA () 5)))
@@ -126,6 +128,9 @@ Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-names
 (defclass declspec-type (declspec)
   ((type :initarg :type :accessor declspec-type)
    (vars :initarg :vars :accessor declspec-vars :type list)))
+(defclass declspec-ftype (declspec)
+  ((type :initarg :type :accessor declspec-type)
+   (vars :initarg :vars :accessor declspec-vars :type list)))
 
 (defun parse-declaration-in-body (body variables functions parent &key customparsep-function customparse-function)
   "Parses declarations in the beginning of BODY.
@@ -174,15 +179,17 @@ Example: (parse-declare '(type fixnum a b c) nil nil nil)"
 			 (cond
 			   ((and (not (null customparsep-function)) (funcall customparsep-function identifier body variables functions parent))
 			    (funcall customparse-function identifier body variables functions parent))
-			   ((eq identifier 'type)
-			    (assert (and (listp body) (listp (cdr body))) () "Malformed TYPE declaration: ~A" expr)
+			   ((find identifier '(type ftype))
+			    (assert (and (listp body) (listp (cdr body))) () "Malformed ~A declaration: ~A" identifier expr)
 			    (let* ((typespec (car body))
-				   (vars (cdr body)))
+				   (syms (cdr body)))
 			      ;; will not check TYPESPEC, has to be done in user code.
-			      (let* ((parsed-vars (loop for var in vars collect (varlookup/create var)))
-				     (parsed-declspec (make-instance 'declspec-type :parent parent :type typespec :vars parsed-vars)))
-				(loop for var in parsed-vars do
-				     (push parsed-declspec (sym-declspecs var)))
+			      (let* ((symlookup/create (ecase identifier ((type) #'varlookup/create) ((ftype) #'funlookup/create)))
+				     (parsed-syms (loop for sym in syms collect (funcall symlookup/create sym)))
+				     (object-type (ecase identifier ((type) 'declspec-type) ((ftype) 'declspec-ftype)))
+				     (parsed-declspec (make-instance object-type :parent parent :type typespec :vars parsed-syms)))
+				(loop for sym in parsed-syms do
+				     (push parsed-declspec (sym-declspecs sym)))
 				parsed-declspec)))
 			   (t (error "Unknown declaration specifier ~A" expr)))))
 		    (parse-declspecs (cdr declspecs) (cons parsed-declspec collected-declspecs)))))))
@@ -199,9 +206,16 @@ Example: (parse-declare '(type fixnum a b c) nil nil nil)"
 (multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) nil nil nil)
   (assert (and (equal body '(declare (type fixnum))) (null declspecs))))
 ;;TODO: test that (parse-declaration-in-body '((declare ()) 5) nil nil nil) throws an error.
-(multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (type fixnum a)) 5) nil nil nil)
-  (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type))))
-(assert (sym-freep (car (declspec-vars (car (nth-value 1 (parse-declaration-in-body '((declare (type fixnum a)) 5) nil nil nil)))))))
+(multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (type fixnum a)) 5) nil nil nil)
+  (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type)))
+  (assert (sym-freep (car (declspec-vars (car declspecs)))))
+  (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'a variables)))
+  (assert (not (namespace-boundp 'a functions))))
+(multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) nil nil nil)
+  (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
+  (assert (sym-freep (car (declspec-vars (car declspecs)))))
+  (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'a functions)))
+  (assert (not (namespace-boundp 'a variables))))
 
 ;;;; FORMS
 
