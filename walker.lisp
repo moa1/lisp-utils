@@ -278,7 +278,8 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   ())
 (defclass labels-form (special-form body-form bindings-form)
   ())
-;;(defclass lambda-form (special-form functiondef) ())
+(defclass lambda-form (special-form functiondef)
+  ())
 
 
 (defmethod print-object ((object constant-form) stream)
@@ -330,6 +331,10 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
       (format stream "~A ~A ~A" (binding-sym object) (functiondef-llist object) (body-with-declspecs object)))))
+(defmethod print-object ((object lambda-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (when *print-detailed-walker-objects*
+      (format stream "~A ~A" (functiondef-llist object) (body-with-declspecs object)))))
 
 (defun split-lambda-list* (lambda-list)
   (let ((allow-other-keys-p nil))
@@ -367,6 +372,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 Supported lambda list keywords:
 CLHS Figure 3-12. Standardized Operators that use Ordinary Lambda Lists: An ordinary lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &key &rest &aux &optional
 CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &environment &rest &aux &key &whole &body &optional"
+	     ;; TODO: add possibility to call custom parsing function.
 	     (assert (typep parent 'functiondef))
 	     ;; TODO: come up with a scheme for this function so that it is easily extensible with other types of lambda lists.
 	     ;; "CLHS 3.4.1 Ordinary Lambda Lists" says: "An init-form can be any form. Whenever any init-form is evaluated for any parameter specifier, that form may refer to any parameter variable to the left of the specifier in which the init-form appears, including any supplied-p-parameter variables, and may rely on the fact that no other parameter variable has yet been bound (including its own parameter variable)." But luckily the order of allowed keywords is fixed for both normal lambda-lists and macro lambda-lists, and a normal lambda-list allows a subset of macro lambda-lists. Maybe I'll have to rewrite this for other lambda-lists.
@@ -461,10 +467,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		     (setf (llist-aux new-llist) aux)))
 		 (values new-llist new-variables))))
 	   (parse-functiondef (form variables functions parent)
+	     "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and create a corresponding FUNCTIONDEF-object."
 	     (flet ((split-lambda-list-and-body (form)
 		      (assert (and (consp form) (listp (car form))) () "Invalid lambda-list ~A" form)
 		      (let ((lambda-list (car form))
 			    (body (cdr form)))
+			(assert (listp body) () "Invalid body ~A; must be a list" body)
 			(values lambda-list body))))
 	       (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
 		 (let ((new-functiondef (make-instance 'functiondef :parent parent)))
@@ -476,7 +484,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		       (setf (form-declspecs new-functiondef) parsed-declspecs)
 		       (let ((parsed-body (loop for form in body collect (reparse form new-functiondef :variables variables-in-functiondef :functions functions-in-functiondef))))
 			 (setf (form-body new-functiondef) parsed-body))))
-		   new-functiondef)))))
+		   new-functiondef))))
+	   (setf-binding-slots-to-functiondef-slots (binding parsed-functiondef)
+	     (setf (functiondef-parent binding) (functiondef-parent parsed-functiondef) ;copy everything from PARSED-FUNCTIONDEF to BINDING
+		   (functiondef-llist binding) (functiondef-llist parsed-functiondef)
+		   (form-declspecs binding) (form-declspecs parsed-functiondef)
+		   (form-body binding) (form-body parsed-functiondef))))
     (cond
       ((and (not (null customparsep-function)) (funcall customparsep-function form variables functions parent))
        (funcall customparse-function form variables functions parent))
@@ -521,10 +534,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 				(parsed-functiondef (parse-functiondef body-form variables functions current))
 				(sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
 			   (setf (binding-sym binding) sym)
-			   (setf (functiondef-parent binding) (functiondef-parent parsed-functiondef) ;copy everything from PARSED-FUNCTIONDEF to BINDING
-				 (functiondef-llist binding) (functiondef-llist parsed-functiondef)
-				 (form-declspecs binding) (form-declspecs parsed-functiondef)
-				 (form-body binding) (form-body parsed-functiondef))
+			   (setf-binding-slots-to-functiondef-slots binding parsed-functiondef)
 			   binding)))
 		(multiple-value-bind (parsed-bindings new-variables new-functions)
 		    (let ((parse-value-function (ecase head ((let let*) #'make-var-binding) ((flet labels) #'make-fun-binding)))
@@ -554,7 +564,13 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		    (let ((parsed-body (loop for form in body collect
 					    (reparse form current :variables new-variables :functions new-functions))))
 		      (setf (form-body current) parsed-body)
-		      current))))))))))))
+		      current))))))
+	   ((eq head 'lambda)
+	    (let* ((lambda-list-and-body (cdr form))
+		   (current (make-instance 'lambda-form))
+		   (parsed-functiondef (parse-functiondef lambda-list-and-body variables functions parent)))
+	      (setf-binding-slots-to-functiondef-slots current parsed-functiondef)
+	      current))))))))
 
 ;; tests for PARSE
 (defun lexical-namespaces-at-here (form heresymbol)
