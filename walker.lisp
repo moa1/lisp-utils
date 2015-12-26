@@ -306,6 +306,8 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass return-from-form (special-form)
   ((blo :initarg :blo :accessor form-blo :type blo)
    (value :initarg :value :accessor form-value :type form)))
+(defclass locally-form (special-form body-form)
+  ((declspecs :initarg :declspecs :accessor form-declspecs :type list)))
 
 (defmethod print-object ((object constant-form) stream)
   (print-unreadable-object (object stream :type t)
@@ -368,6 +370,10 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
       (format stream "~A ~A" (form-blo object) (form-value object)))))
+(defmethod print-object ((object locally-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (when *print-detailed-walker-objects*
+      (format stream "~A" (body-with-declspecs object)))))
 
 (defun split-lambda-list* (lambda-list)
   (let ((allow-other-keys-p nil))
@@ -629,7 +635,18 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (current (make-instance 'return-from-form :parent parent :blo blo))
 		   (parsed-value (reparse value-form current)))
 	      (setf (form-value current) parsed-value)
-	      current))))))))
+	      current))
+	   ((eq head 'locally)
+	    (assert (and (consp rest) (consp (car rest)) (consp (cdr rest))) () "Cannot parse LOCALLY-form ~A" form)
+	    (let ((body rest)
+		  (current (make-instance 'locally-form :parent parent)))
+	      (multiple-value-bind (body parsed-declspecs new-variables new-functions)
+		  (parse-declaration-in-body body variables functions current :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+		(setf (form-declspecs current) parsed-declspecs)
+		(let ((parsed-body (loop for form in body collect
+					(reparse form current :variables new-variables :functions new-functions))))
+		  (setf (form-body current) parsed-body)
+		  current))))))))))
 
 (defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   (parse form (make-namespace) (make-namespace) (make-namespace) (make-namespace)
@@ -726,7 +743,13 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
     (let* ((form '(flet ((a ())) (declare (ftype fixnum a)) #'a))
 	   (ast (parse-with-empty-namespaces form))
 	   (declspec-ftype (car (form-declspecs ast))))
-      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-vars declspec-ftype)) (car (form-body ast)))))))
+      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-vars declspec-ftype)) (car (form-body ast)))))
+    (let* ((ast (parse-with-empty-namespaces '(locally (declare (type fixnum a)) a)))
+	   (declspec-type (car (form-declspecs ast)))
+	   (declspec-type-a (car (declspec-vars declspec-type)))
+	   (body-a (car (form-body ast))))
+      (assert (eq declspec-type-a body-a))
+      (assert (nso-freep declspec-type-a)))))
 (test-parse-declaration)
 
 (defun test-parse-lambda-list ()
