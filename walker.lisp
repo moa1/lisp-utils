@@ -25,6 +25,7 @@
 ;;(LET* ((#:NEW596 (LAMBDA () 5)))
 ;;  (FUNCALL #'(SETF SYMBOL-FUNCTION) #:NEW596 'TEST))
 ;;T
+;; is accessor #'FDEFINITION redundant to #'SYMBOL-FUNCTION?
 
 ;; CLHS 3.1.2.1.2.1 Special Forms
 ;; block      let*                  return-from      
@@ -42,6 +43,12 @@
 ;; ftype           inline     special   
 ;; ignorable       notinline  type      
 
+;; https://stackoverflow.com/questions/4394942/which-standard-common-lisp-macros-special-forms-establish-implicit-blocks-named
+;; Which standard Common Lisp macros/special forms establish implicit blocks named nil?
+;; DO DO* PROG PROG* LOOP DOLIST DOTIMES DO-SYMBOLS DO-ALL-SYMBOLS DO-EXTERNAL-SYMBOLS
+
+;; special forms defining named blocks: BLOCK FLET LABELS MACROLET
+
 (ql:quickload :lambda-fiddle)
 
 (defpackage :walker
@@ -55,21 +62,23 @@
   "A lexical environment."
   variables
   functions
-  ;; blocks
+  blocks
   ;; tags
   ;; types ;i.e. class- or structure-names
   )
 
 ;;;; NAMESPACES
 
-(defclass sym ()
-  ((name :initarg :name :accessor sym-name :type symbol
+(defclass nso ()
+  ((name :initarg :name :accessor nso-name :type symbol
 	 :documentation "NIL if not known")
-   (freep :initarg :freep :accessor sym-freep :type boolean
-	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace.")
-   (definition :initarg :definition :accessor sym-definition ;;TODO uncomment when llist is implemented :typep (or binding llist)
+   (freep :initarg :freep :accessor nso-freep :type boolean
+	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace."))
+  (:documentation "a namespace-object (NSO) containing a name and information whether it is free or bound"))
+(defclass sym (nso)
+  ((definition :initarg :definition :accessor nso-definition ;;TODO uncomment when llist is implemented :typep (or binding llist)
 	       :documentation "the parsed object (of type (OR BINDING LLIST)) it is defined in, NIL if not known")
-   (declspecs :initarg :declspecs :accessor sym-declspecs :type list
+   (declspecs :initarg :declspecs :accessor nso-declspecs :type list
 	      :documentation "a list of DECLSPECs that apply to this symbol")
    )
   (:documentation "A symbol referring to a variable or function.
@@ -78,14 +87,23 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
   ())
 (defclass fun (sym)
   ())
+(defclass blo (nso)
+  ((definition :initarg :definition :accessor nso-definition
+	       :documentation "the parsed object of type BLOCK-FORM that it is defined in, NIL if not known"))
+  (:documentation "A named block."))
 
 (defvar *print-detailed-walker-objects* nil "If T, print more details of objects in package WALKER.")
 
 (defmethod print-object ((object sym) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "NAME:~A FREEP:~A" (sym-name object) (sym-freep object))
-	(format stream "NAME:~A" (sym-name object)))))
+	(format stream "NAME:~A FREEP:~A" (nso-name object) (nso-freep object))
+	(format stream "NAME:~A" (nso-name object)))))
+(defmethod print-object ((object blo) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (if *print-detailed-walker-objects*
+	(format stream "NAME:~A FREEP:~A" (nso-name object) (nso-freep object))
+	(format stream "NAME:~A" (nso-name object)))))
 
 (defun make-namespace ()
   nil)
@@ -96,12 +114,15 @@ Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-names
   (acons symbol object namespace))
 
 (defun augment-namespace-with-sym (sym namespace)
-  (augment-namespace (sym-name sym) sym namespace))
+  (augment-namespace (nso-name sym) sym namespace))
 
 (defun augment-namespace-with-syms (syms namespace)
   (loop for sym in syms do
-       (setf namespace (augment-namespace (sym-name sym) sym namespace)))
+       (setf namespace (augment-namespace (nso-name sym) sym namespace)))
   namespace)
+
+(defun augment-namespace-with-blo (blo namespace)
+  (augment-namespace (nso-name blo) blo namespace))
 
 (defun namespace-boundp (symbol namespace)
   "Return T if the symbol SYMBOL is bound in NAMESPACE."
@@ -121,7 +142,7 @@ Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-names
 		(let ((str (make-array '(0) :element-type 'base-char :fill-pointer 0 :adjustable t)))
 		  (with-output-to-string (output str)
 		    (print-unreadable-object (sym output :type t :identity t)
-		      (format output "NAME:~A FREEP:~A DEFINITION:~A DECLSPECS:~A" (sym-name sym) (sym-freep sym) (sym-definition sym) (sym-declspecs sym))))
+		      (format output "NAME:~A FREEP:~A DEFINITION:~A DECLSPECS:~A" (nso-name sym) (nso-freep sym) (nso-definition sym) (nso-declspecs sym))))
 		  str)))
 	 (format stream "~A: ~A~%" (car cell) (format-sym (cdr cell))))))
 
@@ -182,7 +203,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 				     (object-type (ecase identifier ((type) 'declspec-type) ((ftype) 'declspec-ftype)))
 				     (parsed-declspec (make-instance object-type :parent parent :type typespec :vars parsed-syms)))
 				(loop for sym in parsed-syms do
-				     (push parsed-declspec (sym-declspecs sym)))
+				     (push parsed-declspec (nso-declspecs sym)))
 				parsed-declspec)))
 			   (t (error "Unknown declaration specifier ~A" expr)))))
 		    (parse-declspecs (cdr declspecs) (cons parsed-declspec collected-declspecs)))))))
@@ -201,12 +222,12 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 ;;TODO: test that (parse-declaration-in-body '((declare ()) 5) nil nil nil) throws an error.
 (multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (type fixnum a)) 5) nil nil nil)
   (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type)))
-  (assert (sym-freep (car (declspec-vars (car declspecs)))))
+  (assert (nso-freep (car (declspec-vars (car declspecs)))))
   (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'a variables)))
   (assert (not (namespace-boundp 'a functions))))
 (multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) nil nil nil)
   (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
-  (assert (sym-freep (car (declspec-vars (car declspecs)))))
+  (assert (nso-freep (car (declspec-vars (car declspecs)))))
   (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'a functions)))
   (assert (not (namespace-boundp 'a variables))))
 
@@ -222,7 +243,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass form ()
   ((parent :initarg :parent :accessor form-parent)))
 (defclass constant-form (form)
-  ((value :initarg :value :accessor constant-value)))
+  ((value :initarg :value :accessor form-value)))
 (defclass body-form () ;Note: objects of this type must never be created, only subtypes of this type.
   ((body :initarg :body :accessor form-body :type list)))
 (defclass special-form (form)
@@ -233,7 +254,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   ((parent :initarg :parent :accessor binding-parent) ;e.g. the LET-form in which it is defined.
    (sym :initarg :sym :accessor binding-sym :type sym)))
 (defclass var-binding (binding)
-  ((initform :initarg :init :accessor binding-initform :documentation "The form initializing the variable." :type form)))
+  ((value :initarg :value :accessor binding-value :documentation "The form initializing the variable." :type form)))
 (defclass bindings-form ()  ;Note: objects of this type must never be created, only subtypes of this type.
   ((bindings :initarg :bindings :accessor form-bindings :type list) ;list of VAR-BINDINGs, or FUN-BINDINGs
    (declspecs :initarg :declspecs :accessor form-declspecs :type list))) ;list of DECLSPECs
@@ -272,7 +293,9 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defgeneric form-llist (form))
 (defmethod form-llist ((object functiondef))
   (functiondef-llist object))
-(defclass fun-binding (binding functiondef)
+(defclass block-form (special-form body-form)
+  ((blo :initarg :blo :accessor form-blo :type blo)))
+(defclass fun-binding (binding functiondef block-form)
   ())
 (defclass flet-form (special-form body-form bindings-form)
   ())
@@ -280,18 +303,20 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   ())
 (defclass lambda-form (special-form functiondef)
   ())
-
+(defclass return-from-form (special-form)
+  ((blo :initarg :blo :accessor form-blo :type blo)
+   (value :initarg :value :accessor form-value :type form)))
 
 (defmethod print-object ((object constant-form) stream)
   (print-unreadable-object (object stream :type t)
-    (format stream "~A" (constant-value object))))
+    (format stream "~A" (form-value object))))
 (defmethod print-object ((object progn-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~A" (form-body object))))
 (defmethod print-object ((object var-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
-      (format stream "~A ~A" (binding-sym object) (binding-initform object)))))
+      (format stream "~A ~A" (binding-sym object) (binding-value object)))))
 (defun body-with-declspecs (object)
   (if (null (form-declspecs object))
       (if (= (length (form-body object)) 1)
@@ -335,6 +360,14 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
       (format stream "~A ~A" (functiondef-llist object) (body-with-declspecs object)))))
+(defmethod print-object ((object block-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (when *print-detailed-walker-objects*
+      (format stream "~A ~A" (form-blo object) (form-body object)))))
+(defmethod print-object ((object return-from-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (when *print-detailed-walker-objects*
+      (format stream "~A ~A" (form-blo object) (form-value object)))))
 
 (defun split-lambda-list* (lambda-list)
   (let ((allow-other-keys-p nil))
@@ -347,7 +380,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
       (values whole environment required optional rest body key allow-other-keys-p aux))))
 
 ;; TODO: maybe rename to PARSE-FORM.
-(defun parse (form variables functions parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+(defun parse (form variables functions blocks parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   (declare (optimize (debug 3)))
   (labels ((lexboundp (symbol)
 	     (namespace-boundp symbol variables))
@@ -361,8 +394,12 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 	     (if (lexfboundp symbol)
 		 (namespace-lookup symbol functions)
 		 (make-instance 'fun :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
-	   (reparse (form parent &key (variables variables) (functions functions))
-	     (parse form variables functions parent
+	   (blolookup/create (symbol)
+	     (if (namespace-boundp symbol blocks)
+		 (namespace-lookup symbol blocks)
+		 (make-instance 'blo :name symbol :freep t))) ;do not bind :DEFINITION
+	   (reparse (form parent &key (variables variables) (functions functions) (blocks blocks))
+	     (parse form variables functions blocks parent
 		    :customparsep-function customparsep-function
 		    :customparse-function customparse-function
 		    :customparsedeclspecp-function customparsedeclspecp-function
@@ -466,7 +503,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		     (setf (llist-allow-other-keys-p new-llist) allow-other-keys-p)
 		     (setf (llist-aux new-llist) aux)))
 		 (values new-llist new-variables))))
-	   (parse-functiondef (form variables functions parent)
+	   (parse-functiondef (form variables functions blocks parent)
 	     "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and create a corresponding FUNCTIONDEF-object."
 	     (flet ((split-lambda-list-and-body (form)
 		      (assert (and (consp form) (listp (car form))) () "Invalid lambda-list ~A" form)
@@ -482,7 +519,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		     (multiple-value-bind (body parsed-declspecs variables-in-functiondef functions-in-functiondef)
 			 (parse-declaration-in-body body variables-in-functiondef functions new-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 		       (setf (form-declspecs new-functiondef) parsed-declspecs)
-		       (let ((parsed-body (loop for form in body collect (reparse form new-functiondef :variables variables-in-functiondef :functions functions-in-functiondef))))
+		       (let ((parsed-body (loop for form in body collect (reparse form new-functiondef :variables variables-in-functiondef :functions functions-in-functiondef :blocks blocks))))
 			 (setf (form-body new-functiondef) parsed-body))))
 		   new-functiondef))))
 	   (setf-binding-slots-to-functiondef-slots (binding parsed-functiondef)
@@ -491,8 +528,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (form-declspecs binding) (form-declspecs parsed-functiondef)
 		   (form-body binding) (form-body parsed-functiondef))))
     (cond
-      ((and (not (null customparsep-function)) (funcall customparsep-function form variables functions parent))
-       (funcall customparse-function form variables functions parent))
+      ((and (not (null customparsep-function)) (funcall customparsep-function form variables functions blocks parent))
+       (funcall customparse-function form variables functions blocks parent))
       ((or (eq form nil) (eq form t))
        (make-instance 'constant-form :value form :parent parent))
       ((symbolp form)
@@ -524,16 +561,18 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 				(binding (make-instance 'var-binding :parent current))
 				(parsed-value (reparse value-form binding :variables variables))
 				(sym (make-instance 'var :name name :freep nil :definition binding :declspecs nil)))
-			   (setf (binding-sym binding) sym) (setf (binding-initform binding) parsed-value)
+			   (setf (binding-sym binding) sym) (setf (binding-value binding) parsed-value)
 			   binding))
 		       (make-fun-binding (def functions)
 			 (assert (and (consp def) (symbolp (car def)) (not (null (car def))) (not (null (cdr def)))) () "cannot parse definition in ~A-form:~%~A" head def)
 			 (let* ((name (car def))
 				(body-form (cdr def))
-				(binding (make-instance 'fun-binding :parent current))
-				(parsed-functiondef (parse-functiondef body-form variables functions current))
+				(blo (make-instance 'blo :name name :freep nil))
+				(binding (make-instance 'fun-binding :parent current :blo blo))
+				(parsed-functiondef (parse-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) current))
 				(sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
 			   (setf (binding-sym binding) sym)
+			   (setf (nso-definition blo) binding)
 			   (setf-binding-slots-to-functiondef-slots binding parsed-functiondef)
 			   binding)))
 		(multiple-value-bind (parsed-bindings new-variables new-functions)
@@ -568,82 +607,111 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
 		   (current (make-instance 'lambda-form))
-		   (parsed-functiondef (parse-functiondef lambda-list-and-body variables functions parent)))
+		   (parsed-functiondef (parse-functiondef lambda-list-and-body variables functions blocks parent)))
 	      (setf-binding-slots-to-functiondef-slots current parsed-functiondef)
+	      current))
+	   ((eq head 'block)
+	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~A" form)
+	    (let* ((name (car rest))
+		   (body (cdr rest))
+		   (blo (make-instance 'blo :name name :freep nil))
+		   (current (make-instance 'block-form :parent parent :blo blo))
+		   (parsed-body (loop for form in body collect
+				     (reparse form current :blocks (augment-namespace-with-blo blo blocks)))))
+	      (setf (nso-definition blo) current)
+	      (setf (form-body current) parsed-body)
+	      current))
+	   ((eq head 'return-from)
+	    (assert (and (consp rest) (symbolp (car rest)) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse RETURN-FROM-form ~A" form)
+	    (let* ((name (car rest))
+		   (value-form (cadr rest))
+		   (blo (blolookup/create name))
+		   (current (make-instance 'return-from-form :parent parent :blo blo))
+		   (parsed-value (reparse value-form current)))
+	      (setf (form-value current) parsed-value)
 	      current))))))))
 
+(defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+  (parse form (make-namespace) (make-namespace) (make-namespace) (make-namespace)
+	 :customparsep-function customparsep-function
+	 :customparse-function customparse-function
+	 :customparsedeclspecp-function customparsedeclspecp-function
+	 :customparsedeclspec-function customparsedeclspec-function))
+
 ;; tests for PARSE
-(defun lexical-namespaces-at-here (form heresymbol)
+(defun lexical-namespaces-at (form heresymbol)
   "Parse FORM and collect the lexical namespaces at the positions in FORM marked by the symbol HERESYMBOL.
 Returns two values: a list containing the lexical variable namespaces, and a list containing the lexical function namespaces."
   (let* ((variables-here-list nil)
-	 (functions-here-list nil))
-    (parse form nil nil nil
-	   :customparsep-function (lambda (form vars funs parent)
-				    (declare (ignore vars funs parent))
-				    (eq form heresymbol))
-	   :customparse-function (lambda (form variables functions parent)
-				   (declare (ignorable form parent))
-				   (push variables variables-here-list)
-				   (push functions functions-here-list)))
-    (values (nreverse variables-here-list) (nreverse functions-here-list))))
+	 (functions-here-list nil)
+	 (blocks-here-list nil))
+    (parse-with-empty-namespaces form
+				 :customparsep-function (lambda (form variables functions blocks parent)
+							  (declare (ignore variables functions blocks parent))
+							  (eq form heresymbol))
+				 :customparse-function (lambda (form variables functions blocks parent)
+							 (declare (ignorable form parent))
+							 (push variables variables-here-list)
+							 (push functions functions-here-list)
+							 (push blocks blocks-here-list)))
+    (values (nreverse variables-here-list) (nreverse functions-here-list) (nreverse blocks-here-list))))
 
 (defun test-parse-symbol-reference ()
   (declare (optimize (debug 3)))
-  (flet ((lexical-namespaces-at-here (form)
-	   (lexical-namespaces-at-here form '-here-)))
-    (assert (sym-freep (parse 'a nil nil nil)))
-    (assert (sym-freep (parse '(function a) nil nil nil)))
-    (assert (not (sym-freep (car (form-body (parse '(let ((a 1)) a) nil nil nil))))))
-    (assert (not (sym-freep (car (form-body (parse '(let* ((a 1)) a) nil nil nil))))))
-    (assert (not (sym-freep (car (form-body (parse '(flet ((a ())) #'a) nil nil nil))))))
-    (assert (not (sym-freep (car (form-body (parse '(labels ((a ())) #'a) nil nil nil))))))
-    (assert (let* ((variables (car (lexical-namespaces-at-here '(let ((b 5) (c b)) -here-))))
+  (flet ((lexical-namespaces-at (form)
+	   (lexical-namespaces-at form '-here-)))
+    (assert (nso-freep (parse-with-empty-namespaces 'a)))
+    (assert (nso-freep (parse-with-empty-namespaces '(function a))))
+    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let ((a 1)) a)))))))
+    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let* ((a 1)) a)))))))
+    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(flet ((a ())) #'a)))))))
+    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(labels ((a ())) #'a)))))))
+    (assert (let* ((variables (car (lexical-namespaces-at '(let ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'b variables))
 		   (c-sym (namespace-lookup 'c variables)))
-	      (not (eq b-sym (binding-initform (sym-definition c-sym))))))
-    (assert (let* ((functions (car (nth-value 1 (lexical-namespaces-at-here '(flet ((b ()) (c () #'b)) -here-)))))
+	      (not (eq b-sym (binding-value (nso-definition c-sym))))))
+    (assert (let* ((functions (car (nth-value 1 (lexical-namespaces-at '(flet ((b ()) (c () #'b)) -here-)))))
 		   (b-sym (namespace-lookup 'b functions))
 		   (c-sym (namespace-lookup 'c functions)))
-	      (not (eq b-sym (car (form-body (sym-definition c-sym)))))))
-    (assert (let* ((variables (car (lexical-namespaces-at-here '(let* ((b 5) (c b)) -here-))))
+	      (not (eq b-sym (car (form-body (nso-definition c-sym)))))))
+    (assert (let* ((variables (car (lexical-namespaces-at '(let* ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'b variables))
 		   (c-sym (namespace-lookup 'c variables)))
-	      (eq b-sym (binding-initform (sym-definition c-sym)))))
-    (assert (let* ((functions (car (nth-value 1 (lexical-namespaces-at-here '(labels ((b ()) (c () #'b)) -here-)))))
+	      (eq b-sym (binding-value (nso-definition c-sym)))))
+    (assert (let* ((functions (car (nth-value 1 (lexical-namespaces-at '(labels ((b ()) (c () #'b)) -here-)))))
 		   (b-sym (namespace-lookup 'b functions))
 		   (c-sym (namespace-lookup 'c functions)))
-	      (eq b-sym (car (form-body (sym-definition c-sym))))))
-    (let* ((variables (lexical-namespaces-at-here '(let ((b 5)) -here- (let ((b b)) -here-))))
+	      (eq b-sym (car (form-body (nso-definition c-sym))))))
+    (let* ((variables (lexical-namespaces-at '(let ((b 5)) -here- (let ((b b)) -here-))))
 	   (variables-1 (car variables))
 	   (variables-2 (cadr variables))
 	   (b-1 (namespace-lookup 'b variables-1))
 	   (b-2 (namespace-lookup 'b variables-2)))
-      (assert (eq (constant-value (binding-initform (sym-definition b-1))) 5))
-      (assert (eq b-1 (binding-initform (sym-definition b-2))))
+      (assert (eq (form-value (binding-value (nso-definition b-1))) 5))
+      (assert (eq b-1 (binding-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
-    (let* ((variables (lexical-namespaces-at-here '(let* ((b 5)) -here- (let* ((b b)) -here-))))
+    (let* ((variables (lexical-namespaces-at '(let* ((b 5)) -here- (let* ((b b)) -here-))))
 	   (variables-1 (car variables))
 	   (variables-2 (cadr variables))
 	   (b-1 (namespace-lookup 'b variables-1))
 	   (b-2 (namespace-lookup 'b variables-2)))
-      (assert (eq (constant-value (binding-initform (sym-definition b-1))) 5))
-      (assert (eq b-1 (binding-initform (sym-definition b-2))))
+      (assert (eq (form-value (binding-value (nso-definition b-1))) 5))
+      (assert (eq b-1 (binding-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
-    (let* ((functions (nth-value 1 (lexical-namespaces-at-here '(flet ((b ())) -here- (flet ((b () #'b)) -here-)))))
+    (let* ((functions (nth-value 1 (lexical-namespaces-at '(flet ((b ())) -here- (flet ((b () #'b)) -here-)))))
 	   (functions-1 (car functions))
 	   (functions-2 (cadr functions))
 	   (b-1 (namespace-lookup 'b functions-1))
 	   (b-2 (namespace-lookup 'b functions-2)))
       (assert (not (eq b-1 b-2)))
-      (assert (eq b-1 (car (form-body (sym-definition b-2))))))
-    (let* ((functions (nth-value 1 (lexical-namespaces-at-here '(labels ((b ())) -here- (labels ((b () #'b)) -here-)))))
+      (assert (eq b-1 (car (form-body (nso-definition b-2))))))
+    (let* ((functions (nth-value 1 (lexical-namespaces-at '(labels ((b ())) -here- (labels ((b () #'b)) -here-)))))
 	   (functions-1 (car functions))
 	   (functions-2 (cadr functions))
 	   (b-1 (namespace-lookup 'b functions-1))
 	   (b-2 (namespace-lookup 'b functions-2)))
       (assert (not (eq b-1 b-2)))
-      (assert (eq b-1 (car (form-body (sym-definition b-2))))))))
+      (assert (eq b-1 (car (form-body (nso-definition b-2))))))))
 (test-parse-symbol-reference)
 
 (defun test-parse-declaration ()
@@ -652,20 +720,20 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
 	       t
 	       (loop for o1 in (butlast rest 1) for o2 in (cdr rest) always (equal o1 o2)))))
     (let* ((form '(let ((a 1)) (declare (type fixnum a)) a))
-	   (ast (parse form nil nil nil))
+	   (ast (parse-with-empty-namespaces form))
 	   (declspec-type (car (form-declspecs ast))))
       (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-vars declspec-type)) (car (form-body ast)))))
     (let* ((form '(flet ((a ())) (declare (ftype fixnum a)) #'a))
-	   (ast (parse form nil nil nil))
+	   (ast (parse-with-empty-namespaces form))
 	   (declspec-ftype (car (form-declspecs ast))))
       (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-vars declspec-ftype)) (car (form-body ast)))))))
 (test-parse-declaration)
 
 (defun test-parse-lambda-list ()
   (declare (optimize (debug 3)))
-  (flet ((lexical-namespaces-at-here (form)
-	   (lexical-namespaces-at-here form '-here-)))
-    (let* ((variables (lexical-namespaces-at-here '(let ((a 1)) -here- (flet ((test (a &optional (b (progn -here- a))) -here-)) -here-))))
+  (flet ((lexical-namespaces-at (form)
+	   (lexical-namespaces-at form '-here-)))
+    (let* ((variables (lexical-namespaces-at '(let ((a 1)) -here- (flet ((test (a &optional (b (progn -here- a))) -here-)) -here-))))
 	   (a1-sym (namespace-lookup 'a (car variables)))
 	   (a2-sym (namespace-lookup 'a (cadr variables)))
 	   (a3-sym (namespace-lookup 'a (caddr variables)))
@@ -673,7 +741,7 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
       (assert (equal a1-sym a4-sym))
       (assert (equal a2-sym a3-sym))
       (assert (not (equal a1-sym a2-sym)))))
-  (let* ((ast (parse '(flet ((test (a &optional (b a)) b)) a b) nil nil nil))
+  (let* ((ast (parse-with-empty-namespaces '(flet ((test (a &optional (b a)) b)) a b)))
 	 (test (car (form-bindings ast)))
 	 (llist (form-llist test))
 	 (llist-a (argument-var (car (llist-required llist))))
@@ -684,6 +752,29 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
     (assert (equal llist-a llist-binit))
     (assert (not (equal llist-a body-a)))
     (assert (not (equal llist-b body-b))))
-  ;; TODO maybe: In the AST returned by (PARSE '(MACROLET ((TEST (A (&OPTIONAL (C A))) -HERE-)))) at lexical position -HERE- the init form of ARGUMENT-C must be equal to (ARGUMENT-VAR A-ARGUMENT).
+  ;; TODO maybe: In the AST returned by (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((TEST (A (&OPTIONAL (C A))) -HERE-)))) at lexical position -HERE- the init form of ARGUMENT-C must be equal to (ARGUMENT-VAR A-ARGUMENT).
   )
 (test-parse-lambda-list)
+
+(defun test-parse-block-reference ()
+  (declare (optimize (debug 3)))
+  (assert (nso-freep (form-blo (parse-with-empty-namespaces '(return-from undef 1)))))
+  (let* ((ast (parse-with-empty-namespaces '(block test (return-from test 1))))
+	 (block-blo (form-blo ast))
+	 (return-from-blo (form-blo (car (form-body ast)))))
+    (assert (equal block-blo return-from-blo))
+    (assert (eq (nso-name block-blo) 'test))
+    (assert (not (nso-freep block-blo)))
+    (assert (eq (nso-definition block-blo) ast)))
+  (let* ((ast (parse-with-empty-namespaces '(flet ((test () (return-from test 1))) (return-from test 2))))
+	 (test-fun (car (form-bindings ast)))
+	 (test-fun-blo (form-blo test-fun))
+	 (return-from1-blo (form-blo (car (form-body test-fun))))
+	 (return-from2-blo (form-blo (car (form-body ast)))))
+    (assert (equal test-fun-blo return-from1-blo))
+    (assert (eq (nso-name test-fun-blo) 'test))
+    (assert (not (nso-freep test-fun-blo)))
+    (assert (eq (nso-definition test-fun-blo) test-fun))
+    (assert (not (eq test-fun-blo return-from2-blo)))
+    (assert (nso-freep return-from2-blo))))
+(test-parse-block-reference)
