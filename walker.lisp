@@ -310,6 +310,9 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   ((test :initarg :test :accessor form-test :type form)
    (then :initarg :then :accessor form-then :type form)
    (else :initarg :else :accessor form-else :type (or null form))))
+(defclass setq-form (special-form)
+  ((vars :initarg :vars :accessor form-vars :type list) ;list of VARs
+   (values :initarg :values :accessor form-values :type list))) ;list of FORMs
 
 (defmethod print-object ((object constant-form) stream)
   (print-unreadable-object (object stream :type t)
@@ -381,6 +384,12 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
     (if (null (form-else object))
 	(format stream "~A ~A" (form-test object) (form-then object))
 	(format stream "~A ~A ~A" (form-test object) (form-then object) (form-else object)))))
+(defmethod print-object ((object setq-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (when (not (null (form-vars object)))
+      (format stream "~A ~A" (car (form-vars object)) (car (form-values object)))
+      (loop for var in (cdr (form-vars object)) for value in (cdr (form-values object)) do
+	   (format stream " ~A ~A" var value)))))
 
 (defun split-lambda-list* (lambda-list)
   (let ((allow-other-keys-p nil))
@@ -635,9 +644,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	      (setf (form-body current) parsed-body)
 	      current))
 	   ((eq head 'return-from)
-	    (assert (and (consp rest) (symbolp (car rest)) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse RETURN-FROM-form ~A" form)
+	    (assert (and (consp rest) (symbolp (car rest)) (or (null (cdr rest)) (and (consp (cdr rest)) (null (cddr rest))))) () "Cannot parse RETURN-FROM-form ~A" form)
 	    (let* ((name (car rest))
-		   (value-form (cadr rest))
+		   (value-form (if (null (cdr rest)) nil (cadr rest)))
 		   (blo (blolookup/create name))
 		   (current (make-instance 'return-from-form :parent parent :blo blo))
 		   (parsed-value (reparse value-form current)))
@@ -673,6 +682,22 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (parsed-then (reparse then-form current))
 		   (parsed-else (if else-present (reparse else-form current) nil)))
 	      (setf (form-test current) parsed-test (form-then current) parsed-then (form-else current) parsed-else)
+	      current))
+	   ((eq head 'setq)
+	    (let ((vars nil)
+		  (values nil)
+		  (current (make-instance 'setq-form :parent parent)))
+	      (loop do
+		   (when (null rest) (return))
+		   (assert (and (consp rest) (let ((name (car rest))) (and (symbolp name) (not (null name)) (not (eq name t)))) (consp (cdr rest))) () "Cannot parse SETQ-form part ~A" rest)
+		   (let* ((name (car rest))
+			  (value-form (cadr rest))
+			  (var (varlookup/create name))
+			  (parsed-value (reparse value-form current)))
+		     (push var vars) (push parsed-value values))
+		   (setf rest (cddr rest)))
+	      (setf (form-vars current) (nreverse vars))
+	      (setf (form-values current) (nreverse values))
 	      current))))))))
 
 (defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
