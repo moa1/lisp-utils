@@ -70,7 +70,7 @@
 ;;;; NAMESPACES
 
 (defclass nso ()
-  ((name :initarg :name :accessor nso-name :type symbol
+  ((name :initarg :name :accessor nso-name :type (or symbol list) ;LIST is allowed for function names (SETF NAME)
 	 :documentation "NIL if not known")
    (freep :initarg :freep :accessor nso-freep :type boolean
 	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace."))
@@ -113,25 +113,26 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-namespace))"
   (acons symbol object namespace))
 
-(defun augment-namespace-with-sym (sym namespace)
+(defun augment-namespace-with-var (sym namespace)
+  (assert (typep sym 'var))
   (augment-namespace (nso-name sym) sym namespace))
 
-(defun augment-namespace-with-syms (syms namespace)
-  (loop for sym in syms do
-       (setf namespace (augment-namespace (nso-name sym) sym namespace)))
-  namespace)
+(defun augment-namespace-with-fun (sym namespace)
+  (assert (typep sym 'fun))
+  (augment-namespace (nso-name sym) sym namespace))
 
 (defun augment-namespace-with-blo (blo namespace)
+  (assert (typep blo 'blo))
   (augment-namespace (nso-name blo) blo namespace))
 
 (defun namespace-boundp (symbol namespace)
   "Return T if the symbol SYMBOL is bound in NAMESPACE."
-  (let ((cell (assoc symbol namespace)))
+  (let ((cell (assoc symbol namespace :test #'equal)))
     (not (null cell))))
 
 (defun namespace-lookup (symbol namespace)
   "Return the object bound to symbol SYMBOL in NAMESPACE."
-  (let ((cell (assoc symbol namespace)))
+  (let ((cell (assoc symbol namespace :test #'equal)))
     (if (null cell)
 	(error "unknown symbol ~A in namespace." symbol)
 	(cdr cell))))
@@ -145,6 +146,41 @@ Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-names
 		      (format output "NAME:~A FREEP:~A DEFINITION:~A DECLSPECS:~A" (nso-name sym) (nso-freep sym) (nso-definition sym) (nso-declspecs sym))))
 		  str)))
 	 (format stream "~A: ~A~%" (car cell) (format-sym (cdr cell))))))
+
+(defun valid-function-name-p (name)
+  "Checks whether NAME is naming a function, i.e. either of the form NAME or (SETF NAME).
+In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the NAME. Returns NIL if FORM is not a function form."
+  (if (and (symbolp name) (not (null name)) (not (eq name t)))
+      (values 'fun name)
+      (when (and (consp name) (eq (car name) 'setf) (consp (cdr name)) (null (cddr name)))
+	(let ((name (cadr name)))
+	  (values 'setf-fun name)))))
+
+(assert (null (valid-function-name-p nil)))
+(assert (null (valid-function-name-p t)))
+(assert (equal (multiple-value-list (valid-function-name-p 'a)) '(FUN A)))
+(assert (equal (multiple-value-list (valid-function-name-p '(setf a))) '(SETF-FUN A)))
+(assert (null (valid-function-name-p '(setf a b))))
+
+(defun varlookup/create (symbol variables)
+  (assert (and (symbolp symbol) (not (null symbol)) (not (eq symbol t))))
+  (if (namespace-boundp symbol variables)
+      (values (namespace-lookup symbol variables) t)
+      (values (make-instance 'var :name symbol :freep t :declspecs nil) nil))) ;do not bind :DEFINITION
+
+(defun funlookup/create (symbol functions)
+  (multiple-value-bind (fun-type name) (valid-function-name-p symbol)
+    (declare (ignore name))
+    (assert (not (null fun-type)) () "Invalid function name ~A" symbol)
+    (if (namespace-boundp symbol functions)
+	(values (namespace-lookup symbol functions) t)
+	(values (make-instance 'fun :name symbol :freep t :declspecs nil) nil)))) ;do not bind :DEFINITION
+
+(defun blolookup/create (symbol blocks)
+  (assert (symbolp symbol))
+  (if (namespace-boundp symbol blocks)
+      (values (namespace-lookup symbol blocks) t)
+      (values (make-instance 'blo :name symbol :freep t) nil))) ;do not bind :DEFINITION
 
 ;;;; DECLARATIONS
 
@@ -163,22 +199,16 @@ Returns four values: the rest of the BODY that does not start with a DECLARE-exp
 Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of VARIABLES and FUNCTIONS."
   (declare (optimize (debug 3)))
   (assert (listp body) () "Malformed BODY:~%~A" body)
-  (labels ((lexboundp (symbol)
-	     (namespace-boundp symbol variables))
-	   (lexfboundp (symbol)
-	     (namespace-boundp symbol functions))
-	   (varlookup/create (symbol)
-	     (if (lexboundp symbol)
-		 (namespace-lookup symbol variables)
-		 (let ((new-sym (make-instance 'var :name symbol :freep t :declspecs nil)))
-		   (setf variables (augment-namespace-with-sym new-sym variables)) ;do not bind :DEFINITION
-		   new-sym)))
-	   (funlookup/create (symbol)
-	     (if (lexfboundp symbol)
-		 (namespace-lookup symbol functions)
-		 (let ((new-sym (make-instance 'fun :name symbol :freep t :declspecs nil)))
-		   (setf functions (augment-namespace-with-sym new-sym functions)) ;do not bind :DEFINITION
-		   new-sym)))
+  (labels ((varlookup/create* (symbol)
+	     (multiple-value-bind (var boundp) (varlookup/create symbol variables)
+	       (when (not boundp)
+		 (setf variables (augment-namespace-with-var var variables))) ;do not bind :DEFINITION
+	       var))
+	   (funlookup/create* (symbol)
+	     (multiple-value-bind (fun boundp) (funlookup/create symbol functions)
+	       (when (not boundp)
+		 (setf functions (augment-namespace-with-fun fun functions))) ;do not bind :DEFINITION
+	       fun))
 	   (parse-declspecs (declspecs collected-declspecs)
 	     "Example: (parse-declspecs '(type fixnum a b c) nil)"
 	     (cond
@@ -198,7 +228,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 			    (let* ((typespec (car body))
 				   (syms (cdr body)))
 			      ;; will not check TYPESPEC, has to be done in user code.
-			      (let* ((symlookup/create (ecase identifier ((type) #'varlookup/create) ((ftype) #'funlookup/create)))
+			      (let* ((symlookup/create (ecase identifier ((type) #'varlookup/create*) ((ftype) #'funlookup/create*)))
 				     (parsed-syms (loop for sym in syms collect (funcall symlookup/create sym)))
 				     (object-type (ecase identifier ((type) 'declspec-type) ((ftype) 'declspec-ftype)))
 				     (parsed-declspec (make-instance object-type :parent parent :type typespec :vars parsed-syms)))
@@ -230,6 +260,11 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   (assert (nso-freep (car (declspec-vars (car declspecs)))))
   (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'a functions)))
   (assert (not (namespace-boundp 'a variables))))
+(multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) nil nil nil)
+  (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
+  (assert (nso-freep (car (declspec-vars (car declspecs)))))
+  (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup '(setf a) functions)))
+  (assert (not (namespace-boundp '(setf a) variables))))
 
 (defmethod print-object ((object declspec-type) stream)
   (print-unreadable-object (object stream :type t :identity nil)
@@ -404,22 +439,12 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 ;; TODO: maybe rename to PARSE-FORM.
 (defun parse (form variables functions blocks parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   (declare (optimize (debug 3)))
-  (labels ((lexboundp (symbol)
-	     (namespace-boundp symbol variables))
-	   (lexfboundp (symbol)
-	     (namespace-boundp symbol functions))
-	   (varlookup/create (symbol)
-	     (if (lexboundp symbol)
-		 (namespace-lookup symbol variables)
-		 (make-instance 'var :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
-	   (funlookup/create (symbol)
-	     (if (lexfboundp symbol)
-		 (namespace-lookup symbol functions)
-		 (make-instance 'fun :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
-	   (blolookup/create (symbol)
-	     (if (namespace-boundp symbol blocks)
-		 (namespace-lookup symbol blocks)
-		 (make-instance 'blo :name symbol :freep t))) ;do not bind :DEFINITION
+  (labels ((varlookup/create* (symbol)
+	     (varlookup/create symbol variables))
+	   (funlookup/create* (symbol)
+	     (funlookup/create symbol functions))
+	   (blolookup/create* (symbol)
+	     (blolookup/create symbol blocks))
 	   (reparse (form parent &key (variables variables) (functions functions) (blocks blocks))
 	     (parse form variables functions blocks parent
 		    :customparsep-function customparsep-function
@@ -444,7 +469,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			    (let* ((new-argument (make-instance 'simple-argument :parent new-llist))
 				   (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 			      (setf (argument-var new-argument) new-var)
-			      (setf new-variables (augment-namespace-with-sym new-var new-variables))
+			      (setf new-variables (augment-namespace-with-var new-var new-variables))
 			      new-argument))
 			  (add-optional-argument (varname init-form supplied-varname)
 			    "If INIT-FORM or SUPPLIED-VARNAME is not given for the optional argument, pass NIL for it. If SUPPLIED-VARNAME is given, INIT-FORM must be non-NIL as well."
@@ -452,12 +477,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			    (let* ((new-argument (make-instance 'optional-argument :parent new-llist))
 				   (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 			      (setf (argument-var new-argument) new-var)
-			      (setf new-variables (augment-namespace-with-sym new-var new-variables))
+			      (setf new-variables (augment-namespace-with-var new-var new-variables))
 			      (let ((parsed-init-form (if (null init-form) nil (reparse init-form new-argument :variables new-variables))))
 				(setf (argument-init new-argument) parsed-init-form)
 				(let ((new-supplied-var (if (null supplied-varname) nil (make-instance 'var :name supplied-varname :freep nil :definition new-argument :declspecs nil))))
 				  (setf (argument-suppliedp new-argument) new-supplied-var)
-				  (when new-supplied-var (setf new-variables (augment-namespace-with-sym new-supplied-var new-variables)))
+				  (when new-supplied-var (setf new-variables (augment-namespace-with-var new-supplied-var new-variables)))
 				  new-argument))))
 			  (parse-simple-argument (varname)
 			    (assert (not (or (null varname) (eq varname t))) () "Argument name must not be NIL or T, but is ~A" varname)
@@ -555,9 +580,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
       ((or (eq form nil) (eq form t))
        (make-instance 'constant-form :value form :parent parent))
       ((symbolp form)
-       (varlookup/create form)) ;TODO: insert code of #'VARLOOKUP/CREATE here if it is called only once.
-      ((and (consp form) (eq (car form) 'function) (consp (cdr form)) (symbolp (cadr form)) (null (cddr form)))
-       (funlookup/create (cadr form))) ;TODO: insert code of #'FUNLOOKUP/CREATE here if it is called only once.
+       (varlookup/create* form)) ;TODO: insert code of #'VARLOOKUP/CREATE* here if it is called only once.
+      ((and (consp form) (eq (car form) 'function))
+       (assert (and (consp (cdr form)) (null (cddr form)) (valid-function-name-p (cadr form))) () "Invalid function name form ~A" form)
+       (funlookup/create* (cadr form))) ;TODO: insert code of #'FUNLOOKUP/CREATE* here if it is called only once.
       ((atom form)
        (make-instance 'constant-form :value form :parent parent))
       (t
@@ -586,33 +612,40 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			   (setf (binding-sym binding) sym) (setf (binding-value binding) parsed-value)
 			   binding))
 		       (make-fun-binding (def functions)
-			 (assert (and (consp def) (symbolp (car def)) (not (null (car def))) (not (null (cdr def)))) () "cannot parse definition in ~A-form:~%~A" head def)
-			 (let* ((name (car def))
-				(body-form (cdr def))
-				(blo (make-instance 'blo :name name :freep nil))
-				(binding (make-instance 'fun-binding :parent current :blo blo))
-				(parsed-functiondef (parse-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) current))
-				(sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
-			   (setf (binding-sym binding) sym)
-			   (setf (nso-definition blo) binding)
-			   (setf-binding-slots-to-functiondef-slots binding parsed-functiondef)
-			   binding)))
+			 (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~A-form:~%~A" head def)
+			 (multiple-value-bind (fun-type block-name) (valid-function-name-p (car def)) ;CLHS Glossary function block name: If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name.
+			   (declare (ignore fun-type))
+			   (let* ((name (car def))
+				  (body-form (cdr def))
+				  (blo (make-instance 'blo :name block-name :freep nil))
+				  (binding (make-instance 'fun-binding :parent current :blo blo))
+				  (parsed-functiondef (parse-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) current))
+				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
+			     (setf (binding-sym binding) sym)
+			     (setf (nso-definition blo) binding)
+			     (setf-binding-slots-to-functiondef-slots binding parsed-functiondef)
+			     binding))))
 		(multiple-value-bind (parsed-bindings new-variables new-functions)
 		    (let ((parse-value-function (ecase head ((let let*) #'make-var-binding) ((flet labels) #'make-fun-binding)))
-			  (namespace (ecase head ((let let*) variables) ((flet labels) functions))))
+			  (namespace (ecase head ((let let*) variables) ((flet labels) functions)))
+			  (augment-function (ecase head ((let let*) #'augment-namespace-with-var) ((flet labels) #'augment-namespace-with-fun))))
 		      (cond
 			((find head '(let flet))
 			 (let* ((parsed-bindings (loop for def in definitions collect (funcall parse-value-function def namespace)))
 				(parsed-syms (loop for binding in parsed-bindings collect (binding-sym binding))))
 			   (ecase head
-			     ((let) (values parsed-bindings (augment-namespace-with-syms parsed-syms variables) functions))
-			     ((flet) (values parsed-bindings variables (augment-namespace-with-syms parsed-syms functions))))))
+			     ((let) (let ((new-variables variables))
+				      (loop for sym in parsed-syms do (setf new-variables (augment-namespace-with-var sym new-variables)))
+				      (values parsed-bindings new-variables functions)))
+			     ((flet) (let ((new-functions functions))
+				       (loop for sym in parsed-syms do (setf new-functions (augment-namespace-with-fun sym new-functions)))
+				       (values parsed-bindings variables new-functions))))))
 			((find head '(let* labels))
 			 (let* ((new-namespace namespace)
 				(parsed-bindings (loop for def in definitions collect
 						      (let* ((parsed-binding (funcall parse-value-function def new-namespace))
 							     (parsed-sym (binding-sym parsed-binding)))
-							(setf new-namespace (augment-namespace-with-sym parsed-sym new-namespace))
+							(setf new-namespace (funcall augment-function parsed-sym new-namespace))
 							parsed-binding))))
 			   (ecase head
 			     ((let*) (values parsed-bindings new-namespace functions))
@@ -647,7 +680,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	    (assert (and (consp rest) (symbolp (car rest)) (or (null (cdr rest)) (and (consp (cdr rest)) (null (cddr rest))))) () "Cannot parse RETURN-FROM-form ~A" form)
 	    (let* ((name (car rest))
 		   (value-form (if (null (cdr rest)) nil (cadr rest)))
-		   (blo (blolookup/create name))
+		   (blo (blolookup/create* name))
 		   (current (make-instance 'return-from-form :parent parent :blo blo))
 		   (parsed-value (reparse value-form current)))
 	      (setf (form-value current) parsed-value)
@@ -692,7 +725,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (assert (and (consp rest) (let ((name (car rest))) (and (symbolp name) (not (null name)) (not (eq name t)))) (consp (cdr rest))) () "Cannot parse SETQ-form part ~A" rest)
 		   (let* ((name (car rest))
 			  (value-form (cadr rest))
-			  (var (varlookup/create name))
+			  (var (varlookup/create* name))
 			  (parsed-value (reparse value-form current)))
 		     (push var vars) (push parsed-value values))
 		   (setf rest (cddr rest)))
