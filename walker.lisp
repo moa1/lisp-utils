@@ -348,6 +348,9 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass setq-form (special-form)
   ((vars :initarg :vars :accessor form-vars :type list) ;list of VARs
    (values :initarg :values :accessor form-values :type list))) ;list of FORMs
+(defclass application-form (form)
+  ((fun :initarg :fun :accessor form-fun :type fun)
+   (args :initarg :args :accessor form-args :type list))) ;list of FORMs
 
 (defmethod print-object ((object constant-form) stream)
   (print-unreadable-object (object stream :type t)
@@ -425,6 +428,11 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
       (format stream "~A ~A" (car (form-vars object)) (car (form-values object)))
       (loop for var in (cdr (form-vars object)) for value in (cdr (form-values object)) do
 	   (format stream " ~A ~A" var value)))))
+(defmethod print-object ((object application-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~A" (form-fun object))
+    (loop for arg in (form-args object) do
+	 (format stream " ~A" arg))))
 
 (defun split-lambda-list* (lambda-list)
   (let ((allow-other-keys-p nil))
@@ -437,14 +445,24 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
       (values whole environment required optional rest body key allow-other-keys-p aux))))
 
 ;; TODO: maybe rename to PARSE-FORM.
+;; TODO: FIXME: if there are multiple references to free namespace objects (like the Xs in (PARSE-WITH-EMPTY-NAMESPACES '(SETF (AREF A 1 2 X) X))), this function creates may create more than one namespace object (with (NSO-FREEP obj)==T) for them. change #'PARSE so that it only creates one free namespace object of the same name in this case.
 (defun parse (form variables functions blocks parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   (declare (optimize (debug 3)))
   (labels ((varlookup/create* (symbol)
-	     (varlookup/create symbol variables))
+	     (multiple-value-bind (var boundp) (varlookup/create symbol variables)
+	       (when (not boundp)
+		 (setf variables (augment-namespace-with-var var variables))) ;do not bind :DEFINITION
+	       var))
 	   (funlookup/create* (symbol)
-	     (funlookup/create symbol functions))
+	     (multiple-value-bind (fun boundp) (funlookup/create symbol functions)
+	       (when (not boundp)
+		 (setf functions (augment-namespace-with-fun fun functions))) ;do not bind :DEFINITION
+	       fun))
 	   (blolookup/create* (symbol)
-	     (blolookup/create symbol blocks))
+	     (multiple-value-bind (blo boundp) (blolookup/create symbol blocks)
+	       (when (not boundp)
+		 (setf blocks (augment-namespace-with-blo blo blocks))) ;do not bind :DEFINITION
+	       blo))
 	   (reparse (form parent &key (variables variables) (functions functions) (blocks blocks))
 	     (parse form variables functions blocks parent
 		    :customparsep-function customparsep-function
@@ -731,6 +749,22 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (setf rest (cddr rest)))
 	      (setf (form-vars current) (nreverse vars))
 	      (setf (form-values current) (nreverse values))
+	      current))
+	   ((find head '(catch eval-when go load-time-value macrolet multiple-value-call multiple-value-prog1 progv quote symbol-macrolet tagbody throw unwind-protect))
+	    (error "parsing special form ~A not implemented yet" head))
+	   (t
+	    (assert (and (symbolp head) (not (null head)) (not (eq head t))) () "Invalid function application ~A" form)
+	    (let* ((fun-name head)
+		   (arg-forms rest)
+		   (fun (funlookup/create* fun-name))
+		   (current (make-instance 'application-form :parent parent :fun fun))
+		   (parsed-args nil))
+	      (loop do
+		   (when (null arg-forms) (return))
+		   (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~A in function application" arg-forms)
+		   (push (reparse (car arg-forms) current) parsed-args)
+		   (setf arg-forms (cdr arg-forms)))
+	      (setf (form-args current) (nreverse parsed-args))
 	      current))))))))
 
 (defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
@@ -813,7 +847,18 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
 	   (b-1 (namespace-lookup 'b functions-1))
 	   (b-2 (namespace-lookup 'b functions-2)))
       (assert (not (eq b-1 b-2)))
-      (assert (eq b-1 (car (form-body (nso-definition b-2))))))))
+      (assert (eq b-1 (car (form-body (nso-definition b-2)))))))
+  (let* ((ast (parse-with-empty-namespaces '(test #'test 2 3)))
+	 (call-fun (form-fun ast))
+	 (call-args (form-args ast)))
+    (assert (eq call-fun (car call-args))))
+  ;; TODO: FIXME:
+  ;; (let* ((ast (parse-with-empty-namespaces '(setf (aref a x) x)))
+  ;; 	 (args (form-args ast))
+  ;; 	 (aref-x (cadr (form-args (car args))))
+  ;; 	 (arg-x (cadr args)))
+  ;;   (assert (eq aref-x arg-x)))
+  )
 (test-parse-symbol-reference)
 
 (defun test-parse-declaration ()
