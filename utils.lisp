@@ -1331,9 +1331,9 @@ COMPILE-BATCH is the number of compiled calls to FUNCTION which are made not by 
 (defun time-distribution (function &key (min-time 2.0) (min-measures 20))
   (labels ((timeit (function)
 	     ;;(cl-user::gc) very slow
-	     (nth-value 1
-			(sb-vm::with-cycle-counter
-			  (funcall function)))))
+	     #+SBCL (nth-value 1 (sb-vm::with-cycle-counter (funcall function)))
+	     #-SBCL (timeitf function 1)
+	     ))
     (let ((times nil))
       (do* ((i 0 (1+ i))
 	    (start (get-internal-real-time))
