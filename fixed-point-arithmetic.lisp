@@ -76,6 +76,9 @@ FRACTION-BITS may be NIL to indicate that the number of bits is unknown."
   "Convert fixed-point number FIXED to a float."
   (float (to-rational fixed)))
 
+
+;; TODO: depend on package :floating, and use their #'print-number.
+
 (when (not (boundp '+print-radix-symbols+))
   (defconstant +print-radix-symbols+ "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 
