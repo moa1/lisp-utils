@@ -49,8 +49,6 @@
 
 ;; special forms defining named blocks: BLOCK FLET LABELS MACROLET
 
-(ql:quickload :lambda-fiddle)
-
 (defpackage :walker
   (:use :cl)
   (:export))
@@ -273,6 +271,300 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   (print-unreadable-object (object stream :type t :identity nil)
     (format stream "~S" (cons 'ftype (cons (declspec-type object) (declspec-vars object))))))
 
+;;;; LAMBDA LISTS
+;; see CLHS 3.4 Lambda Lists
+
+(defclass argument ()
+  ((parent :initarg :parent :accessor argument-parent :type functiondef)
+   (var :initarg :var :accessor argument-var :type var)))
+(defclass required-argument (argument)
+  ())
+(defclass optional-argument (argument)
+  ((init :initarg :init :accessor argument-init :type (or null form)) ;NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)
+   (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var)))) ;NIL means not present
+(defclass key-argument (optional-argument)
+  ((keywordp :initarg :keywordp :accessor argument-keywordp :type boolean) ;NIL means not present
+   (keyword :initarg :keyword :accessor argument-keyword :type symbol))) ;has no meaning if KEYWORDP==NIL
+(defclass aux-argument (argument)
+  ((init :initarg :init :accessor argument-init :type (or null form))))
+(defclass llist ()
+  ((parent :initarg :parent :accessor form-parent)))
+(defclass ordinary-llist (llist)
+  ((required :initarg :required :accessor llist-required :type list) ;list, with each element of type REQUIRED-ARGUMENT.
+   (optional :initarg :optional :accessor llist-optional :type list) ;list, with each element of type OPTIONAL-ARGUMENT.
+   (rest :initarg :rest :accessor llist-rest :type (or null argument))
+   (key :initarg :key :accessor llist-key :type list) ;list, with each element of type KEY-ARGUMENT.
+   (allow-other-keys :initarg :allow-other-keys :accessor llist-allow-other-keys :type boolean)
+   (aux :initarg :aux :accessor llist-aux :type list))) ;list, with each element of type AUX-ARGUMENT.
+(defclass macro-llist (llist)
+  ((whole :initarg :whole :accessor llist-whole :type (or null argument llist))
+   (environment :initarg :environment :accessor llist-environment :type (or null argument))
+   (required :initarg :required :accessor llist-required :type list) ;list, with each element of type ARGUMENT, or LLIST (for macro-lambda-lists).
+   (optional :initarg :optional :accessor llist-optional :type list) ;list, with each element of type OPTIONAL-ARGUMENT, or LLIST (for macro-lambda-lists).
+   (rest :initarg :rest :accessor llist-rest :type (or null argument llist))
+   (body :initarg :body :accessor llist-body :type (or null argument llist))
+   (key :initarg :key :accessor llist-key :type list) ;list, with each element of type KEY-ARGUMENT, or LLIST (for macro-lambda-lists).
+   (allow-other-keys :initarg :allow-other-keys :accessor llist-allow-other-keys :type boolean)
+   (aux :initarg :aux :accessor llist-aux :type list))) ;list, with each element of type AUX-ARGUMENT.
+
+(defun parse-required-argument (varname)
+  (assert (not (or (null varname) (eq varname t))) () "Argument name must not be NIL or T, but is ~S" varname)
+  ;; probably not TODO (because whether a variable is constant is semantic, not syntax, and therefore not to be checked in a parser): add checking for "constant variable" in: CLHS 3.4.1 Ordinary Lambda Lists says: A var or supplied-p-parameter must be a symbol that is not the name of a constant variable.
+  varname)
+
+(defun parse-optional-or-key-or-aux-argument (argform argument-type)
+  "Parse argument ARGFORM according to the given ARGUMENT-TYPE, which must be one of &OPTIONAL &KEY &AUX.
+Forms allowed for &OPTIONAL, &KEY, &AUX: SYMBOL, (SYMBOL), (SYMBOL FORM)
+Forms allowed for &OPTIONAL, &KEY: (SYMBOL FORM SYMBOL)
+Forms allowed for &KEY: ((SYMBOL SYMBOL)), ((SYMBOL SYMBOL) FORM), ((SYMBOL SYMBOL) FORM SYMBOL)
+Return four values: indicator whether keyword name is present (NIL for &OPTIONAL and &AUX or if not present, non-NIL otherwise), its keyword name symbol, its variable name symbol (guaranteed to be neither NIL nor T), whether an initialization form is present, the initialization form, and its supplied-p symbol (NIL if not present)."
+  (assert (find argument-type '(&OPTIONAL &KEY &AUX)))
+  (cond
+    ((and (not (null argform)) (not (eq argform t)) (symbolp argform))
+     (values nil nil argform nil nil nil))
+    ((and (consp argform))
+     (let ((keywordp nil) (keyword nil) (varname nil) (init-form-p nil) (init-form nil) (suppliedp-name nil)
+	   (head (car argform))
+	   (rest (cdr argform)))
+       (cond
+	 ((symbolp head)
+	  (setf keywordp nil) (setf keyword nil) (setf varname head))
+	 ((and (consp head) (symbolp (car head)) (consp (cdr head)) (symbolp (cadr head)) (null (cddr head)))
+	  (assert (eq argument-type '&KEY) () "Variable name is ~S, but names of the form (SYMBOL SYMBOL) only allowed for &KEY arguments" head)
+	  (setf keywordp t) (setf keyword (car head)) (setf varname (cadr head)))
+	 (t (error "Invalid ~S argument name ~S" argument-type varname)))
+       (assert (not (or (null varname) (eq varname t))) () "Argument name must not be NIL or T, but is ~S" varname)
+       (assert (listp rest) () "Invalid ~S argument seems to be of the form (SYMBOL FORM) or (SYMBOL FORM SYMBOL), but is ~S" argument-type argform)
+       (when (not (null rest))
+	 (let ((init-form2 (car rest))
+	       (rest (cdr rest)))
+	   (setf init-form-p t)
+	   (setf init-form init-form2) ;nothing to check for INIT-FORM
+	   (when (eq argument-type '&AUX)
+	     (assert (null rest) () "Invalid ~S argument seems to be of the form (SYMBOL FORM), but is ~S which is too long" argument-type argform))
+	   (assert (listp rest) () "Invalid ~S argument seems to be of the form (SYMBOL FORM SYMBOL), but is ~S" argument-type argform)
+	   (when (not (null rest))
+	     (setf suppliedp-name (car rest))
+	     (assert (or (null suppliedp-name) (and (symbolp suppliedp-name) (not (or (null suppliedp-name) (eq suppliedp-name t))))) () "Supplied-p-parameter (of optional argment ~S) must not be NIL or T, but is ~S" varname suppliedp-name)
+	     (assert (null (cdr rest)) () "Invalid ~S argument ~S seems to be of the form (SYMBOL FORM SYMBOL), but does not match" argument-type argform))))
+	 (values keywordp keyword varname init-form-p init-form suppliedp-name)))
+    (t
+     (error "Invalid ~S argument ~S" argument-type argform))))
+
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument 'a '&optional)) '(nil nil a nil nil nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument 'a '&key)) '(nil nil a nil nil nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument 'a '&aux)) '(nil nil a nil nil nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a) '&optional)) '(nil nil a nil nil nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a) '&key)) '(nil nil a nil nil nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a) '&aux)) '(nil nil a nil nil nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1) '&optional)) '(nil nil a t 1 nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1) '&key)) '(nil nil a t 1 nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1) '&aux)) '(nil nil a t 1 nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1 ap) '&optional)) '(nil nil a t 1 ap)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1 ap) '&key)) '(nil nil a t 1 ap)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((:b a)) '&key)) '(t :b a nil nil nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((:b a) 1) '&key)) '(t :b a t 1 nil)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((:b a) 1 ap) '&key)) '(t :b a t 1 ap)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((t a) 1 ap) '&key)) '(t t a t 1 ap)))
+(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((nil a) 1 ap) '&key)) '(t nil a t 1 ap)))
+
+;; TODO: (defun parse-ordinary-lambda-list (lambda-list variables functions parent reparse-function)
+
+;; TODO: I should encapsulate all the namesapces (VARIABLES FUNCTIONS BLOCKS) in a class and pass an instance to the custom parser functions so that the user can derive a more specialized class from this class and add additional namespaces (in additional slots), and access these slots in the custom parser functions.
+
+;;Note that passing BLOCKS is not necessary here because REPARSE-FUNCTION has captured BLOCKS, and BLOCKS is not modified in #'PARSE-LAMBDA-LIST: parsing e.g. "(BLOCK TEST (FLET ((F (&OPTIONAL (A (RETURN-FROM TEST 4))) A)) (F)))" works.
+(defun parse-lambda-list (lambda-list variables functions parent reparse-function &key (allow-macro-lambda-list nil))
+  "Returns two values: an instance of type LLIST (representing the parsed LAMBDA-LIST) and the namespace VARIABLES augmented by the variables created by the arguments in LAMBDA-LIST.
+Supported lambda list keywords:
+CLHS Figure 3-12. Standardized Operators that use Ordinary Lambda Lists: An ordinary lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &key &rest &aux &optional
+CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &environment &rest &aux &key &whole &body &optional"
+  ;; TODO: come up with a scheme for this function so that it is easily extensible with other types of lambda lists, or replacable (partly or wholly) by user-supplied parsing code.
+  ;; TODO: rewrite so that parsing the following is possible: Allow user-defined Lambda Lists (i.e. user-defined subclasses of 'llist), 3.4.1 Ordinary Lambda Lists, 3.4.2 Generic Function Lambda Lists, 3.4.3 Specialized Lambda Lists, 3.4.4 Macro Lambda Lists, 3.4.5 Destructuring Lambda Lists, 3.4.6 Boa Lambda Lists, 3.4.7 Defsetf Lambda Lists, 3.4.8 Deftype Lambda Lists, 3.4.9 Define-modify-macro Lambda Lists, 3.4.10 Define-method-combination Arguments Lambda Lists
+  ;; "CLHS 3.4.1 Ordinary Lambda Lists" says: "An init-form can be any form. Whenever any init-form is evaluated for any parameter specifier, that form may refer to any parameter variable to the left of the specifier in which the init-form appears, including any supplied-p-parameter variables, and may rely on the fact that no other parameter variable has yet been bound (including its own parameter variable)." But luckily the order of allowed keywords is fixed for both normal lambda-lists and macro lambda-lists, and a normal lambda-list allows a subset of macro lambda-lists. Maybe I'll have to rewrite this for other lambda-lists.
+  (let* ((llist-type (if allow-macro-lambda-list 'macro-llist 'ordinary-llist)) ;TODO: when making this function modular: probably allow passing LLIST-TYPE.
+	 (new-llist (make-instance llist-type :parent parent))
+	 (new-variables variables))
+    (labels ((add-argument (varname)
+	       (let* ((new-argument (make-instance 'argument :parent new-llist))
+		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
+		 (setf (argument-var new-argument) new-var)
+		 (setf new-variables (augment-namespace-with-var new-var new-variables))
+		 new-argument))
+	     (add-required-argument (varname)
+	       (let* ((new-argument (make-instance 'required-argument :parent new-llist))
+		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
+		 (setf (argument-var new-argument) new-var)
+		 (setf new-variables (augment-namespace-with-var new-var new-variables))
+		 new-argument))
+	     (add-optional-argument (varname init-form-p init-form suppliedp-name)
+	       "If INIT-FORM or SUPPLIEDP-NAME is not given for the &OPTIONAL argument, pass NIL for it. If SUPPLIEDP-NAME is given, INIT-FORM must be non-NIL as well."
+	       (assert (if suppliedp-name (not (null init-form)) t))
+	       (let* ((new-argument (make-instance 'optional-argument :parent new-llist))
+		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
+		 (setf (argument-var new-argument) new-var)
+		 (setf new-variables (augment-namespace-with-var new-var new-variables))
+		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :variables new-variables) nil)))
+		   (setf (argument-init new-argument) parsed-init-form)
+		   (let ((new-supplied-var (if suppliedp-name (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil) nil)))
+		     (setf (argument-suppliedp new-argument) new-supplied-var)
+		     (when new-supplied-var (setf new-variables (augment-namespace-with-var new-supplied-var new-variables)))
+		     new-argument))))
+	     (add-key-argument (keywordp keyword varname init-form-p init-form suppliedp-name)
+	       "If KEYWORDNAME, INIT-FORM or SUPPLIEDP-NAME is not given for the &KEY argument, pass NIL for it. If SUPPLIEDP-NAME is given, INIT-FORM must be non-NIL as well."
+	       (assert (if suppliedp-name (not (null init-form)) t))
+	       (let* ((new-argument (make-instance 'key-argument :parent new-llist :keywordp keywordp :keyword keyword))
+		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
+		 (setf (argument-var new-argument) new-var)
+		 (setf new-variables (augment-namespace-with-var new-var new-variables))
+		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :variables new-variables) nil)))
+		   (setf (argument-init new-argument) parsed-init-form)
+		   (let ((new-supplied-var (if suppliedp-name (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil) nil)))
+		     (setf (argument-suppliedp new-argument) new-supplied-var)
+		     (when new-supplied-var (setf new-variables (augment-namespace-with-var new-supplied-var new-variables)))
+		     new-argument))))
+	     (add-aux-argument (varname init-form-p init-form)
+	       "If INIT-FORM is not given for the &KEY argument, pass NIL for it."
+	       (let* ((new-argument (make-instance 'aux-argument :parent new-llist))
+		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
+		 (setf (argument-var new-argument) new-var)
+		 (setf new-variables (augment-namespace-with-var new-var new-variables))
+		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :variables new-variables) nil)))
+		   (setf (argument-init new-argument) parsed-init-form)
+		   new-argument))))
+      (let* ((remaining lambda-list)
+	     (current-keyword nil)
+	     whole environment required optional rest body key allow-other-keys aux)
+	(assert (listp remaining))
+	(loop until (null remaining) do
+	     (assert (listp remaining))
+	     (let ((head (car remaining)))
+	       (cond
+		 ((find head '(&whole &environment &optional &rest &body &key &aux)) ;&ALLOW-OTHER-KEYS not included because it does not accept variables
+		  (setf current-keyword head))
+		 ((eq current-keyword '&whole) ;TODO: allow recursive lambda-list parsing, see CLHS 3.4.4.1.2 Lambda-list-directed Destructuring by Lambda Lists
+		  (assert allow-macro-lambda-list () "&WHOLE only allowed in macro lambda lists")
+		  (assert (null whole) () "Only one &WHOLE keyword allowed in lambda list ~S" lambda-list)
+		  (assert (and (null environment) (null required) (null optional) (null rest) (null body) (null key) (null aux)) () "&WHOLE keyword must be before &ENVIRONMENT, &OPTIONAL, &REST, &BODY, &KEY, &ALLOW-OTHER-KEYS, &AUX, and required arguments in lambda list ~S" lambda-list)
+		  (setf whole (add-argument (parse-required-argument head)))
+		  (setf current-keyword nil))
+		 ((eq current-keyword '&environment)
+		  (assert allow-macro-lambda-list () "&ENVIRONMENT only allowed in macro lambda lists")
+		  (assert (null environment) () "Only one &ENVIRONMENT keyword allowed in lambda list ~S" lambda-list)
+		  (setf environment (add-argument (parse-required-argument head)))
+		  (setf current-keyword nil))
+		 ((null current-keyword)
+		  (assert (and (null optional) (null rest) (null body) (null key) (null aux)) () "Required arguments must be before &OPTIONAL, &REST, &BODY, &KEY, &ALLOW-OTHER-KEYS, &AUX in lambda list ~S" lambda-list)
+		  (push (cond
+			  ((and (not (null head)) (not (eq head t)) (symbolp head))
+			   (add-required-argument (parse-required-argument head)))
+			  ((and allow-macro-lambda-list (listp head))
+			   (multiple-value-bind (parsed-llist new-variables2)
+			       (parse-lambda-list head new-variables functions new-llist reparse-function :allow-macro-lambda-list allow-macro-lambda-list)
+			     (setf new-variables new-variables2)
+			     parsed-llist))
+			  (t (error "Invalid required argument ~S in lambda list ~S" head lambda-list)))
+			required))
+		 ((eq current-keyword '&optional) ;TODO: allow recursive lambda-list parsing, see CLHS 3.4.4.1.2 Lambda-list-directed Destructuring by Lambda Lists
+		  (assert (and (null rest) (null body) (null key) (null aux)) () "Optional arguments must be before &REST, &BODY, &KEY, &ALLOW-OTHER-KEYS, &AUX in lambda list ~S" lambda-list)
+		  (push (multiple-value-bind (keywordp keyword varname init-form-p init-form suppliedp-name)
+			    (parse-optional-or-key-or-aux-argument head '&optional)
+			  (declare (ignore keywordp keyword))
+			  (add-optional-argument varname init-form-p init-form suppliedp-name))
+			optional))
+		 ;; TODO: in macro lambda lists, allow &REST to be specified as the (CDR (LAST LAMBDA-LIST)), as in '(A &OPTIONAL B . R).
+		 ((find current-keyword '(&rest &body)) ;TODO: allow recursive lambda-list parsing, see CLHS 3.4.4.1.2 Lambda-list-directed Destructuring by Lambda Lists
+		  (when (eq current-keyword '&BODY) (assert allow-macro-lambda-list () "&BODY only allowed in macro lambda lists"))
+		  (assert (and (null rest) (null body)) () "Only either one &REST or one &BODY keyword allowed in lambda list ~S" lambda-list)
+		  (assert (and (null key) (null aux)) () "&REST or &BODY keyword must be before &KEY, &AUX in lambda list ~S" lambda-list)
+		  (let ((parsed-head (add-argument (parse-required-argument head))))
+		    (ecase current-keyword ((&rest) (setf rest parsed-head)) ((&body) (setf body parsed-head))))
+		  (setf current-keyword nil))
+		 ((eq current-keyword '&key) ;TODO: allow recursive lambda-list parsing, see CLHS 3.4.4.1.2 Lambda-list-directed Destructuring by Lambda Lists
+		  (assert (null aux) () "&KEY keyword must be before &AUX in lambda list ~S" lambda-list)
+		  (push (multiple-value-bind (keywordp keyword varname init-form-p init-form suppliedp-name)
+			    (parse-optional-or-key-or-aux-argument head '&key)
+			  (add-key-argument keywordp keyword varname init-form-p init-form suppliedp-name))
+			key))
+		 ((eq current-keyword '&allow-other-keys)
+		  (assert (not (null key)) () "&ALLOW-OTHER-KEYS not allowed without preceding &KEY keyword in lambda list ~S" lambda-list)
+		  (assert (null allow-other-keys) () "Only one &ALLOW-OTHER-KEYS keyword allowed in lambda list ~S" lambda-list)
+		  (setf allow-other-keys t)
+		  (setf current-keyword nil))
+		 ((eq current-keyword '&aux)
+		  (push (multiple-value-bind (keywordp keyword varname init-form-p init-form suppliedp-name)
+			    (parse-optional-or-key-or-aux-argument head '&aux)
+			  (declare (ignore keywordp keyword suppliedp-name))
+			  (add-aux-argument varname init-form-p init-form))
+			aux))
+		 (t (error "Unhandled argument ~S in lambda-list ~S" head lambda-list))))
+	     (setf remaining (cdr remaining)))
+	(when (eq llist-type 'macro-llist)
+	  (setf (llist-whole new-llist) whole)
+	  (setf (llist-environment new-llist) environment)
+	  (setf (llist-body new-llist) body))
+	(setf (llist-required new-llist) (nreverse required))
+	(setf (llist-optional new-llist) (nreverse optional))
+	(setf (llist-rest new-llist) rest)
+	(setf (llist-key new-llist) (nreverse key))
+	(setf (llist-allow-other-keys new-llist) allow-other-keys)
+	(setf (llist-aux new-llist) (nreverse aux))))
+    (values new-llist new-variables)))
+
+;;TODO: add some test cases, e.g. (parse-lambda-list '(a &optional (b 1 bp) &rest r &key ((:cdddd c) 1 cp) &aux d) nil nil nil (lambda (form &rest r) (declare (ignore r)) form) :allow-macro-lambda-list nil)
+
+(defmethod print-object ((object required-argument) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (argument-var object))))
+(defmethod print-object ((object optional-argument) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (cond
+      ((and (null (argument-init object)) (null (argument-suppliedp object)))
+       (format stream "~S" (argument-var object)))
+      ((null (argument-suppliedp object))
+       (format stream "(~S ~S)" (argument-var object) (argument-init object)))
+      (t
+       (format stream "(~S ~S ~S)" (argument-var object) (argument-init object) (argument-suppliedp object))))
+    ))
+(defmethod print-object ((object key-argument) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (cond
+      ((and (null (argument-init object)) (null (argument-suppliedp object)))
+       (format stream "~S" (argument-var object)))
+      (t
+       (format stream "(")
+       (if (argument-keywordp object)
+	   (format stream "(~S ~S) " (argument-keyword object) (argument-var object))
+	   (format stream "~S " (argument-var object)))
+       (cond
+	 ((null (argument-suppliedp object))
+	  (format stream "~S" (argument-init object)))
+	 (t
+	  (format stream "~S ~S" (argument-init object) (argument-suppliedp object))))
+       (format stream ")")))))
+(defmethod print-object ((object ordinary-llist) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (when *print-detailed-walker-objects*
+      (format stream "~S" (append
+			   (llist-required object)
+			   (let ((it (llist-optional object))) (when it (cons '&optional it)))
+			   (let ((it (llist-rest object))) (when it (list '&rest it)))
+			   (let ((it (llist-key object))) (when it (cons '&key it)))
+			   (let ((it (llist-allow-other-keys object))) (when it (list '&allow-other-keys)))
+			   (let ((it (llist-aux object))) (when it (cons '&aux it))))))))
+(defmethod print-object ((object macro-llist) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (when *print-detailed-walker-objects*
+      (format stream "~S" (append
+			   (let ((it (llist-whole object))) (when it (list '&whole it)))
+			   (let ((it (llist-environment object))) (when it (list '&environment it)))
+			   (llist-required object)
+			   (let ((it (llist-optional object))) (when it (cons '&optional it)))
+			   (let ((it (llist-rest object))) (when it (list '&rest it)))
+			   (let ((it (llist-body object))) (when it (list '&body it)))
+			   (let ((it (llist-key object))) (when it (cons '&key it)))
+			   (let ((it (llist-allow-other-keys object))) (when it (list '&allow-other-keys)))
+			   (let ((it (llist-aux object))) (when it (cons '&aux it))))))))
+
 ;;;; FORMS
 
 (defclass form ()
@@ -297,27 +589,6 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   ())
 (defclass let*-form (special-form body-form bindings-form)
   ())
-(defclass argument ()
-  ((parent :initarg :parent :accessor argument-parent :type functiondef)
-   (var :initarg :var :accessor argument-var :type var)))
-(defclass simple-argument (argument)
-  ())
-(defclass optional-argument (argument) ;for &OPTIONAL and &KEY arguments
-  ((init :initarg :init :accessor argument-init :type (or null form))
-   (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var))))
-(defclass aux-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null form))))
-(defclass llist ()
-  ((parent :initarg :parent :accessor form-parent)
-   (whole :initarg :whole :accessor llist-whole :type (or null argument))
-   (environment :initarg :environment :accessor llist-environment :type (or null argument))
-   (required :initarg :required :accessor llist-required :type list) ;list, with each element of type ARGUMENT, or LLIST (for macro-lambda-lists).
-   (optional :initarg :optional :accessor llist-optional :type (or null list)) ;list, with each element of type OPTIONAL-ARGUMENT.
-   (rest :initarg :rest :accessor llist-rest :type (or null argument))
-   (body :initarg :body :accessor llist-body :type (or null argument))
-   (key :initarg :key :accessor llist-key :type (or null list)) ;list, with each element of type OPTIONAL-ARGUMENT.
-   (allow-other-keys-p :initarg :allow-other-keys-p :accessor llist-allow-other-keys-p :type boolean)
-   (aux :initarg :aux :accessor llist-aux :type (or null list)))) ;list, with each element of type AUX-ARGUMENT.
 (defclass functiondef (body-form)
   ((parent :initarg :parent :accessor form-parent)
    (llist :initarg :llist :accessor form-llist :type llist)
@@ -373,31 +644,6 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
     (if *print-detailed-walker-objects*
 	(format stream "BINDINGS:~S ~S" (form-bindings object) (body-with-declspecs object))
 	(format stream "~S" (form-body object)))))
-(defmethod print-object ((object simple-argument) stream)
-  (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S" (argument-var object))))
-(defmethod print-object ((object optional-argument) stream)
-  (print-unreadable-object (object stream :type t :identity t)
-    (cond
-      ((and (null (argument-init object)) (null (argument-suppliedp object)))
-       (format stream "~S" (argument-var object)))
-      ((and (null (argument-suppliedp object)))
-       (format stream "(~S ~S)" (argument-var object) (argument-init object)))
-      (t
-       (format stream "(~S ~S ~S)" (argument-var object) (argument-init object) (argument-suppliedp object))))))
-(defmethod print-object ((object llist) stream)
-  (print-unreadable-object (object stream :type t :identity t)
-    (when *print-detailed-walker-objects*
-      (format stream "~S" (append
-			   (let ((it (llist-whole object))) (when it (list '&whole it)))
-			   (let ((it (llist-environment object))) (when it (list '&whole it)))
-			   (llist-required object)
-			   (let ((it (llist-optional object))) (when it (cons '&optional it)))
-			   (let ((it (llist-rest object))) (when it (list '&whole it)))
-			   (let ((it (llist-body object))) (when it (list '&whole it)))
-			   (let ((it (llist-key object))) (when it (cons '&optional it)))
-			   (let ((it (llist-allow-other-keys-p object))) (when it (list '&allow-other-keys)))
-			   (let ((it (llist-aux object))) (when it (cons '&optional it))))))))
 (defmethod print-object ((object fun-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
@@ -434,16 +680,6 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
     (loop for arg in (form-args object) do
 	 (format stream " ~S" arg))))
 
-(defun split-lambda-list* (lambda-list)
-  (let ((allow-other-keys-p nil))
-    (when (find '&allow-other-keys lambda-list)
-      (setf allow-other-keys-p t)
-      (setf lambda-list (delete '&allow-other-keys lambda-list)))
-    (destructuring-bind (required whole environment optional rest body key aux)
-	(lambda-fiddle:split-lambda-list lambda-list)
-      (assert (not (and rest body)) () "A lambda list may contain only either &REST or &BODY (see CLHS 3.4.4 Macro Lambda Lists: restvar::= [{&rest | &body} var],~% but REST:~S BODY:~S" rest body)
-      (values whole environment required optional rest body key allow-other-keys-p aux))))
-
 ;; TODO: maybe rename to PARSE-FORM.
 ;; TODO: FIXME: if there are multiple references to free namespace objects (like the Xs in (PARSE-WITH-EMPTY-NAMESPACES '(SETF (AREF A 1 2 X) X))), this function creates may create more than one namespace object (with (NSO-FREEP obj)==T) for them. change #'PARSE so that it only creates one free namespace object of the same name in this case.
 (defun parse (form variables functions blocks parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
@@ -469,105 +705,6 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 		    :customparse-function customparse-function
 		    :customparsedeclspecp-function customparsedeclspecp-function
 		    :customparsedeclspec-function customparsedeclspec-function))
-	   (parse-lambda-list (lambda-list variables functions parent &key (allow-macro-lambda-list nil))
-	     "Returns two values: an instance of type LLIST (representing the parsed LAMBDA-LIST) and the namespace VARIABLES augmented by the variables created by the arguments in LAMBDA-LIST.
-Supported lambda list keywords:
-CLHS Figure 3-12. Standardized Operators that use Ordinary Lambda Lists: An ordinary lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &key &rest &aux &optional
-CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &environment &rest &aux &key &whole &body &optional"
-	     ;; TODO: add possibility to call custom parsing function.
-	     (assert (typep parent 'functiondef))
-	     ;; TODO: come up with a scheme for this function so that it is easily extensible with other types of lambda lists.
-	     ;; "CLHS 3.4.1 Ordinary Lambda Lists" says: "An init-form can be any form. Whenever any init-form is evaluated for any parameter specifier, that form may refer to any parameter variable to the left of the specifier in which the init-form appears, including any supplied-p-parameter variables, and may rely on the fact that no other parameter variable has yet been bound (including its own parameter variable)." But luckily the order of allowed keywords is fixed for both normal lambda-lists and macro lambda-lists, and a normal lambda-list allows a subset of macro lambda-lists. Maybe I'll have to rewrite this for other lambda-lists.
-	     (multiple-value-bind (whole environment required optional rest body key allow-other-keys-p aux)
-		 (split-lambda-list* lambda-list)
-	       (assert (if (not allow-macro-lambda-list) (and (null whole) (null environment) (null body)) t) () "Ordinary lambda list erroneously contains &WHOLE, &ENVIRONMENT, or &BODY: ~S" lambda-list)
-	       (let ((new-llist (make-instance 'llist :parent parent))
-		     (new-variables variables))
-		 (labels ((add-simple-argument (varname)
-			    (let* ((new-argument (make-instance 'simple-argument :parent new-llist))
-				   (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
-			      (setf (argument-var new-argument) new-var)
-			      (setf new-variables (augment-namespace-with-var new-var new-variables))
-			      new-argument))
-			  (add-optional-argument (varname init-form supplied-varname)
-			    "If INIT-FORM or SUPPLIED-VARNAME is not given for the optional argument, pass NIL for it. If SUPPLIED-VARNAME is given, INIT-FORM must be non-NIL as well."
-			    (assert (if supplied-varname (not (null init-form)) t))
-			    (let* ((new-argument (make-instance 'optional-argument :parent new-llist))
-				   (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
-			      (setf (argument-var new-argument) new-var)
-			      (setf new-variables (augment-namespace-with-var new-var new-variables))
-			      (let ((parsed-init-form (if (null init-form) nil (reparse init-form new-argument :variables new-variables))))
-				(setf (argument-init new-argument) parsed-init-form)
-				(let ((new-supplied-var (if (null supplied-varname) nil (make-instance 'var :name supplied-varname :freep nil :definition new-argument :declspecs nil))))
-				  (setf (argument-suppliedp new-argument) new-supplied-var)
-				  (when new-supplied-var (setf new-variables (augment-namespace-with-var new-supplied-var new-variables)))
-				  new-argument))))
-			  (parse-simple-argument (varname)
-			    (assert (not (or (null varname) (eq varname t))) () "Argument name must not be NIL or T, but is ~S" varname)
-			    ;; TODO: add checking for "constant variable" in: CLHS 3.4.1 Ordinary Lambda Lists says: A var or supplied-p-parameter must be a symbol that is not the name of a constant variable.
-			    varname)
-			  (parse-optional-or-key-or-aux-argument (argform argument-type)
-			    "Parse optional or keyword argument ARGFORM and return its parsed AST."
-			    (assert (find argument-type '(&OPTIONAL &KEY &AUX)))
-			    (flet ((parse-all ()
-				     (cond
-				       ((and (not (null argform)) (not (eq argform t)) (symbolp argform))
-					(values argform nil nil))
-				       (t
-					(assert (consp argform) () "Invalid ~S argument ~S must be either a SYMBOL or of the form (SYMBOL FORM) or (SYMBOL FORM SYMBOL)" argument-type argform)
-					(let ((varname (car argform)) (init-form nil) (supplied-varname nil)
-					      (rest (cdr argform)))
-					  (assert (listp rest) () "Invalid ~S argument seems to be of the form (SYMBOL FORM) or (SYMBOL FORM SYMBOL), but is ~S" argument-type argform)
-					  (when (not (null rest))
-					    (let ((init-form2 (car rest))
-						  (rest (cdr rest)))
-					      (setf init-form init-form2) ;nothing to check for INIT-FORM
-					      (when (eq argument-type '&AUX)
-						(assert (null rest) () "Invalid ~S argument seems to be of the form (SYMBOL FORM), but is ~S which is too long" argument-type argform))
-					      (assert (listp rest) () "Invalid ~S argument seems to be of the form (SYMBOL FORM SYMBOL), but is ~S" argument-type argform)
-					      (when (not (null rest))
-						(setf supplied-varname (car rest))
-						(assert (null (cdr rest)) () "Invalid ~S argument ~S seems to be of the form (SYMBOL FORM SYMBOL), but does not match" argument-type argform))))
-					  (values varname init-form supplied-varname))))))
-			      (multiple-value-bind (varname init-form supplied-varname) (parse-all)
-				(when (eq argument-type '&KEY)
-				  (cond
-				    ((symbolp varname))
-				    ((and (consp varname) (eq (car varname) 'keyword-name)) ;TODO: only allow VARNAME to be of the form (keyword-name SYMBOL) for &KEY arguments (and not &OPTIONAL).
-				     (assert (and (consp (cdr varname)) (null (cddr varname))) () "If the optional argument variable name starts with the symbol KEYWORD-NAME, then it must be of the form (keyword-name SYMBOL), but is ~S" varname)
-				     (setf varname (cadr varname)))
-				    (t (error "Invalid ~S argument name ~S" argument-type varname))))
-				(assert (not (or (null varname) (eq varname t))) () "Argument name must not be NIL or T, but is ~S" varname)
-				(assert (or (null supplied-varname) (and (symbolp supplied-varname) (not (or (null supplied-varname) (eq supplied-varname t))))) () "Supplied-p-parameter (of optional argment ~S) must not be NIL or T, but is ~S" varname supplied-varname)
-				(values varname init-form supplied-varname)))))
-		   ;; evaluation is in this order: "wholevar envvar reqvars envvar optvars envvar restvar envvar keyvars envvar auxvars envvar" (from CLHS 3.4.4 Macro Lambda Lists).
-		   (let* ((whole (unless (null whole) (add-simple-argument (parse-simple-argument whole))))
-			  (environment (unless (null environment) (add-simple-argument (parse-simple-argument environment))))
-			  (required (loop for varname in required collect
-					 (cond
-					   ((and (not (null varname)) (not (eq varname t)) (symbolp varname))
-					    (add-simple-argument (parse-simple-argument varname)))
-					   ((and allow-macro-lambda-list (listp varname))
-					    (multiple-value-bind (parsed-llist new-variables2)
-						(parse-lambda-list varname new-variables functions new-llist :allow-macro-lambda-list allow-macro-lambda-list)
-					      (setf new-variables new-variables2)
-					      parsed-llist))
-					   (t (error "Invalid required argument ~S in lambda list ~S" varname lambda-list)))))
-			  (optional (loop for argform in optional collect (multiple-value-bind (varname init-form supplied-varname) (parse-optional-or-key-or-aux-argument argform '&optional) (add-optional-argument varname init-form supplied-varname))))
-			  (rest (unless (null rest) (add-simple-argument (parse-simple-argument rest))))
-			  (body (unless (null rest) (add-simple-argument (parse-simple-argument rest))))
-			  (key (loop for argform in key collect (multiple-value-bind (varname init-form supplied-varname) (parse-optional-or-key-or-aux-argument argform '&key) (add-optional-argument varname init-form supplied-varname))))
-			  (aux (loop for argform in aux collect (multiple-value-bind (varname init-form supplied-varname) (parse-optional-or-key-or-aux-argument argform '&aux) (add-optional-argument varname init-form supplied-varname)))))
-		     (setf (llist-whole new-llist) whole)
-		     (setf (llist-environment new-llist) environment)
-		     (setf (llist-required new-llist) required)
-		     (setf (llist-optional new-llist) optional)
-		     (setf (llist-rest new-llist) rest)
-		     (setf (llist-body new-llist) body)
-		     (setf (llist-key new-llist) key)
-		     (setf (llist-allow-other-keys-p new-llist) allow-other-keys-p)
-		     (setf (llist-aux new-llist) aux)))
-		 (values new-llist new-variables))))
 	   (parse-functiondef (form variables functions blocks parent)
 	     "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and create a corresponding FUNCTIONDEF-object."
 	     (flet ((split-lambda-list-and-body (form)
@@ -579,7 +716,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	       (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
 		 (let ((new-functiondef (make-instance 'functiondef :parent parent)))
 		   (multiple-value-bind (new-llist variables-in-functiondef)
-		       (parse-lambda-list lambda-list variables functions new-functiondef :allow-macro-lambda-list nil)
+		       (parse-lambda-list lambda-list variables functions new-functiondef #'reparse :allow-macro-lambda-list nil)
 		     (setf (form-llist new-functiondef) new-llist)
 		     (multiple-value-bind (body parsed-declspecs variables-in-functiondef functions-in-functiondef)
 			 (parse-declaration-in-body body variables-in-functiondef functions new-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
