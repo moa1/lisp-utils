@@ -283,13 +283,13 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass required-argument (argument)
   ())
 (defclass optional-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null form)) ;NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)
+  ((init :initarg :init :accessor argument-init :type (or null generalform)) ;NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)
    (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var)))) ;NIL means not present
 (defclass key-argument (optional-argument)
   ((keywordp :initarg :keywordp :accessor argument-keywordp :type boolean) ;NIL means not present
    (keyword :initarg :keyword :accessor argument-keyword :type symbol))) ;has no meaning if KEYWORDP==NIL
 (defclass aux-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null form))))
+  ((init :initarg :init :accessor argument-init :type (or null generalform))))
 (defclass llist ()
   ((parent :initarg :parent :accessor form-parent)))
 (defclass ordinary-llist (llist)
@@ -570,12 +570,25 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 ;;;; FORMS
 
+(deftype generalform ()
+  "A form as described in 'CLHS 3.1.2.1 Form Evaluation'"
+  `(or sym ;CLHS 3.1.2.1.1 Symbols as Forms
+       form ;CLHS 3.1.2.1.2 Conses as Forms
+       selfevalobject ;CLHS 3.1.2.1.3 Self-Evaluating Objects
+       ))
+
+(defclass selfevalobject ()
+  ((object :initarg :object :accessor selfevalobject-object)) ;TODO: add something like ":type (or number string vector pathname ...)" when I know what types of objects are self-evaluating objects. CLHS 3.1.2.1.3 doesn't seem to have a complete list.
+  (:documentation "A self-evaluating object as described in 'CLHS 3.1.2.1.3 Self-Evaluating Objects'"))
+(defmethod print-object ((object selfevalobject) stream)
+  (print-unreadable-object (object stream :type t)
+    (format stream "~S" (selfevalobject-object object))))
+
 (defclass form ()
-  ((parent :initarg :parent :accessor form-parent)))
-(defclass constant-form (form)
-  ((value :initarg :value :accessor form-value :type form)))
+  ((parent :initarg :parent :accessor form-parent))
+  (:documentation "A cons form as described in 'CLHS 3.1.2.1.2 Conses as Forms'"))
 (defclass body-form () ;Note: objects of this type must never be created, only subtypes of this type.
-  ((body :initarg :body :accessor form-body :type list))) ;list of FORMs
+  ((body :initarg :body :accessor form-body :type list))) ;list of GENERALFORMs
 (defclass special-form (form)
   ())
 (defclass progn-form (special-form body-form)
@@ -584,7 +597,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((parent :initarg :parent :accessor binding-parent) ;e.g. the LET-form in which it is defined.
    (sym :initarg :sym :accessor binding-sym :type sym)))
 (defclass var-binding (binding)
-  ((value :initarg :value :accessor binding-value :documentation "The form initializing the variable." :type form)))
+  ((value :initarg :value :accessor binding-value :documentation "The form initializing the variable." :type generalform)))
 (defclass bindings-form ()  ;Note: objects of this type must never be created, only subtypes of this type.
   ((bindings :initarg :bindings :accessor form-bindings :type list) ;list of VAR-BINDINGs, or FUN-BINDINGs
    (declspecs :initarg :declspecs :accessor form-declspecs :type list))) ;list of DECLSPECs
@@ -609,26 +622,23 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ())
 (defclass return-from-form (special-form)
   ((blo :initarg :blo :accessor form-blo :type blo)
-   (value :initarg :value :accessor form-value :type form)))
+   (value :initarg :value :accessor form-value :type generalform)))
 (defclass locally-form (special-form body-form)
   ((declspecs :initarg :declspecs :accessor form-declspecs :type list)))
 (defclass the-form (special-form)
   ((type :initarg :type :accessor form-type :type (or symbol list))
-   (value :initarg :value :accessor form-value :type form)))
+   (value :initarg :value :accessor form-value :type generalform)))
 (defclass if-form (special-form)
-  ((test :initarg :test :accessor form-test :type form)
-   (then :initarg :then :accessor form-then :type form)
-   (else :initarg :else :accessor form-else :type (or null form))))
+  ((test :initarg :test :accessor form-test :type generalform)
+   (then :initarg :then :accessor form-then :type generalform)
+   (else :initarg :else :accessor form-else :type (or null generalform))))
 (defclass setq-form (special-form)
   ((vars :initarg :vars :accessor form-vars :type list) ;list of VARs
-   (values :initarg :values :accessor form-values :type list))) ;list of FORMs
+   (values :initarg :values :accessor form-values :type list))) ;list of GENERALFORMs
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
-   (args :initarg :args :accessor form-args :type list))) ;list of FORMs
+   (args :initarg :args :accessor form-args :type list))) ;list of GENERALFORMs
 
-(defmethod print-object ((object constant-form) stream)
-  (print-unreadable-object (object stream :type t)
-    (format stream "~S" (form-value object))))
 (defmethod print-object ((object progn-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-body object))))
@@ -736,14 +746,14 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
       ((and (not (null customparsep-function)) (funcall customparsep-function form variables functions blocks parent))
        (funcall customparse-function form variables functions blocks parent))
       ((or (eq form nil) (eq form t))
-       (make-instance 'constant-form :value form :parent parent))
+       (make-instance 'selfevalobject :object form))
       ((symbolp form)
        (varlookup/create* form)) ;TODO: insert code of #'VARLOOKUP/CREATE* here if it is called only once.
       ((and (consp form) (eq (car form) 'function))
        (assert (and (consp (cdr form)) (null (cddr form)) (valid-function-name-p (cadr form))) () "Invalid function name form ~S" form)
        (funlookup/create* (cadr form))) ;TODO: insert code of #'FUNLOOKUP/CREATE* here if it is called only once.
       ((atom form)
-       (make-instance 'constant-form :value form :parent parent))
+       (make-instance 'selfevalobject :object form))
       (t
        (let ((head (car form))
 	     (rest (cdr form)))
@@ -963,7 +973,7 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
 	   (variables-2 (cadr variables))
 	   (b-1 (namespace-lookup 'b variables-1))
 	   (b-2 (namespace-lookup 'b variables-2)))
-      (assert (eq (form-value (binding-value (nso-definition b-1))) 5))
+      (assert (eq (selfevalobject-object (binding-value (nso-definition b-1))) 5))
       (assert (eq b-1 (binding-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
     (let* ((variables (lexical-namespaces-at '(let* ((b 5)) -here- (let* ((b b)) -here-))))
@@ -971,7 +981,7 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
 	   (variables-2 (cadr variables))
 	   (b-1 (namespace-lookup 'b variables-1))
 	   (b-2 (namespace-lookup 'b variables-2)))
-      (assert (eq (form-value (binding-value (nso-definition b-1))) 5))
+      (assert (eq (selfevalobject-object (binding-value (nso-definition b-1))) 5))
       (assert (eq b-1 (binding-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
     (let* ((functions (nth-value 1 (lexical-namespaces-at '(flet ((b ())) -here- (flet ((b () #'b)) -here-)))))
