@@ -50,6 +50,10 @@
 ;; special forms defining named blocks: BLOCK FLET LABELS MACROLET
 
 (defpackage :walker
+  (:documentation "A syntactic parser of Common Lisp.
+Its scope is the syntactic handling of arbitrary Common Lisp code, i.e. parsing a list into an abstract syntax tree, and TODO: FIXME: converting an abstract syntax tree into a list.
+It should have as little semantics in it as possible. (TODO: FIXME: The symbols T and NIL are currently not allowed as variable/function names everywhere, this should be removed.)
+In particular, types are not parsed or interpreted.")
   (:use :cl)
   (:export))
 
@@ -146,7 +150,7 @@ Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-names
 	 (format stream "~S: ~S~%" (car cell) (format-sym (cdr cell))))))
 
 (defun valid-function-name-p (name)
-  "Checks whether NAME is naming a function, i.e. either of the form NAME or (SETF NAME).
+  "Checks whether NAME is naming a function, i.e. is either of the form NAME or (SETF NAME).
 In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the NAME. Returns NIL if FORM is not a function form."
   (if (and (symbolp name) (not (null name)) (not (eq name t)))
       (values 'fun name)
@@ -635,6 +639,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass setq-form (special-form)
   ((vars :initarg :vars :accessor form-vars :type list) ;list of VARs
    (values :initarg :values :accessor form-values :type list))) ;list of GENERALFORMs
+(defclass catch-form (special-form body-form)
+  ((tag :initarg :tag :accessor form-tag :type generalform)))
+(defclass throw-form (special-form)
+  ((tag :initarg :tag :accessor form-tag :type generalform)
+   (value :initarg :value :accessor form-value :type generalform)))
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
    (args :initarg :args :accessor form-args :type list))) ;list of GENERALFORMs
@@ -687,6 +696,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
       (format stream "~S ~S" (car (form-vars object)) (car (form-values object)))
       (loop for var in (cdr (form-vars object)) for value in (cdr (form-values object)) do
 	   (format stream " ~S ~S" var value)))))
+(defmethod print-object ((object catch-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S ~S" (form-tag object) (form-body object))))
+(defmethod print-object ((object throw-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S ~S" (form-tag object) (form-value object))))
 (defmethod print-object ((object application-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-fun object))
@@ -695,6 +710,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 ;; TODO: maybe rename to PARSE-FORM.
 ;; TODO: FIXME: if there are multiple references to free namespace objects (like the Xs in (PARSE-WITH-EMPTY-NAMESPACES '(SETF (AREF A 1 2 X) X))), this function creates may create more than one namespace object (with (NSO-FREEP obj)==T) for them. change #'PARSE so that it only creates one free namespace object of the same name in this case.
+;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
+;; Must handle arbitrary lists (also TODO: FIXME: circular lists).
 (defun parse (form variables functions blocks parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   (declare (optimize (debug 3)))
   (labels ((varlookup/create* (symbol)
@@ -900,7 +917,25 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	      (setf (form-vars current) (nreverse vars))
 	      (setf (form-values current) (nreverse values))
 	      current))
-	   ((find head '(catch eval-when go load-time-value macrolet multiple-value-call multiple-value-prog1 progv quote symbol-macrolet tagbody throw unwind-protect))
+	   ((eq head 'catch)
+	    (assert (consp rest) () "Cannot parse CATCH-form ~S" form)
+	    (let* ((tag (car rest))
+		   (body (cdr rest))
+		   (current (make-instance 'catch-form :parent parent))
+		   (parsed-tag (reparse tag current))
+		   (parsed-body (loop for form in body collect (reparse form current))))
+	      (setf (form-tag current) parsed-tag (form-body current) parsed-body)
+	      current))
+	   ((eq head 'throw)
+	    (assert (and (consp rest) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse THROW-form ~S" form)
+	    (let* ((tag (car rest))
+		   (result-form (cadr rest))
+		   (current (make-instance 'throw-form :parent parent))
+		   (parsed-tag (reparse tag current))
+		   (parsed-value (reparse result-form current)))
+	      (setf (form-tag current) parsed-tag (form-value current) parsed-value)
+	      current))
+	   ((find head '(eval-when go load-time-value macrolet multiple-value-call multiple-value-prog1 progv quote symbol-macrolet tagbody unwind-protect))
 	    (error "parsing special form ~S not implemented yet" head))
 	   (t
 	    (assert (and (symbolp head) (not (null head)) (not (eq head t))) () "Invalid function application ~S" form)
