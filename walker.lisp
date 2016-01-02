@@ -823,6 +823,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (parsed-body (loop for form in body collect (reparse form current))))
 	      (setf (form-body current) parsed-body)
 	      current))
+	   ;; TODO: FIXME: maybe I have to handle something specially in FLET and LABELS. The CLHS on FLET and LABELS says: "Also, within the scope of flet, global setf expander definitions of the function-name defined by flet do not apply. Note that this applies to (defsetf f ...), not (defmethod (setf f) ...)." What does that mean?
 	   ((find head '(let let* flet labels))
 	    (assert (and (consp rest) (listp (car rest))) () "cannot parse ~S-form:~%~S" head form)
 	    (let* ((definitions (car rest))
@@ -1028,7 +1029,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (parsed-cleanup-body (loop for form in cleanup-body collect (reparse form current))))
 	      (setf (form-protected current) parsed-protected (form-body current) parsed-cleanup-body)
 	      current))
-	   ((find head '(go macrolet symbol-macrolet tagbody))
+	   ((find head '(go macrolet symbol-macrolet tagbody)) ;TODO: TAGBODY, SYMBOL-MACROLET and MACROLET are tricky to implement, see their CLHS and below.
 	    (error "parsing special form ~S not implemented yet" head))
 	   (t
 	    (assert (symbolp head) () "Invalid function application ~S" form)
@@ -1242,3 +1243,57 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
     (assert (symbolp quote-a))
     (assert (eq quote-a 'a))))
 (test-quote-form)
+
+;; TODO:
+;; TAGBODY, MACROLET, SYMBOL-MACROLET will be tricky to implement and I don't know what properties an implementation has to fulfill:
+;; The CLHS for TAGBODY says:
+;; 1. "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element. If a statement is a macro form and its macro expansion is an atom, that atom is treated as a statement, not a tag." What does that mean?
+;; The CLHS for SYMBOL-MACROLET says:
+;; 0. "The expansion of a symbol macro is subject to further macro expansion in the same lexical environment as the symbol macro invocation": this should be easy to implement if I put the SYMBOL-MACROLETed variables in an lexical namespace. In fact the CLHS on SYMBOL-MACROLET also says "SYMBOL-MACROLET lexically establishes expansion functions for each of the symbol macros named by symbols".
+;; 1. "The use of symbol-macrolet can be shadowed by let...", see below.
+;; 2. "SYMBOL-MACROLET signals an error if a special declaration names one of the symbols being defined by SYMBOL-MACROLET.": add a testcase that (PARSE '(SYMBOL-MACROLET ((A B)) (DECLARE (SPECIAL A)))) fails.
+;; 3. "any use of SETQ to set the value of one of the specified variables is treated as if it were a SETF. PSETQ of a symbol defined as a symbol macro is treated as if it were a PSETF, and MULTIPLE-VALUE-SETQ is treated as if it were a SETF of values.": This could mean that during evaluation of the symbol-macro I have to handle the special forms SETQ, PSETQ, MULTIPLE-VALUE-SETQ specially.
+;; TODO: test-case for SYMBOL-MACROLET:
+;; (let ((a 1) ;A-LET1
+;;       (b 2)) ;B-LET1
+;;   (symbol-macrolet ((a b))
+;;     (let ((a 5) ;A-LET2
+;;           (b 6)) ;B-LET2
+;;       (print (list a b)) ;A-LIST1, B-LIST1
+;;       (setf a 7 b 8))) ;A-SETF, B-SETF
+;;   (list a b)) ;A-LIST2, B-LIST2
+;; should print (5 6) and return (1 2). So I should check that (EQ A-LET1 A-LIST2), (EQ B-LET1 B-LIST2), (EQ A-LET2 A-LIST1 A-SETF), (EQ B-LET2 B-LIST1 B-SETF), (NOT (EQ A-LET2 A-LET1)), (NOT (EQ B-LET2 B-LET1)).
+
+;; On TAGBODY:
+;; TAGBODY always returns NIL, which means that a single-symbol statement in TAGBODY always means a tag, even as the last element of TAGBODY. The following form returns NIL (and not 1):
+;; (let ((a 1))
+;;   (tagbody
+;;    a))
+;; Raises an error that A and B are nonexistant tags:
+;; (let ((branch :b)
+;;       (a 1)
+;;       (b 10))
+;;   (tagbody
+;;      (ecase branch ((:a) (go a)) ((:b) (go b)))
+;;      (symbol-macrolet ((a b))
+;;        a
+;;        (incf a)
+;;        b
+;;        (incf b)))
+;;   (list a b))
+;; Exchanging TAGBODY and SYMBOL-MACROLET compiles:
+;; (defun test (branch)
+;;   (let ((a 1)
+;;         (b 10))
+;;     (symbol-macrolet ((a b))
+;;       (tagbody
+;;          (ecase branch ((:a) (go a)) ((:b) (go b)))
+;;        a
+;;          (incf a)
+;;        b
+;;          (incf b)))
+;;     (list a b)))
+;; WALKER> (test :a)
+;; (1 12)
+;; WALKER> (test :b)
+;; (1 11)
