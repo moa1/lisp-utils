@@ -766,15 +766,22 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
        (make-instance 'selfevalobject :object form))
       ((symbolp form)
        (varlookup/create* form)) ;TODO: insert code of #'VARLOOKUP/CREATE* here if it is called only once.
-      ((and (consp form) (eq (car form) 'function))
-       (assert (and (consp (cdr form)) (null (cddr form)) (valid-function-name-p (cadr form))) () "Invalid function name form ~S" form)
-       (funlookup/create* (cadr form))) ;TODO: insert code of #'FUNLOOKUP/CREATE* here if it is called only once.
       ((atom form)
        (make-instance 'selfevalobject :object form))
       (t
        (let ((head (car form))
 	     (rest (cdr form)))
 	 (cond
+	   ((eq head 'function)
+	    (assert (and (consp rest) (null (cdr rest))) () "Invalid FUNCTION-form ~S" form)
+	    (let ((name-form (car rest)))
+	      ;;TODO: FIXME: encapsulate the result values (and adapt #'PRINT-OBJECT of a FUN) of the following into a to-be-created FUNCTION-OPERATOR-class (or FUNCTION-FORM-class?) so that (UNPARSE (PARSE form)) == form. Currently (PARSE '(FUNCTION (LAMBDA ())))==(PARSE '(LAMBDA ())), which violates above declaration that package WALKER should have as little semantics as possible.
+	      (cond
+		((valid-function-name-p name-form)
+		 (funlookup/create* name-form)) ;TODO: insert code of #'FUNLOOKUP/CREATE* here if it is called only once.
+		((and (consp name-form) (eq (car name-form) 'lambda))
+		 (reparse name-form parent))
+		(t (error "Invalid FUNCTION-form ~S" form)))))
 	   ((eq head 'progn)
 	    (let* ((current (make-instance 'progn-form :parent parent :body nil))
 		   (body rest)
