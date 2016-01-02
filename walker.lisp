@@ -74,7 +74,7 @@
 	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace."))
   (:documentation "a namespace-object (NSO) containing a name and information whether it is free or bound"))
 (defclass sym (nso)
-  ((definition :initarg :definition :accessor nso-definition ;;TODO uncomment when llist is implemented :typep (or binding llist)
+  ((definition :initarg :definition :accessor nso-definition :type (or binding llist)
 	       :documentation "the parsed object (of type (OR BINDING LLIST)) it is defined in, NIL if not known")
    (declspecs :initarg :declspecs :accessor nso-declspecs :type list
 	      :documentation "a list of DECLSPECs that apply to this symbol")
@@ -189,7 +189,7 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
    (vars :initarg :vars :accessor declspec-vars :type list)))
 (defclass declspec-ftype (declspec)
   ((type :initarg :type :accessor declspec-type)
-   (vars :initarg :vars :accessor declspec-vars :type list))) ;TODO: maybe rename this to FUNS.
+   (funs :initarg :funs :accessor declspec-funs :type list)))
 
 (defun parse-declaration-in-body (body variables functions parent &key customparsep-function customparse-function)
   "Parses declarations in the beginning of BODY.
@@ -228,11 +228,14 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 			      ;; will not check TYPESPEC, has to be done in user code.
 			      (let* ((symlookup/create (ecase identifier ((type) #'varlookup/create*) ((ftype) #'funlookup/create*)))
 				     (parsed-syms (loop for sym in syms collect (funcall symlookup/create sym)))
-				     (object-type (ecase identifier ((type) 'declspec-type) ((ftype) 'declspec-ftype)))
-				     (parsed-declspec (make-instance object-type :parent parent :type typespec :vars parsed-syms)))
+				     (parsed-declspec (ecase identifier
+							((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
+							((ftype) (make-instance 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
 				(loop for sym in parsed-syms do
 				     (push parsed-declspec (nso-declspecs sym)))
 				parsed-declspec)))
+			   ((find identifier '(dynamic-extent ignore optimize inline special ignorable notinline))
+			    (error "declaration identifier ~A not implemented yet" identifier))
 			   (t (error "Unknown declaration specifier ~S" expr)))))
 		    (parse-declspecs (cdr declspecs) (cons parsed-declspec collected-declspecs)))))))
 	   (parse-declare (body collected-declspecs)
@@ -255,13 +258,13 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   (assert (not (namespace-boundp 'a functions))))
 (multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) nil nil nil)
   (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
-  (assert (nso-freep (car (declspec-vars (car declspecs)))))
-  (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'a functions)))
+  (assert (nso-freep (car (declspec-funs (car declspecs)))))
+  (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'a functions)))
   (assert (not (namespace-boundp 'a variables))))
 (multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) nil nil nil)
   (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
-  (assert (nso-freep (car (declspec-vars (car declspecs)))))
-  (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup '(setf a) functions)))
+  (assert (nso-freep (car (declspec-funs (car declspecs)))))
+  (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup '(setf a) functions)))
   (assert (not (namespace-boundp '(setf a) variables))))
 
 (defmethod print-object ((object declspec-type) stream)
@@ -1010,7 +1013,7 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
     (let* ((form '(flet ((a ())) (declare (ftype fixnum a)) #'a))
 	   (ast (parse-with-empty-namespaces form))
 	   (declspec-ftype (car (form-declspecs ast))))
-      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-vars declspec-ftype)) (car (form-body ast)))))
+      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-funs declspec-ftype)) (car (form-body ast)))))
     (let* ((ast (parse-with-empty-namespaces '(locally (declare (type fixnum a)) a)))
 	   (declspec-type (car (form-declspecs ast)))
 	   (declspec-type-a (car (declspec-vars declspec-type)))
