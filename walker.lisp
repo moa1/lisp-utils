@@ -652,6 +652,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((function :initarg :function :accessor form-function :type generalform))) ;note that this slot is not called FUN, because slots named FUN in other FORM-classes mean "of type FUN".
 (defclass multiple-value-prog1-form (special-form body-form)
   ((function :initarg :function :accessor form-function :type generalform))) ;note that this slot is not called FUN, because slots named FUN in other FORM-classes mean "of type FUN".
+(defclass progv-form (special-form body-form)
+  ((symbols :initarg :symbols :accessor form-symbols :type generalform)
+   (values :initarg :values :accessor form-values :type generalform)))
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
    (arguments :initarg :arguments :accessor form-arguments :type list))) ;list of GENERALFORMs
@@ -726,6 +729,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object multiple-value-prog1-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~S" (form-function object) (form-body object))))
+(defmethod print-object ((object progv-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S ~S ~S" (form-symbols object) (form-values object) (form-body object))))
 (defmethod print-object ((object application-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-fun object))
@@ -996,7 +1002,19 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (parsed-body (loop for form in body collect (reparse form current))))
 	      (setf (form-function current) parsed-function (form-body current) parsed-body)
 	      current))
-	   ((find head '(go macrolet progv symbol-macrolet tagbody unwind-protect))
+	   ((eq head 'progv)
+	    (assert (and (consp rest) (consp (cdr rest))) () "Cannot parse PROGV-form ~S" form)
+	    ;; Note that in (PROGV SYMBOLS VALUES . BODY), both SYMBOLS and VALUES are evaluated, and thus the dynamic variable names are known only at run-time.
+	    (let* ((symbols-form (car rest))
+		   (values-form (cadr rest))
+		   (body (cddr rest))
+		   (current (make-instance 'progv-form :parent parent))
+		   (parsed-symbols (reparse symbols-form current))
+		   (parsed-values (reparse values-form current))
+		   (parsed-body (loop for form in body collect (reparse form current))))
+	      (setf (form-symbols current) parsed-symbols (form-values current) parsed-values (form-body current) parsed-body)
+	      current))
+	   ((find head '(go macrolet symbol-macrolet tagbody unwind-protect))
 	    (error "parsing special form ~S not implemented yet" head))
 	   (t
 	    (assert (symbolp head) () "Invalid function application ~S" form)
