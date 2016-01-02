@@ -648,7 +648,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
    (readonly :initarg :readonly :accessor form-readonly :type boolean)))
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
-   (args :initarg :args :accessor form-args :type list))) ;list of GENERALFORMs
+   (arguments :initarg :arguments :accessor form-arguments :type list))) ;list of GENERALFORMs
 
 ;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
 (defmethod print-object ((object progn-form) stream)
@@ -714,7 +714,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object application-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-fun object))
-    (loop for arg in (form-args object) do
+    (loop for arg in (form-arguments object) do
 	 (format stream " ~S" arg))))
 
 ;; TODO: maybe rename to PARSE-FORM.
@@ -976,13 +976,13 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (arg-forms rest)
 		   (fun (funlookup/create* fun-name))
 		   (current (make-instance 'application-form :parent parent :fun fun))
-		   (parsed-args nil))
+		   (parsed-arguments nil))
 	      (loop do
 		   (when (null arg-forms) (return))
 		   (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function application" arg-forms)
-		   (push (reparse (car arg-forms) current) parsed-args)
+		   (push (reparse (car arg-forms) current) parsed-arguments)
 		   (setf arg-forms (cdr arg-forms)))
-	      (setf (form-args current) (nreverse parsed-args))
+	      (setf (form-arguments current) (nreverse parsed-arguments))
 	      current))))))))
 
 (defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
@@ -1068,12 +1068,12 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
       (assert (eq b-1 (car (form-body (nso-definition b-2)))))))
   (let* ((ast (parse-with-empty-namespaces '(test #'test 2 3)))
 	 (call-fun (form-fun ast))
-	 (call-args (form-args ast)))
-    (assert (eq call-fun (car call-args))))
+	 (call-arguments (form-arguments ast)))
+    (assert (eq call-fun (car call-arguments))))
   ;; TODO: FIXME:
   ;; (let* ((ast (parse-with-empty-namespaces '(setf (aref a x) x)))
-  ;; 	 (args (form-args ast))
-  ;; 	 (aref-x (cadr (form-args (car args))))
+  ;; 	 (args (form-arguments ast))
+  ;; 	 (aref-x (cadr (form-arguments (car args))))
   ;; 	 (arg-x (cadr args)))
   ;;   (assert (eq aref-x arg-x)))
   )
@@ -1159,11 +1159,11 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
 		   (load-time-value a))))
 	 (ast (parse-with-empty-namespaces form))
 	 (progn-body (form-body ast))
-	 (a-setf1 (car (form-args (car progn-body))))
+	 (a-setf1 (car (form-arguments (car progn-body))))
 	 (let-form (cadr progn-body))
 	 (let-body (form-body let-form))
 	 (a-let (binding-sym (car (form-bindings let-form))))
-	 (a-setf2 (car (form-args (car let-body))))
+	 (a-setf2 (car (form-arguments (car let-body))))
 	 (a-load-time-value (form-value (cadr let-body))))
     (assert (nso-freep a-setf1))
     (assert (not (nso-freep a-let)))
