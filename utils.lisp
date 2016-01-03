@@ -1343,6 +1343,13 @@ COMPILE-BATCH is the number of compiled calls to FUNCTION which are made not by 
 	(push (timeit function) times))
       times)))
   
+;; this function seems to take about 0.61 the time of PROPER-LIST-P from ALEXANDRIA, but doesn't handle circular lists like ALEXANDRIA's does.
+(defun unsafe-proper-list-p (object)
+  "OBJECT must not be a circular list."
+  (if (null object)
+      t
+      (and (listp object) (null (cdr (last object))))))
+
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
 

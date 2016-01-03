@@ -99,6 +99,7 @@
    #:max-keep-type
    #:timeitf
    #:timesec
+   #:unsafe-proper-list-p
    ;; from rational-sin-cos.lisp
    #:sin-rational
    #:cos-rational
