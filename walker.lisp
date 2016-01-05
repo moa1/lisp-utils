@@ -1,4 +1,4 @@
-(load "/home/toni/quicklisp/setup.lisp")
+;;(load "/home/toni/quicklisp/setup.lisp")
 
 #|
 (ql:quickload :hu.dwim.walker)
@@ -55,7 +55,150 @@ Its scope is the syntactic handling of arbitrary Common Lisp code, i.e. parsing 
 It should have as little semantics in it as possible (while still being useful as a Common Lisp parser). In particular, there is no notion of constant variables (so NIL and T are ordinary variable names).
 Type declarations are parsed, but the contained types are neither parsed nor interpreted.")
   (:use :cl)
-  (:export))
+  (:export
+   ;; NAMESPACES
+   :nso
+   :nso-name
+   :nso-freep
+   :sym
+   :nso-definition
+   :nso-declspecs
+   :var
+   :fun
+   :blo
+   :nso-definition
+   :*print-detailed-walker-objects*   
+   :make-namespace
+   :augment-namespace
+   :augment-namespace-with-var
+   :augment-namespace-with-fun
+   :augment-namespace-with-blo
+   :namespace-boundp
+   :namespace-lookup
+   :print-namespace
+   :valid-function-name-p
+   :varlookup/create
+   :funlookup/create
+   :blolookup/create
+   ;; DECLARATIONS
+   :declspec
+   :declspec-parent
+   :declspec-type
+   :declspec-vars
+   :declspec-ftype
+   :declspec-type
+   :declspec-funs
+   :parse-declaration-in-body
+   ;; LAMBDA LISTS
+   :argument
+   :argument-parent
+   :argument-var
+   :required-argument
+   :optional-argument
+   :argument-init
+   :argument-suppliedp
+   :argument-keywordp
+   :argument-keyword
+   :aux-argument
+   :argument-init
+   :llist
+   :form-parent
+   :ordinary-llist
+   :llist-required
+   :llist-optional
+   :llist-rest
+   :llist-key
+   :llist-allow-other-keys
+   :llist-aux
+   :macro-llist
+   :llist-whole
+   :llist-environment
+   :llist-required
+   :llist-optional
+   :llist-rest
+   :llist-body
+   :llist-key
+   :llist-allow-other-keys
+   :llist-aux
+   :parse-required-argument
+   :parse-optional-or-key-or-aux-argument
+   ;;:parse-lambda-list ;do not export this as it should be split into several smaller functions.
+   :parse-ordinary-lambda-list
+   :parse-macro-lambda-list
+   ;; FORMS
+   :generalform
+   :selfevalobject
+   :selfevalobject-object
+   :form
+   :form-parent
+   :body-form
+   :form-body
+   :special-form
+   :progn-form
+   :binding
+   :binding-parent
+   :binding-sym
+   :var-binding
+   :binding-value
+   :bindings-form
+   :form-bindings
+   :form-declspecs
+   :let-form
+   :let*-form
+   :functiondef
+   :form-parent
+   :form-llist
+   :form-declspecs
+   :block-form
+   :form-blo
+   :fun-binding
+   :flet-form
+   :labels-form
+   :lambda-form
+   :return-from-form
+   :form-blo
+   :form-value
+   :locally-form
+   :form-declspecs
+   :the-form
+   :form-type
+   :form-value
+   :if-form
+   :form-test
+   :form-then
+   :form-else
+   :setq-form
+   :form-vars
+   :form-values
+   :catch-form
+   :form-tag
+   :throw-form
+   :form-tag
+   :form-value
+   :eval-when-form
+   :form-situations
+   :load-time-value-form
+   :form-value
+   :form-readonly
+   :quote-form
+   :form-object
+   :multiple-value-call-form
+   :form-function
+   :multiple-value-prog1-form
+   :form-function
+   :progv-form
+   :form-symbols
+   :form-values
+   :unwind-protect-form
+   :form-protected
+   :application-form
+   :form-fun
+   :form-arguments
+   :body-with-declspecs
+   :parse
+   :parse-with-empty-namespaces
+   :lexical-namespaces-at
+   ))
 
 (in-package :walker)
 
@@ -93,7 +236,7 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 	       :documentation "the parsed object of type BLOCK-FORM that it is defined in, NIL if not known"))
   (:documentation "A named block."))
 
-(defvar *print-detailed-walker-objects* nil "If T, print more details of objects in package WALKER.")
+(defvar *print-detailed-walker-objects* t "If T, print more details of objects in package WALKER.")
 
 (defmethod print-object ((object sym) stream)
   (print-unreadable-object (object stream :type t :identity t)
@@ -372,8 +515,6 @@ Return seven values: indicator whether keyword name is present (NIL for &OPTIONA
 (assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((t a) 1 ap) '&key)) '(t t a t 1 t ap)))
 (assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((nil a) 1 ap) '&key)) '(t nil a t 1 t ap)))
 
-;; TODO: (defun parse-ordinary-lambda-list (lambda-list variables functions parent reparse-function)
-
 ;; TODO: I should encapsulate all the namesapces (VARIABLES FUNCTIONS BLOCKS) in a class and pass an instance to the custom parser functions so that the user can derive a more specialized class from this class and add additional namespaces (in additional slots), and access these slots in the custom parser functions.
 
 ;;Note that passing BLOCKS is not necessary here because REPARSE-FUNCTION has captured BLOCKS, and BLOCKS is not modified in #'PARSE-LAMBDA-LIST: parsing e.g. "(BLOCK TEST (FLET ((F (&OPTIONAL (A (RETURN-FROM TEST 4))) A)) (F)))" works.
@@ -513,6 +654,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	(setf (llist-allow-other-keys new-llist) allow-other-keys)
 	(setf (llist-aux new-llist) (nreverse aux))))
     (values new-llist new-variables)))
+
+(defun parse-ordinary-lambda-list (lambda-list variables functions parent reparse-function)
+  (parse-lambda-list lambda-list variables functions parent reparse-function :allow-macro-lambda-list nil))
+
+(defun parse-macro-lambda-list (lambda-list variables functions parent reparse-function)
+  (parse-lambda-list lambda-list variables functions parent reparse-function :allow-macro-lambda-list t))
 
 ;;TODO: add some test cases, e.g. (parse-lambda-list '(a &optional (b 1 bp) &rest r &key ((:cdddd c) 1 cp) &aux d) nil nil nil (lambda (form &rest r) (declare (ignore r)) form) :allow-macro-lambda-list nil)
 
