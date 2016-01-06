@@ -55,7 +55,7 @@ Its scope is the syntactic handling of arbitrary Common Lisp code, i.e. parsing 
 It should have as little semantics in it as possible (while still being useful as a Common Lisp parser). In particular, there is no notion of constant variables (so NIL and T are ordinary variable names).
 Type declarations are parsed, but the contained types are neither parsed nor interpreted.")
   (:use :cl)
-  (:export
+  (:export ;for classes: export the class and _all_ accessors
    ;; NAMESPACES
    :nso
    :nso-name
@@ -917,8 +917,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		    :customparse-function customparse-function
 		    :customparsedeclspecp-function customparsedeclspecp-function
 		    :customparsedeclspec-function customparsedeclspec-function))
-	   (parse-functiondef (form variables functions blocks parent)
-	     "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and create a corresponding FUNCTIONDEF-object."
+	   (parse-and-set-functiondef (form variables functions blocks current-functiondef)
+	     "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values."
 	     (flet ((split-lambda-list-and-body (form)
 		      (assert (and (consp form) (listp (car form))) () "Invalid lambda-list ~S" form)
 		      (let ((lambda-list (car form))
@@ -926,21 +926,15 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			(assert (listp body) () "Invalid body ~S; must be a list" body)
 			(values lambda-list body))))
 	       (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
-		 (let ((new-functiondef (make-instance 'functiondef :parent parent)))
-		   (multiple-value-bind (new-llist variables-in-functiondef)
-		       (parse-lambda-list lambda-list variables functions new-functiondef #'reparse :allow-macro-lambda-list nil)
-		     (setf (form-llist new-functiondef) new-llist)
-		     (multiple-value-bind (body parsed-declspecs variables-in-functiondef functions-in-functiondef)
-			 (parse-declaration-in-body body variables-in-functiondef functions new-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
-		       (setf (form-declspecs new-functiondef) parsed-declspecs)
-		       (let ((parsed-body (loop for form in body collect (reparse form new-functiondef :variables variables-in-functiondef :functions functions-in-functiondef :blocks blocks))))
-			 (setf (form-body new-functiondef) parsed-body))))
-		   new-functiondef))))
-	   (setf-binding-slots-to-functiondef-slots (binding parsed-functiondef)
-	     (setf (form-parent binding) (form-parent parsed-functiondef) ;copy everything from PARSED-FUNCTIONDEF to BINDING
-		   (form-llist binding) (form-llist parsed-functiondef)
-		   (form-declspecs binding) (form-declspecs parsed-functiondef)
-		   (form-body binding) (form-body parsed-functiondef))))
+		 (multiple-value-bind (new-llist variables-in-functiondef)
+		     (parse-lambda-list lambda-list variables functions current-functiondef #'reparse :allow-macro-lambda-list nil)
+		   (setf (form-llist current-functiondef) new-llist)
+		   (multiple-value-bind (body parsed-declspecs variables-in-functiondef functions-in-functiondef)
+		       (parse-declaration-in-body body variables-in-functiondef functions current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+		     (setf (form-declspecs current-functiondef) parsed-declspecs)
+		     (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :variables variables-in-functiondef :functions functions-in-functiondef :blocks blocks))))
+		       (setf (form-body current-functiondef) parsed-body))))
+		 current-functiondef))))
     (cond
       ((and (not (null customparsep-function)) (funcall customparsep-function form variables functions blocks parent))
        (funcall customparse-function form variables functions blocks parent))
@@ -994,11 +988,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 				  (body-form (cdr def))
 				  (blo (make-instance 'blo :name block-name :freep nil))
 				  (binding (make-instance 'fun-binding :parent current :blo blo))
-				  (parsed-functiondef (parse-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) current))
 				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
+			     (parse-and-set-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) binding)
 			     (setf (binding-sym binding) sym)
 			     (setf (nso-definition blo) binding)
-			     (setf-binding-slots-to-functiondef-slots binding parsed-functiondef)
 			     binding))))
 		(multiple-value-bind (parsed-bindings new-variables new-functions)
 		    (let ((parse-value-function (ecase head ((let let*) #'make-var-binding) ((flet labels) #'make-fun-binding)))
@@ -1036,9 +1029,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		      current))))))
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
-		   (current (make-instance 'lambda-form))
-		   (parsed-functiondef (parse-functiondef lambda-list-and-body variables functions blocks parent)))
-	      (setf-binding-slots-to-functiondef-slots current parsed-functiondef)
+		   (current (make-instance 'lambda-form)))
+	      (parse-and-set-functiondef lambda-list-and-body variables functions blocks current)
 	      current))
 	   ((eq head 'block)
 	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" form)
@@ -1357,6 +1349,14 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
     (assert (not (eq test-fun-blo return-from2-blo)))
     (assert (nso-freep return-from2-blo))))
 (test-parse-block-reference)
+
+(defun test-parent ()
+  (declare (optimize (debug 3)))
+  (let* ((form '(lambda () (funcall bla)))
+	 (ast (walker:parse-with-empty-namespaces form))
+	 (body (walker:form-body ast)))
+    (assert (eq (form-parent (car body)) ast))))
+(test-parent)
 
 (defun test-load-time-value-form ()
   (declare (optimize (debug 3)))
