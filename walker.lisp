@@ -195,6 +195,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form-fun
    :form-arguments
    :body-with-declspecs
+   :parse-and-set-functiondef
    :parse
    :parse-with-empty-namespaces
    :lexical-namespaces-at
@@ -890,6 +891,31 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (loop for arg in (form-arguments object) do
 	 (format stream " ~S" arg))))
 
+(defun parse-and-set-functiondef (form variables functions blocks current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+  "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values."
+  (flet ((reparse (form parent &key (variables variables) (functions functions) (blocks blocks))
+	   (parse form variables functions blocks parent
+		  :customparsep-function customparsep-function
+		  :customparse-function customparse-function
+		  :customparsedeclspecp-function customparsedeclspecp-function
+		  :customparsedeclspec-function customparsedeclspec-function))
+	 (split-lambda-list-and-body (form)
+	   (assert (and (consp form) (listp (car form))) () "Invalid lambda-list ~S" form)
+	   (let ((lambda-list (car form))
+		 (body (cdr form)))
+	     (assert (listp body) () "Invalid body ~S; must be a list" body)
+	     (values lambda-list body))))
+    (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
+      (multiple-value-bind (new-llist variables-in-functiondef)
+	  (parse-lambda-list lambda-list variables functions current-functiondef #'reparse :allow-macro-lambda-list nil)
+	(setf (form-llist current-functiondef) new-llist)
+	(multiple-value-bind (body parsed-declspecs variables-in-functiondef functions-in-functiondef)
+	    (parse-declaration-in-body body variables-in-functiondef functions current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+	  (setf (form-declspecs current-functiondef) parsed-declspecs)
+	  (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :variables variables-in-functiondef :functions functions-in-functiondef :blocks blocks))))
+	    (setf (form-body current-functiondef) parsed-body))))
+      current-functiondef)))
+
 ;; TODO: maybe rename to PARSE-FORM.
 ;; TODO: FIXME: if there are multiple references to free namespace objects (like the Xs in (PARSE-WITH-EMPTY-NAMESPACES '(SETF (AREF A 1 2 X) X))), this function creates may create more than one namespace object (with (NSO-FREEP obj)==T) for them. change #'PARSE so that it only creates one free namespace object of the same name in this case.
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
@@ -916,25 +942,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		    :customparsep-function customparsep-function
 		    :customparse-function customparse-function
 		    :customparsedeclspecp-function customparsedeclspecp-function
-		    :customparsedeclspec-function customparsedeclspec-function))
-	   (parse-and-set-functiondef (form variables functions blocks current-functiondef)
-	     "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values."
-	     (flet ((split-lambda-list-and-body (form)
-		      (assert (and (consp form) (listp (car form))) () "Invalid lambda-list ~S" form)
-		      (let ((lambda-list (car form))
-			    (body (cdr form)))
-			(assert (listp body) () "Invalid body ~S; must be a list" body)
-			(values lambda-list body))))
-	       (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
-		 (multiple-value-bind (new-llist variables-in-functiondef)
-		     (parse-lambda-list lambda-list variables functions current-functiondef #'reparse :allow-macro-lambda-list nil)
-		   (setf (form-llist current-functiondef) new-llist)
-		   (multiple-value-bind (body parsed-declspecs variables-in-functiondef functions-in-functiondef)
-		       (parse-declaration-in-body body variables-in-functiondef functions current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
-		     (setf (form-declspecs current-functiondef) parsed-declspecs)
-		     (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :variables variables-in-functiondef :functions functions-in-functiondef :blocks blocks))))
-		       (setf (form-body current-functiondef) parsed-body))))
-		 current-functiondef))))
+		    :customparsedeclspec-function customparsedeclspec-function)))
     (cond
       ((and (not (null customparsep-function)) (funcall customparsep-function form variables functions blocks parent))
        (funcall customparse-function form variables functions blocks parent))
@@ -989,7 +997,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 				  (blo (make-instance 'blo :name block-name :freep nil))
 				  (binding (make-instance 'fun-binding :parent current :blo blo))
 				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
-			     (parse-and-set-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) binding)
+			     (parse-and-set-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) binding :customparsep-function customparsep-function :customparse-function customparse-function	:customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 			     (setf (binding-sym binding) sym)
 			     (setf (nso-definition blo) binding)
 			     binding))))
@@ -1030,7 +1038,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
 		   (current (make-instance 'lambda-form)))
-	      (parse-and-set-functiondef lambda-list-and-body variables functions blocks current)
+	      (parse-and-set-functiondef lambda-list-and-body variables functions blocks current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 	      current))
 	   ((eq head 'block)
 	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" form)
