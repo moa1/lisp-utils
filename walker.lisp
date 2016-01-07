@@ -27,6 +27,8 @@
 ;;T
 ;; is accessor #'FDEFINITION redundant to #'SYMBOL-FUNCTION?
 
+;; This file contains the core of the parser, i.e. parsers for TODO all special forms.
+
 ;; CLHS 3.1.2.1.2.1 Special Forms
 ;; block      let*                  return-from      
 ;; catch      load-time-value       setq             
@@ -149,6 +151,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form-parent
    :form-llist
    :form-declspecs
+   :block-naming-form
    :block-form
    :form-blo
    :fun-binding
@@ -234,7 +237,7 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
   ())
 (defclass blo (nso)
   ((definition :initarg :definition :accessor nso-definition
-	       :documentation "the parsed object of type BLOCK-FORM that it is defined in, NIL if not known"))
+	       :documentation "the parsed object (which should be an instance of a subclass of BLOCK-NAMING-FORM) that it is defined in, NIL if not known"))
   (:documentation "A named block."))
 
 (defvar *print-detailed-walker-objects* t "If T, print more details of objects in package WALKER.")
@@ -759,9 +762,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
    (llist :initarg :llist :accessor form-llist :type llist)
    (declspecs :initarg :declspecs :accessor form-declspecs :type list))
   (:documentation "Used to define a function without name."))
-(defclass block-form (special-form body-form)
+(defclass block-naming-form () ;Note: objects of this type must never be created, only subtypes of this type.
   ((blo :initarg :blo :accessor form-blo :type blo)))
-(defclass fun-binding (binding functiondef block-form)
+(defclass block-form (special-form body-form block-naming-form)
+  ())
+(defclass fun-binding (binding functiondef block-naming-form)
   ())
 (defclass flet-form (special-form body-form bindings-form)
   ())
