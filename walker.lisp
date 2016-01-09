@@ -1184,6 +1184,14 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	   ((find head '(go macrolet symbol-macrolet tagbody)) ;TODO: TAGBODY, SYMBOL-MACROLET and MACROLET are tricky to implement, see their CLHS and below.
 	    (error "parsing special form ~S not implemented yet" head))
 	   (t
+	    ;; FIXME: TODO: I have to differentiate between function- and macro-applications. This is because macro arguments are not evaluated, but function arguments are. Currently, a call to defun is parsed like this:
+	    ;;   WALKER> (PARSE-WITH-EMPTY-NAMESPACES '(DEFUN BLA (A B &OPTIONAL C) (LIST A B C)))
+	    ;;   #<APPLICATION-FORM #<FUN NAME:DEFUN FREEP:T {D8D7C31}> #<VAR NAME:BLA FREEP:T {D8D7D69}> #<APPLICATION-FORM #<FUN NAME:A FREEP:T {D8D7E21}> #<VAR NAME:B FREEP:T {D8D7F31}> #<VAR NAME:&OPTIONAL FREEP:T {D8D7FD1}> #<VAR NAME:C FREEP:T {D8D9F59}> {D8D7EC1}> #<APPLICATION-FORM #<FUN NAME:LIST FREEP:T {D8DD001}> #<VAR NAME:A FREEP:T {D8DD121}> #<VAR NAME:B FREEP:T {D8DD1B1}> #<VAR NAME:C FREEP:T {D8DD251}> {D8DD099}> {D8D7CC9}>
+	    ;; But this is hard to post-process since, for example, I would have to recreate the lambda list '(A B &OPTIONAL C) from the parsed representation '#<APPLICATION-FORM #<FUN NAME:A FREEP:T {D8D7E21}> #<VAR NAME:B FREEP:T {D8D7F31}> #<VAR NAME:&OPTIONAL FREEP:T {D8D7FD1}> #<VAR NAME:C FREEP:T {D8D9F59}> {D8D7EC1}>, which doesn't make sense. It could be even worse:
+	    ;;   WALKER> (DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL)
+	    ;;   WALKER> (BLA 1 (2 3))
+	    ;;   (1 2 3 NIL)
+	    ;; Parsing the DEFMACRO fails with an incorrect error: (PARSE-WITH-EMPTY-NAMESPACES '(DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL)), because (IF S) is parsed. So to conclude, I should make a flag MACROP in the definition of FUN, (or maybe make FUN and the new class MAC distinct subtypes of SYM), and if it is found here that FUN-NAME (see below) is looked up as a macro, then not parse the ARG-FORMS at all.
 	    (assert (symbolp head) () "Invalid function application ~S" form)
 	    (let* ((fun-name head)
 		   (arg-forms rest)
