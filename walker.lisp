@@ -69,19 +69,22 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :fun
    :blo
    :nso-definition
-   :*print-detailed-walker-objects*   
-   :make-namespace
-   :augment-namespace
-   :augment-namespace-with-var
-   :augment-namespace-with-fun
-   :augment-namespace-with-blo
+   :*print-detailed-walker-objects*
+   :valid-function-name-p
+   :namespace
+   :namespace-var
+   :namespace-fun
+   :namespace-blo
+   :lexical-namespace
+   :free-namespace
+   :make-empty-lexical-namespace
+   :make-empty-free-namespace
    :namespace-boundp
    :namespace-lookup
-   :print-namespace
-   :valid-function-name-p
-   :varlookup/create
-   :funlookup/create
-   :blolookup/create
+   :shallow-copy-lexical-namespace
+   :augment-lexical-namespace
+   :namespace-lookup/create
+   :default-namespace-lookup/create
    ;; DECLARATIONS
    :declspec
    :declspec-parent
@@ -201,7 +204,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-and-set-functiondef
    :parse
    :parse-with-empty-namespaces
-   :lexical-namespaces-at
+   :namespaces-at
    ))
 
 (in-package :walker)
@@ -253,48 +256,6 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 	(format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))
 	(format stream "NAME:~S" (nso-name object)))))
 
-(defun make-namespace ()
-  nil)
-
-(defun augment-namespace (symbol object namespace)
-  "Create a copy of NAMESPACE where the symbol SYMBOL is bound to object OBJECT.
-Example: (augment-namespace 'var-a (make-instance 'var :name 'var-a) (make-namespace))"
-  (acons symbol object namespace))
-
-(defun augment-namespace-with-var (sym namespace)
-  (assert (typep sym 'var))
-  (augment-namespace (nso-name sym) sym namespace))
-
-(defun augment-namespace-with-fun (sym namespace)
-  (assert (typep sym 'fun))
-  (augment-namespace (nso-name sym) sym namespace))
-
-(defun augment-namespace-with-blo (blo namespace)
-  (assert (typep blo 'blo))
-  (augment-namespace (nso-name blo) blo namespace))
-
-(defun namespace-boundp (symbol namespace)
-  "Return T if the symbol SYMBOL is bound in NAMESPACE."
-  (let ((cell (assoc symbol namespace :test #'equal)))
-    (not (null cell))))
-
-(defun namespace-lookup (symbol namespace)
-  "Return the object bound to symbol SYMBOL in NAMESPACE."
-  (let ((cell (assoc symbol namespace :test #'equal)))
-    (if (null cell)
-	(error "unknown symbol ~S in namespace." symbol)
-	(cdr cell))))
-
-(defun print-namespace (namespace &optional (stream t))
-  (loop for cell in (reverse namespace) do ;print from oldest to newest
-       (flet ((format-sym (sym)
-		(let ((str (make-array '(0) :element-type 'base-char :fill-pointer 0 :adjustable t)))
-		  (with-output-to-string (output str)
-		    (print-unreadable-object (sym output :type t :identity t)
-		      (format output "NAME:~S FREEP:~S DEFINITION:~S DECLSPECS:~S" (nso-name sym) (nso-freep sym) (nso-definition sym) (nso-declspecs sym))))
-		  str)))
-	 (format stream "~S: ~S~%" (car cell) (format-sym (cdr cell))))))
-
 (defun valid-function-name-p (name)
   "Checks whether NAME is naming a function, i.e. is either of the form NAME or (SETF NAME).
 In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the NAME. Returns NIL if FORM is not a function form."
@@ -310,25 +271,96 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
 (assert (equal (multiple-value-list (valid-function-name-p '(setf a))) '(SETF-FUN A)))
 (assert (null (valid-function-name-p '(setf a b))))
 
-(defun varlookup/create (symbol variables)
-  (assert (symbolp symbol))
-  (if (namespace-boundp symbol variables)
-      (values (namespace-lookup symbol variables) t)
-      (values (make-instance 'var :name symbol :freep t :declspecs nil) nil))) ;do not bind :DEFINITION
+;; The three Lisp namespaces (VARIABLES FUNCTIONS BLOCKS) are encapsulated in a class NAMESPACE. The LEXICAL-NAMESPACE-object and the FREE-NAMESPACE-object are both passed to the PARSE*-functions. Instances of LEXICAL-NAMESPACE and FREE-NAMESPACE are passed to the custom parser functions so that the user can derive a more specialized class from LEXICAL-NAMESPACE and FREE-NAMESPACE and add additional namespaces (in additional slots), and access these slots in the custom parser functions. For the LEXICAL-NAMESPACE, the slots VARIABLES FUNCTIONS BLOCKS are implemented as ALISTS like before. For every augmentation (e.g. with a FUN-object) to an instance of the class LEXICAL-NAMESPACE, a new instance of the class LEXICAL-NAMESPACE is created, with the respective slot (e.g. slot FUN) updated to the augmented ALIST. In addition, there is a FREE-NAMESPACE, which contains the slots VARIABLES FUNCTIONS BLOCKS, which are ALISTS. If a free namespace-object should be augmented, then the corresponding slot in the FREE-NAMESPACE object is modified (but no new FREE-NAMESPACE object created). This way, 1. the LEXICAL-NAMESPACE-object that is passed to PARSE*-functions (like PARSE-DECLARATION-IN-BODY) and augmented there can be passed to other PARSE*-functions there and augmented there and so on, and augmented lexical NSO-objects are forgotten automatically when the other PARSE*-functions return without returning their newly created LEXICAL-NAMESPACE-object, but 2. the FREE-NAMESPACE-object passed to the PARSE*-functions is always the same object and thus augmentations to its slots are reflected in all PARSE*-functions.
 
-(defun funlookup/create (symbol functions)
+(defclass namespace ()
+  ;; note that the slots are named like NSO-objects, which allows, when given a SYMBOL-TYPE, accessing the slot named SYMBOL-TYPE and creating an instance of type SYMBOL-TYPE.
+  ((var :initform nil :initarg :var :accessor namespace-var)
+   (fun :initform nil :initarg :fun :accessor namespace-fun)
+   (blo :initform nil :initarg :blo :accessor namespace-blo))
+  (:documentation "A namespace"))
+(defclass lexical-namespace (namespace)
+  ()
+  (:documentation "A lexical namespace (containing bound namespace objects). This means that (NSO-FREEP OBJECT)==NIL for all OBJECTS in VARIABLES, FUNCTIONS, BLOCKS."))
+(defclass free-namespace (namespace)
+  ()
+  (:documentation "A namespace of free (i.e. unbound) namespace objects (e.g. variables). This means that (NSO-FREEP OBJECT)==T for all OBJECTS in VARIABLES, FUNCTIONS, BLOCKS."))
+
+(defmethod print-object ((object namespace) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "VARs:~S FUNs:~S BLOs:~S" (namespace-var object) (namespace-fun object) (namespace-blo object))))
+
+(defun make-empty-lexical-namespace ()
+  (make-instance 'lexical-namespace))
+(defun make-empty-free-namespace ()
+  (make-instance 'free-namespace))
+
+(defgeneric namespace-boundp (symbol-type symbol namespace)
+  (:documentation "Return non-NIL if SYMBOL is bound in NAMESPACE in the slot SYMBOL-TYPE, NIL otherwise."))
+(defmethod namespace-boundp (symbol-type symbol (namespace namespace))
+  (let* ((alist (slot-value namespace symbol-type)))
+    (not (null (assoc symbol alist)))))
+
+(defgeneric namespace-lookup (symbol-type symbol namespace)
+  (:documentation "Look up SYMBOL in NAMESPACE in the slot SYMBOL-TYPE and return it. Signal an error if SYMBOL is not bound."))
+(defmethod namespace-lookup (symbol-type symbol (namespace namespace))
+  (let* ((alist (slot-value namespace symbol-type))
+	 (cons (assoc symbol alist)))
+    (assert (not (null cons)) () "SYMBOL ~A with NSO-type ~S not bound in ~S" symbol symbol-type namespace)
+    (cdr cons)))
+
+(defgeneric shallow-copy-lexical-namespace (namespace)
+  (:documentation "Create a new instance of the type of NAMESPACE, with all slots of NAMESPACE bound to the same objects as in NAMESPACE."))
+(defmethod shallow-copy-lexical-namespace ((namespace lexical-namespace))
+  (make-instance 'lexical-namespace
+		 :var (namespace-var namespace)
+		 :fun (namespace-fun namespace)
+		 :blo (namespace-blo namespace)))
+
+(defgeneric augment-lexical-namespace (nso-object namespace)
+  (:documentation "Create a copy of the lexical namespace NAMESPACE, augment the copy with NSO-OBJECT (which must be a subtype of NSO), and return the copy."))
+(defmethod augment-lexical-namespace (nso-object (namespace lexical-namespace))
+  (assert (not (nso-freep nso-object)) () "Cannot augment a lexical namespace with free namespace object ~S" nso-object)
+  (let* ((new-namespace (shallow-copy-lexical-namespace namespace))
+	 (nso-type (type-of nso-object)))
+    (setf (slot-value new-namespace nso-type)
+	  (acons (nso-name nso-object) nso-object (slot-value new-namespace nso-type)))
+    new-namespace))
+
+(defgeneric namespace-lookup/create (symbol-type symbol lexical-namespace free-namespace)
+  (:documentation "If the SYMBOL is bound in LEXICAL-NAMESPACE in the slot SYMBOL-TYPE, then return the object bound to SYMBOL. If the SYMBOL is bound in FREE-NAMESPACE in the slot SYMBOL-TYPE, then return the object bound to SYMBOL. Otherwise create a free NSO-instance of type SYMBOL-TYPE, modify FREE-NAMESPACE so that SYMBOL is bound to new NSO-instance and return the NSO-instance."))
+(defun default-namespace-lookup/create (symbol-type symbol lexical-namespace free-namespace new-nso)
+  (cond
+    ((namespace-boundp symbol-type symbol lexical-namespace)
+     (namespace-lookup symbol-type symbol lexical-namespace))
+    ((namespace-boundp symbol-type symbol free-namespace)
+     (namespace-lookup symbol-type symbol free-namespace))
+    (t
+     (setf (slot-value free-namespace symbol-type)
+	   (acons symbol new-nso (slot-value free-namespace symbol-type)))
+     new-nso)))
+(defmethod namespace-lookup/create ((symbol-type (eql 'var)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
+  (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
+  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
+(defmethod namespace-lookup/create ((symbol-type (eql 'fun)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
   (multiple-value-bind (fun-type name) (valid-function-name-p symbol)
     (declare (ignore name))
     (assert (not (null fun-type)) () "Invalid function name ~S" symbol)
-    (if (namespace-boundp symbol functions)
-	(values (namespace-lookup symbol functions) t)
-	(values (make-instance 'fun :name symbol :freep t :declspecs nil) nil)))) ;do not bind :DEFINITION
+    (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil)))) ;do not bind :DEFINITION
+(defmethod namespace-lookup/create ((symbol-type (eql 'blo)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
+  (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
+  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t))) ;do not bind :DEFINITION
 
-(defun blolookup/create (symbol blocks)
-  (assert (symbolp symbol))
-  (if (namespace-boundp symbol blocks)
-      (values (namespace-lookup symbol blocks) t)
-      (values (make-instance 'blo :name symbol :freep t) nil))) ;do not bind :DEFINITION
+(let ((lex (make-empty-lexical-namespace))
+      (fre (make-empty-free-namespace)))
+  (setf lex (augment-lexical-namespace (make-instance 'var :name 'a :freep nil) lex))
+  (assert (namespace-lookup 'var 'a lex))
+  (assert (null (namespace-var fre))))
+(let ((lex (make-empty-lexical-namespace))
+      (fre (make-empty-free-namespace)))
+  (namespace-lookup/create 'var 'a lex fre)
+  (assert (null (namespace-var lex)))
+  (assert (namespace-lookup 'var 'a fre)))
 
 ;;;; DECLARATIONS
 
@@ -341,23 +373,13 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
   ((type :initarg :type :accessor declspec-type)
    (funs :initarg :funs :accessor declspec-funs :type list)))
 
-(defun parse-declaration-in-body (body variables functions parent &key customparsep-function customparse-function)
+(defun parse-declaration-in-body (body lexical-namespace free-namespace parent &key customparsep-function customparse-function)
   "Parses declarations in the beginning of BODY.
-Returns four values: the rest of the BODY that does not start with a DECLARE-expression, a list of DECLSPEC-objects, the updated VARIABLES and FUNCTIONS.
-Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of VARIABLES and FUNCTIONS."
+Returns two values: the rest of the BODY that does not start with a DECLARE-expression, and a list of DECLSPEC-objects.
+Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE."
   (declare (optimize (debug 3)))
   (assert (listp body) () "Malformed BODY:~%~S" body)
-  (labels ((varlookup/create* (symbol)
-	     (multiple-value-bind (var boundp) (varlookup/create symbol variables)
-	       (when (not boundp)
-		 (setf variables (augment-namespace-with-var var variables))) ;do not bind :DEFINITION
-	       var))
-	   (funlookup/create* (symbol)
-	     (multiple-value-bind (fun boundp) (funlookup/create symbol functions)
-	       (when (not boundp)
-		 (setf functions (augment-namespace-with-fun fun functions))) ;do not bind :DEFINITION
-	       fun))
-	   (parse-declspecs (declspecs collected-declspecs)
+  (labels ((parse-declspecs (declspecs collected-declspecs)
 	     "Example: (parse-declspecs '(type fixnum a b c) nil)"
 	     (cond
 	       ((null declspecs)
@@ -369,15 +391,14 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 		  (assert (symbolp identifier) () "Malformed declaration identifier ~S" identifier)
 		  (let ((parsed-declspec
 			 (cond
-			   ((and (not (null customparsep-function)) (funcall customparsep-function identifier body variables functions parent))
-			    (funcall customparse-function identifier body variables functions parent))
+			   ((and (not (null customparsep-function)) (funcall customparsep-function identifier body lexical-namespace free-namespace parent))
+			    (funcall customparse-function identifier body lexical-namespace free-namespace parent))
 			   ((find identifier '(type ftype))
 			    (assert (and (listp body) (listp (cdr body))) () "Malformed ~S declaration: ~S" identifier expr)
 			    (let* ((typespec (car body))
 				   (syms (cdr body)))
 			      ;; will not check TYPESPEC, has to be done in user code.
-			      (let* ((symlookup/create (ecase identifier ((type) #'varlookup/create*) ((ftype) #'funlookup/create*)))
-				     (parsed-syms (loop for sym in syms collect (funcall symlookup/create sym)))
+			      (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym lexical-namespace free-namespace)))
 				     (parsed-declspec (ecase identifier
 							((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
 							((ftype) (make-instance 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
@@ -395,27 +416,35 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 		 ((and (listp head) (eq (car head) 'declare))
 		  (let* ((declspecs (cdr head)))
 		    (parse-declare rest (parse-declspecs declspecs collected-declspecs))))
-		 (t (values body (nreverse collected-declspecs) variables functions))))))
+		 (t (values body (nreverse collected-declspecs)))))))
     (parse-declare body nil)))
 
-(multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) nil nil nil)
-  (assert (and (equal body '(declare (type fixnum))) (null declspecs))))
+(let ((lexical-namespace (make-empty-lexical-namespace))
+      (free-namespace (make-empty-free-namespace)))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) lexical-namespace free-namespace nil)
+    (assert (and (equal body '(declare (type fixnum))) (null declspecs)))))
 ;;TODO: test that (parse-declaration-in-body '((declare ()) 5) nil nil nil) throws an error.
-(multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (type fixnum a)) 5) nil nil nil)
-  (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type)))
-  (assert (nso-freep (car (declspec-vars (car declspecs)))))
-  (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'a variables)))
-  (assert (not (namespace-boundp 'a functions))))
-(multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) nil nil nil)
-  (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
-  (assert (nso-freep (car (declspec-funs (car declspecs)))))
-  (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'a functions)))
-  (assert (not (namespace-boundp 'a variables))))
-(multiple-value-bind (body declspecs variables functions) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) nil nil nil)
-  (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
-  (assert (nso-freep (car (declspec-funs (car declspecs)))))
-  (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup '(setf a) functions)))
-  (assert (not (namespace-boundp '(setf a) variables))))
+(let ((lexical-namespace (make-empty-lexical-namespace))
+      (free-namespace (make-empty-free-namespace)))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (type fixnum a)) 5) lexical-namespace free-namespace nil)
+    (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type)))
+    (assert (nso-freep (car (declspec-vars (car declspecs)))))
+    (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'var 'a free-namespace)))
+    (assert (not (namespace-boundp 'fun 'a free-namespace)))))
+(let ((lexical-namespace (make-empty-lexical-namespace))
+      (free-namespace (make-empty-free-namespace)))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) lexical-namespace free-namespace nil)
+    (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
+    (assert (nso-freep (car (declspec-funs (car declspecs)))))
+    (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun 'a free-namespace)))
+    (assert (not (namespace-boundp 'var 'a free-namespace)))))
+(let ((lexical-namespace (make-empty-lexical-namespace))
+      (free-namespace (make-empty-free-namespace)))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) lexical-namespace free-namespace nil)
+    (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
+    (assert (nso-freep (car (declspec-funs (car declspecs)))))
+    (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun '(setf a) free-namespace)))
+    (assert (not (namespace-boundp 'var '(setf a) free-namespace)))))
 
 (defmethod print-object ((object declspec-type) stream)
   (print-unreadable-object (object stream :type t :identity nil)
@@ -519,11 +548,9 @@ Return seven values: indicator whether keyword name is present (NIL for &OPTIONA
 (assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((t a) 1 ap) '&key)) '(t t a t 1 t ap)))
 (assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((nil a) 1 ap) '&key)) '(t nil a t 1 t ap)))
 
-;; TODO: I should encapsulate all the namesapces (VARIABLES FUNCTIONS BLOCKS) in a class and pass an instance to the custom parser functions so that the user can derive a more specialized class from this class and add additional namespaces (in additional slots), and access these slots in the custom parser functions. To fix the bug that multiple free namespace objects are created as multiple NSO-objects, I could set up the NAMESPACE-class like this: the slots VARIABLES FUNCTIONS BLOCKS, are implemented as ALISTS like now (and for every augmentation to them a new instance of the class 'NAMESPACE is created, with the slot updated to the augmented ALIST), and slot FREE, which contains an instance of class FREE-NAMESPACE. The class FREE-NAMESPACE contains the slots VARIABLES FUNCTIONS BLOCKS, which are alists. If a free namespace-object should be augmented, then the corresponding slot in the FREE-NAMESPACE object is modified (but no new FREE-NAMESPACE object created). This way, 1. the NAMESPACE-object that is passed to PARSE*-functions like PARSE-DECLARATION-IN-BODY and augmented there can be passed to other PARSE*-functions there and augmented there and so on, and augmented lexical NSO-objects are forgotten automatically when the other PARSE*-functions return without returning their newly created NAMESPACE-object, but 2. the FREE-NAMESPACE-object is always the same object and thus augmentations to its slots are reflected in every NAMESPACE-object, because they all have the same FREE-NAMESPACE object. Another possibility would be to not create the FREE-slot in the NAMESPACE-object, but pass the FREE-NAMESPACE object alongside the NAMESPACE object to the PARSE*-functions. This would require passing more objects as arguments and require more code there, but would make the different life-times of free and bound NSO-objects more explicit and maybe easier to understand.
-
 ;;Note that passing BLOCKS is not necessary here because REPARSE-FUNCTION has captured BLOCKS, and BLOCKS is not modified in #'PARSE-LAMBDA-LIST: parsing e.g. "(BLOCK TEST (FLET ((F (&OPTIONAL (A (RETURN-FROM TEST 4))) A)) (F)))" works.
-(defun parse-lambda-list (lambda-list variables functions parent reparse-function &key (allow-macro-lambda-list nil))
-  "Returns two values: an instance of type LLIST (representing the parsed LAMBDA-LIST) and the namespace VARIABLES augmented by the variables created by the arguments in LAMBDA-LIST.
+(defun parse-lambda-list (lambda-list lexical-namespace free-namespace parent reparse-function &key (allow-macro-lambda-list nil))
+  "Returns two values: an instance of type LLIST (representing the parsed LAMBDA-LIST) and the LEXICAL-NAMESPACE augmented by the variables created by the arguments in LAMBDA-LIST.
 Supported lambda list keywords:
 CLHS Figure 3-12. Standardized Operators that use Ordinary Lambda Lists: An ordinary lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &key &rest &aux &optional
 CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &environment &rest &aux &key &whole &body &optional"
@@ -531,19 +558,18 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ;; TODO: rewrite so that parsing the following is possible: Allow user-defined Lambda Lists (i.e. user-defined subclasses of 'llist), 3.4.1 Ordinary Lambda Lists, 3.4.2 Generic Function Lambda Lists, 3.4.3 Specialized Lambda Lists, 3.4.4 Macro Lambda Lists, 3.4.5 Destructuring Lambda Lists, 3.4.6 Boa Lambda Lists, 3.4.7 Defsetf Lambda Lists, 3.4.8 Deftype Lambda Lists, 3.4.9 Define-modify-macro Lambda Lists, 3.4.10 Define-method-combination Arguments Lambda Lists
   ;; "CLHS 3.4.1 Ordinary Lambda Lists" says: "An init-form can be any form. Whenever any init-form is evaluated for any parameter specifier, that form may refer to any parameter variable to the left of the specifier in which the init-form appears, including any supplied-p-parameter variables, and may rely on the fact that no other parameter variable has yet been bound (including its own parameter variable)." But luckily the order of allowed keywords is fixed for both normal lambda-lists and macro lambda-lists, and a normal lambda-list allows a subset of macro lambda-lists. Maybe I'll have to rewrite this for other lambda-lists.
   (let* ((llist-type (if allow-macro-lambda-list 'macro-llist 'ordinary-llist)) ;TODO: when making this function modular: probably allow passing LLIST-TYPE.
-	 (new-llist (make-instance llist-type :parent parent))
-	 (new-variables variables))
+	 (new-llist (make-instance llist-type :parent parent)))
     (labels ((add-argument (varname)
 	       (let* ((new-argument (make-instance 'argument :parent new-llist))
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
-		 (setf new-variables (augment-namespace-with-var new-var new-variables))
+		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
 		 new-argument))
 	     (add-required-argument (varname)
 	       (let* ((new-argument (make-instance 'required-argument :parent new-llist))
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
-		 (setf new-variables (augment-namespace-with-var new-var new-variables))
+		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
 		 new-argument))
 	     (add-optional-argument (varname init-form-p init-form suppliedp suppliedp-name)
 	       "If INIT-FORM is not given for the &OPTIONAL argument, pass NIL for it. If SUPPLIEDP is non-NIL, INIT-FORM must be non-NIL as well."
@@ -551,12 +577,13 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	       (let* ((new-argument (make-instance 'optional-argument :parent new-llist))
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
-		 (setf new-variables (augment-namespace-with-var new-var new-variables))
-		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :variables new-variables) nil)))
+		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
+		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :lexical-namespace lexical-namespace) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
 		   (let ((new-supplied-var (if suppliedp (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
-		     (when new-supplied-var (setf new-variables (augment-namespace-with-var new-supplied-var new-variables)))
+		     (when new-supplied-var
+		       (setf lexical-namespace (augment-lexical-namespace new-supplied-var lexical-namespace)))
 		     new-argument))))
 	     (add-key-argument (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name)
 	       "If KEYWORDNAME or INIT-FORM is not given for the &KEY argument, pass NIL for it. If SUPPLIEDP is non-NIL, INIT-FORM must be non-NIL as well."
@@ -564,20 +591,21 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	       (let* ((new-argument (make-instance 'key-argument :parent new-llist :keywordp keywordp :keyword keyword))
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
-		 (setf new-variables (augment-namespace-with-var new-var new-variables))
-		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :variables new-variables) nil)))
+		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
+		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :lexical-namespace lexical-namespace) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
 		   (let ((new-supplied-var (if suppliedp (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
-		     (when new-supplied-var (setf new-variables (augment-namespace-with-var new-supplied-var new-variables)))
+		     (when new-supplied-var
+		       (setf lexical-namespace (augment-lexical-namespace new-supplied-var lexical-namespace)))
 		     new-argument))))
 	     (add-aux-argument (varname init-form-p init-form)
 	       "If INIT-FORM is not given for the &KEY argument, pass NIL for it."
 	       (let* ((new-argument (make-instance 'aux-argument :parent new-llist))
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
-		 (setf new-variables (augment-namespace-with-var new-var new-variables))
-		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :variables new-variables) nil)))
+		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
+		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :lexical-namespace lexical-namespace) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
 		   new-argument))))
       (let* ((remaining lambda-list)
@@ -607,9 +635,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			  ((and (not (null head)) (not (eq head t)) (symbolp head))
 			   (add-required-argument (parse-required-argument head)))
 			  ((and allow-macro-lambda-list (listp head))
-			   (multiple-value-bind (parsed-llist new-variables2)
-			       (parse-lambda-list head new-variables functions new-llist reparse-function :allow-macro-lambda-list allow-macro-lambda-list)
-			     (setf new-variables new-variables2)
+			   (multiple-value-bind (parsed-llist new-lexical-namespace)
+			       (parse-lambda-list head lexical-namespace free-namespace new-llist reparse-function :allow-macro-lambda-list allow-macro-lambda-list)
+			     (setf lexical-namespace new-lexical-namespace)
 			     parsed-llist))
 			  (t (error "Invalid required argument ~S in lambda list ~S" head lambda-list)))
 			required))
@@ -657,15 +685,15 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	(setf (llist-key new-llist) (nreverse key))
 	(setf (llist-allow-other-keys new-llist) allow-other-keys)
 	(setf (llist-aux new-llist) (nreverse aux))))
-    (values new-llist new-variables)))
+    (values new-llist lexical-namespace)))
 
-(defun parse-ordinary-lambda-list (lambda-list variables functions parent reparse-function)
-  (parse-lambda-list lambda-list variables functions parent reparse-function :allow-macro-lambda-list nil))
+(defun parse-ordinary-lambda-list (lambda-list lexical-namespace free-namespace parent reparse-function)
+  (parse-lambda-list lambda-list lexical-namespace free-namespace parent reparse-function :allow-macro-lambda-list nil))
 
-(defun parse-macro-lambda-list (lambda-list variables functions parent reparse-function)
-  (parse-lambda-list lambda-list variables functions parent reparse-function :allow-macro-lambda-list t))
+(defun parse-macro-lambda-list (lambda-list lexical-namespace free-namespace parent reparse-function)
+  (parse-lambda-list lambda-list lexical-namespace free-namespace parent reparse-function :allow-macro-lambda-list t))
 
-;;TODO: add some test cases, e.g. (parse-lambda-list '(a &optional (b 1 bp) &rest r &key ((:cdddd c) 1 cp) &aux d) nil nil nil (lambda (form &rest r) (declare (ignore r)) form) :allow-macro-lambda-list nil)
+;;TODO: add some test cases, e.g. (let ((lexical-namespace (make-empty-lexical-namespace)) (free-namespace (make-empty-free-namespace))) (parse-lambda-list '(a &optional (b 1 bp) &rest r &key ((:cdddd c) 1 cp) &aux d) lexical-namespace free-namespace nil (lambda (form &rest r) (declare (ignore r)) form) :allow-macro-lambda-list nil))
 
 (defmethod print-object ((object required-argument) stream)
   (print-unreadable-object (object stream :type t :identity t)
@@ -896,10 +924,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (loop for arg in (form-arguments object) do
 	 (format stream " ~S" arg))))
 
-(defun parse-and-set-functiondef (form variables functions blocks current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
-  "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values."
-  (flet ((reparse (form parent &key (variables variables) (functions functions) (blocks blocks))
-	   (parse form variables functions blocks parent
+(defun parse-and-set-functiondef (form lexical-namespace free-namespace current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+  "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
+Side-effects: Creates yet unknown free variables and functions and add them to FREE-NAMESPACE."
+  (flet ((reparse (form parent &key (lexical-namespace lexical-namespace))
+	   (parse form lexical-namespace free-namespace parent
 		  :customparsep-function customparsep-function
 		  :customparse-function customparse-function
 		  :customparsedeclspecp-function customparsedeclspecp-function
@@ -911,50 +940,34 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	     (assert (listp body) () "Invalid body ~S; must be a list" body)
 	     (values lambda-list body))))
     (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
-      (multiple-value-bind (new-llist variables-in-functiondef)
-	  (parse-lambda-list lambda-list variables functions current-functiondef #'reparse :allow-macro-lambda-list nil)
+      (multiple-value-bind (new-llist lexical-namespace-in-functiondef)
+	  (parse-lambda-list lambda-list lexical-namespace free-namespace current-functiondef #'reparse :allow-macro-lambda-list nil)
 	(setf (form-llist current-functiondef) new-llist)
-	(multiple-value-bind (body parsed-declspecs variables-in-functiondef functions-in-functiondef)
-	    (parse-declaration-in-body body variables-in-functiondef functions current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+	(multiple-value-bind (body parsed-declspecs)
+	    (parse-declaration-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 	  (setf (form-declspecs current-functiondef) parsed-declspecs)
-	  (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :variables variables-in-functiondef :functions functions-in-functiondef :blocks blocks))))
+	  (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :lexical-namespace lexical-namespace-in-functiondef))))
 	    (setf (form-body current-functiondef) parsed-body))))
       current-functiondef)))
 
 ;; TODO: maybe rename to PARSE-FORM.
-;; TODO: FIXME: if there are multiple references to free namespace objects (like the Xs in (PARSE-WITH-EMPTY-NAMESPACES '(SETF (AREF A 1 2 X) X))), this function creates may create more than one namespace object (with (NSO-FREEP obj)==T) for them. change #'PARSE so that it only creates one free namespace object of the same name in this case.
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
 ;; Must handle arbitrary lists (also TODO: FIXME: circular lists).
-(defun parse (form variables functions blocks parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+(defun parse (form lexical-namespace free-namespace parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   (declare (optimize (debug 3)))
-  (labels ((varlookup/create* (symbol)
-	     (multiple-value-bind (var boundp) (varlookup/create symbol variables)
-	       (when (not boundp)
-		 (setf variables (augment-namespace-with-var var variables))) ;do not bind :DEFINITION
-	       var))
-	   (funlookup/create* (symbol)
-	     (multiple-value-bind (fun boundp) (funlookup/create symbol functions)
-	       (when (not boundp)
-		 (setf functions (augment-namespace-with-fun fun functions))) ;do not bind :DEFINITION
-	       fun))
-	   (blolookup/create* (symbol)
-	     (multiple-value-bind (blo boundp) (blolookup/create symbol blocks)
-	       (when (not boundp)
-		 (setf blocks (augment-namespace-with-blo blo blocks))) ;do not bind :DEFINITION
-	       blo))
-	   (reparse (form parent &key (variables variables) (functions functions) (blocks blocks))
-	     (parse form variables functions blocks parent
+  (labels ((reparse (form parent &key (lexical-namespace lexical-namespace))
+	     (parse form lexical-namespace free-namespace parent
 		    :customparsep-function customparsep-function
 		    :customparse-function customparse-function
 		    :customparsedeclspecp-function customparsedeclspecp-function
 		    :customparsedeclspec-function customparsedeclspec-function)))
     (cond
-      ((and (not (null customparsep-function)) (funcall customparsep-function form variables functions blocks parent))
-       (funcall customparse-function form variables functions blocks parent))
+      ((and (not (null customparsep-function)) (funcall customparsep-function form lexical-namespace free-namespace parent))
+       (funcall customparse-function form lexical-namespace free-namespace parent))
       ((or (eq form nil) (eq form t))
        (make-instance 'selfevalobject :object form))
       ((symbolp form)
-       (varlookup/create* form)) ;TODO: insert code of #'VARLOOKUP/CREATE* here if it is called only once.
+       (namespace-lookup/create 'var form lexical-namespace free-namespace))
       ((atom form)
        (make-instance 'selfevalobject :object form))
       (t
@@ -967,7 +980,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	      ;;TODO: FIXME: encapsulate the result values (and adapt #'PRINT-OBJECT of a FUN) of the following into a to-be-created FUNCTION-OPERATOR-class (or FUNCTION-FORM-class?) so that (UNPARSE (PARSE form)) == form. Currently (PARSE '(FUNCTION (LAMBDA ())))==(PARSE '(LAMBDA ())), which violates above declaration that package WALKER should have as little semantics as possible.
 	      (cond
 		((valid-function-name-p name-form)
-		 (funlookup/create* name-form))
+		 (namespace-lookup/create 'fun name-form lexical-namespace free-namespace))
 		((and (consp name-form) (eq (car name-form) 'lambda))
 		 (reparse name-form parent))
 		(t (error "Invalid FUNCTION-form ~S" form)))))
@@ -984,16 +997,16 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (body (cdr rest))
 		   (form-type (ecase head ((let) 'let-form) ((let*) 'let*-form) ((flet) 'flet-form) ((labels) 'labels-form)))
 		   (current (make-instance form-type :parent parent :body nil))) ;:BINDINGS and :DECLSPECS are defined below
-	      (labels ((make-var-binding (def variables)
+	      (labels ((make-var-binding (def lexical-namespace)
 			 (assert (and (consp def) (symbolp (car def)) (not (null (car def))) (not (null (cdr def))) (null (cddr def))) () "cannot parse definition in ~S-form:~%~S" head def)
 			 (let* ((name (car def))
 				(value-form (cadr def))
 				(binding (make-instance 'var-binding :parent current))
-				(parsed-value (reparse value-form binding :variables variables))
+				(parsed-value (reparse value-form binding :lexical-namespace lexical-namespace))
 				(sym (make-instance 'var :name name :freep nil :definition binding :declspecs nil)))
 			   (setf (binding-sym binding) sym) (setf (binding-value binding) parsed-value)
 			   binding))
-		       (make-fun-binding (def functions)
+		       (make-fun-binding (def lexical-namespace)
 			 (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def)
 			 (multiple-value-bind (fun-type block-name) (valid-function-name-p (car def)) ;CLHS Glossary function block name: If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name.
 			   (declare (ignore fun-type))
@@ -1002,48 +1015,40 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 				  (blo (make-instance 'blo :name block-name :freep nil))
 				  (binding (make-instance 'fun-binding :parent current :blo blo))
 				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
-			     (parse-and-set-functiondef body-form variables functions (augment-namespace-with-blo blo blocks) binding :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+			     (parse-and-set-functiondef body-form (augment-lexical-namespace blo lexical-namespace) free-namespace binding :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 			     (setf (binding-sym binding) sym)
 			     (setf (nso-definition blo) binding)
 			     binding))))
-		(multiple-value-bind (parsed-bindings new-variables new-functions)
-		    (let ((parse-value-function (ecase head ((let let*) #'make-var-binding) ((flet labels) #'make-fun-binding)))
-			  (namespace (ecase head ((let let*) variables) ((flet labels) functions)))
-			  (augment-function (ecase head ((let let*) #'augment-namespace-with-var) ((flet labels) #'augment-namespace-with-fun))))
+		(multiple-value-bind (parsed-bindings new-lexical-namespace)
+		    (let ((parse-value-function (ecase head ((let let*) #'make-var-binding) ((flet labels) #'make-fun-binding))))
 		      (cond
 			((find head '(let flet))
-			 (let* ((parsed-bindings (loop for def in definitions collect (funcall parse-value-function def namespace)))
-				(parsed-syms (loop for binding in parsed-bindings collect (binding-sym binding))))
-			   (ecase head
-			     ((let) (let ((new-variables variables))
-				      (loop for sym in parsed-syms do (setf new-variables (augment-namespace-with-var sym new-variables)))
-				      (values parsed-bindings new-variables functions)))
-			     ((flet) (let ((new-functions functions))
-				       (loop for sym in parsed-syms do (setf new-functions (augment-namespace-with-fun sym new-functions)))
-				       (values parsed-bindings variables new-functions))))))
+			 (let* ((parsed-bindings (loop for def in definitions collect (funcall parse-value-function def lexical-namespace)))
+				(parsed-syms (loop for binding in parsed-bindings collect (binding-sym binding)))
+				(new-lexical-namespace lexical-namespace))
+			   (loop for sym in parsed-syms do (setf new-lexical-namespace (augment-lexical-namespace sym new-lexical-namespace)))
+			   (values parsed-bindings new-lexical-namespace)))
 			((find head '(let* labels))
-			 (let* ((new-namespace namespace)
+			 (let* ((new-lexical-namespace lexical-namespace)
 				(parsed-bindings (loop for def in definitions collect
-						      (let* ((parsed-binding (funcall parse-value-function def new-namespace))
+						      (let* ((parsed-binding (funcall parse-value-function def new-lexical-namespace))
 							     (parsed-sym (binding-sym parsed-binding)))
-							(setf new-namespace (funcall augment-function parsed-sym new-namespace))
+							(setf new-lexical-namespace (augment-lexical-namespace parsed-sym new-lexical-namespace))
 							parsed-binding))))
-			   (ecase head
-			     ((let*) (values parsed-bindings new-namespace functions))
-			     ((labels) (values parsed-bindings variables new-namespace)))))
+			   (values parsed-bindings new-lexical-namespace)))
 			(t (error "unknown HEAD"))))
-		  (multiple-value-bind (body parsed-declspecs new-variables new-functions)
-		      (parse-declaration-in-body body new-variables new-functions current :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+		  (multiple-value-bind (body parsed-declspecs)
+		      (parse-declaration-in-body body new-lexical-namespace free-namespace current :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 		    (setf (form-bindings current) parsed-bindings)
 		    (setf (form-declspecs current) parsed-declspecs)
 		    (let ((parsed-body (loop for form in body collect
-					    (reparse form current :variables new-variables :functions new-functions))))
+					    (reparse form current :lexical-namespace new-lexical-namespace))))
 		      (setf (form-body current) parsed-body)
 		      current))))))
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
 		   (current (make-instance 'lambda-form)))
-	      (parse-and-set-functiondef lambda-list-and-body variables functions blocks current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+	      (parse-and-set-functiondef lambda-list-and-body lexical-namespace free-namespace current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 	      current))
 	   ((eq head 'block)
 	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" form)
@@ -1052,7 +1057,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (blo (make-instance 'blo :name name :freep nil))
 		   (current (make-instance 'block-form :parent parent :blo blo))
 		   (parsed-body (loop for form in body collect
-				     (reparse form current :blocks (augment-namespace-with-blo blo blocks)))))
+				     (reparse form current :lexical-namespace (augment-lexical-namespace blo lexical-namespace)))))
 	      (setf (nso-definition blo) current)
 	      (setf (form-body current) parsed-body)
 	      current))
@@ -1060,7 +1065,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	    (assert (and (consp rest) (symbolp (car rest)) (or (null (cdr rest)) (and (consp (cdr rest)) (null (cddr rest))))) () "Cannot parse RETURN-FROM-form ~S" form)
 	    (let* ((name (car rest))
 		   (value-form (if (null (cdr rest)) nil (cadr rest)))
-		   (blo (blolookup/create* name))
+		   (blo (namespace-lookup/create 'blo name lexical-namespace free-namespace))
 		   (current (make-instance 'return-from-form :parent parent :blo blo))
 		   (parsed-value (reparse value-form current)))
 	      (setf (form-value current) parsed-value)
@@ -1069,11 +1074,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	    (assert (and (consp rest) (consp (car rest)) (consp (cdr rest))) () "Cannot parse LOCALLY-form ~S" form)
 	    (let ((body rest)
 		  (current (make-instance 'locally-form :parent parent)))
-	      (multiple-value-bind (body parsed-declspecs new-variables new-functions)
-		  (parse-declaration-in-body body variables functions current :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+	      (multiple-value-bind (body parsed-declspecs)
+		  (parse-declaration-in-body body lexical-namespace free-namespace current :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 		(setf (form-declspecs current) parsed-declspecs)
 		(let ((parsed-body (loop for form in body collect
-					(reparse form current :variables new-variables :functions new-functions))))
+					(reparse form current))))
 		  (setf (form-body current) parsed-body)
 		  current))))
 	   ((eq head 'the)
@@ -1105,7 +1110,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (assert (and (consp rest) (symbolp (car rest)) (consp (cdr rest))) () "Cannot parse SETQ-form part ~S" rest)
 		   (let* ((name (car rest))
 			  (value-form (cadr rest))
-			  (var (varlookup/create* name))
+			  (var (namespace-lookup/create 'var name lexical-namespace free-namespace))
 			  (parsed-value (reparse value-form current)))
 		     (push var vars) (push parsed-value values))
 		   (setf rest (cddr rest)))
@@ -1144,7 +1149,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		   (readonly (cadr rest)))
 	      (assert (position (cadr rest) '(nil t)) () "READ-ONLY-P in LOAD-TIME-VALUE-form ~S must be either NIL or T, but is ~S" form readonly)
 	      (let* ((current (make-instance 'load-time-value-form :parent parent :readonly readonly))
-		     (parsed-value (reparse value-form current :variables (make-namespace) :functions (make-namespace) :blocks (make-namespace)))) ;TODO: replace (MAKE-NAMESPACE) with (MAKE-NULL-LEXICAL-NAMESPACE) when I have such a function, because dynamic variables must be parsed: in the form (LOAD-TIME-VALUE A), A must refer to the global A.
+		     (parsed-value (reparse value-form current :lexical-namespace (make-empty-lexical-namespace)))) ;Note that dynamic variables must be parsed: in the form (LOAD-TIME-VALUE *A*), *A* must refer to the global *A*.
 		(setf (form-value current) parsed-value)
 		current)))
 	   ((eq head 'quote)
@@ -1195,7 +1200,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	    (assert (symbolp head) () "Invalid function application ~S" form)
 	    (let* ((fun-name head)
 		   (arg-forms rest)
-		   (fun (funlookup/create* fun-name))
+		   (fun (namespace-lookup/create 'fun fun-name lexical-namespace free-namespace))
 		   (current (make-instance 'application-form :parent parent :fun fun))
 		   (parsed-arguments nil))
 	      (loop do
@@ -1207,97 +1212,93 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	      current))))))))
 
 (defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
-  (parse form (make-namespace) (make-namespace) (make-namespace) (make-namespace)
+  (parse form (make-empty-lexical-namespace) (make-empty-free-namespace) nil
 	 :customparsep-function customparsep-function
 	 :customparse-function customparse-function
 	 :customparsedeclspecp-function customparsedeclspecp-function
 	 :customparsedeclspec-function customparsedeclspec-function))
 
 ;; tests for PARSE
-(defun lexical-namespaces-at (form heresymbol)
-  "Parse FORM and collect the lexical namespaces at the positions in FORM marked by the symbol HERESYMBOL.
-Returns two values: a list containing the lexical variable namespaces, and a list containing the lexical function namespaces."
-  (let* ((variables-here-list nil)
-	 (functions-here-list nil)
-	 (blocks-here-list nil))
+(defun namespaces-at (form heresymbol)
+  "Parse FORM and collect the namespaces at the positions in FORM marked by the symbol HERESYMBOL.
+Returns two values: a list containing the lexical namespaces, and a list containing the free namespaces."
+  (let* ((lexical-namespace-here-list nil)
+	 (free-namespace-here-list nil))
     (parse-with-empty-namespaces form
-				 :customparsep-function (lambda (form variables functions blocks parent)
-							  (declare (ignore variables functions blocks parent))
+				 :customparsep-function (lambda (form lexical-namespace free-namespace parent)
+							  (declare (ignore lexical-namespace free-namespace parent))
 							  (eq form heresymbol))
-				 :customparse-function (lambda (form variables functions blocks parent)
+				 :customparse-function (lambda (form lexical-namespace free-namespace parent)
 							 (declare (ignorable form parent))
-							 (push variables variables-here-list)
-							 (push functions functions-here-list)
-							 (push blocks blocks-here-list)))
-    (values (nreverse variables-here-list) (nreverse functions-here-list) (nreverse blocks-here-list))))
+							 (push lexical-namespace lexical-namespace-here-list)
+							 (push free-namespace free-namespace-here-list)))
+    (values (nreverse lexical-namespace-here-list) (nreverse free-namespace-here-list))))
 
 (defun test-parse-symbol-reference ()
   (declare (optimize (debug 3)))
-  (flet ((lexical-namespaces-at (form)
-	   (lexical-namespaces-at form '-here-)))
+  (flet ((namespaces-at (form)
+	   (namespaces-at form '-here-)))
     (assert (nso-freep (parse-with-empty-namespaces 'a)))
     (assert (nso-freep (parse-with-empty-namespaces '(function a))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let ((a 1)) a)))))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let* ((a 1)) a)))))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(flet ((a ())) #'a)))))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(labels ((a ())) #'a)))))))
-    (assert (let* ((variables (car (lexical-namespaces-at '(let ((b 5) (c b)) -here-))))
-		   (b-sym (namespace-lookup 'b variables))
-		   (c-sym (namespace-lookup 'c variables)))
+    (assert (let* ((lexical-namespace (car (namespaces-at '(let ((b 5) (c b)) -here-))))
+		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
+		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
 	      (not (eq b-sym (binding-value (nso-definition c-sym))))))
-    (assert (let* ((functions (car (nth-value 1 (lexical-namespaces-at '(flet ((b ()) (c () #'b)) -here-)))))
-		   (b-sym (namespace-lookup 'b functions))
-		   (c-sym (namespace-lookup 'c functions)))
+    (assert (let* ((lexical-namespace (car (namespaces-at '(flet ((b ()) (c () #'b)) -here-))))
+		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
+		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
 	      (not (eq b-sym (car (form-body (nso-definition c-sym)))))))
-    (assert (let* ((variables (car (lexical-namespaces-at '(let* ((b 5) (c b)) -here-))))
-		   (b-sym (namespace-lookup 'b variables))
-		   (c-sym (namespace-lookup 'c variables)))
+    (assert (let* ((lexical-namespace (car (namespaces-at '(let* ((b 5) (c b)) -here-))))
+		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
+		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
 	      (eq b-sym (binding-value (nso-definition c-sym)))))
-    (assert (let* ((functions (car (nth-value 1 (lexical-namespaces-at '(labels ((b ()) (c () #'b)) -here-)))))
-		   (b-sym (namespace-lookup 'b functions))
-		   (c-sym (namespace-lookup 'c functions)))
+    (assert (let* ((lexical-namespace (car (namespaces-at '(labels ((b ()) (c () #'b)) -here-))))
+		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
+		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
 	      (eq b-sym (car (form-body (nso-definition c-sym))))))
-    (let* ((variables (lexical-namespaces-at '(let ((b 5)) -here- (let ((b b)) -here-))))
-	   (variables-1 (car variables))
-	   (variables-2 (cadr variables))
-	   (b-1 (namespace-lookup 'b variables-1))
-	   (b-2 (namespace-lookup 'b variables-2)))
+    (let* ((lexical-namespaces (namespaces-at '(let ((b 5)) -here- (let ((b b)) -here-))))
+	   (lexical-namespace-1 (car lexical-namespaces))
+	   (lexical-namespace-2 (cadr lexical-namespaces))
+	   (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
+	   (b-2 (namespace-lookup 'var 'b lexical-namespace-2)))
       (assert (eq (selfevalobject-object (binding-value (nso-definition b-1))) 5))
       (assert (eq b-1 (binding-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
-    (let* ((variables (lexical-namespaces-at '(let* ((b 5)) -here- (let* ((b b)) -here-))))
-	   (variables-1 (car variables))
-	   (variables-2 (cadr variables))
-	   (b-1 (namespace-lookup 'b variables-1))
-	   (b-2 (namespace-lookup 'b variables-2)))
+    (let* ((lexical-namespaces (namespaces-at '(let* ((b 5)) -here- (let* ((b b)) -here-))))
+	   (lexical-namespace-1 (car lexical-namespaces))
+	   (lexical-namespace-2 (cadr lexical-namespaces))
+	   (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
+	   (b-2 (namespace-lookup 'var 'b lexical-namespace-2)))
       (assert (eq (selfevalobject-object (binding-value (nso-definition b-1))) 5))
       (assert (eq b-1 (binding-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
-    (let* ((functions (nth-value 1 (lexical-namespaces-at '(flet ((b ())) -here- (flet ((b () #'b)) -here-)))))
-	   (functions-1 (car functions))
-	   (functions-2 (cadr functions))
-	   (b-1 (namespace-lookup 'b functions-1))
-	   (b-2 (namespace-lookup 'b functions-2)))
+    (let* ((lexical-namespaces (namespaces-at '(flet ((b ())) -here- (flet ((b () #'b)) -here-))))
+	   (lexical-namespace-1 (car lexical-namespaces))
+	   (lexical-namespace-2 (cadr lexical-namespaces))
+	   (b-1 (namespace-lookup 'fun 'b lexical-namespace-1))
+	   (b-2 (namespace-lookup 'fun 'b lexical-namespace-2)))
       (assert (not (eq b-1 b-2)))
       (assert (eq b-1 (car (form-body (nso-definition b-2))))))
-    (let* ((functions (nth-value 1 (lexical-namespaces-at '(labels ((b ())) -here- (labels ((b () #'b)) -here-)))))
-	   (functions-1 (car functions))
-	   (functions-2 (cadr functions))
-	   (b-1 (namespace-lookup 'b functions-1))
-	   (b-2 (namespace-lookup 'b functions-2)))
+    (let* ((lexical-namespaces (namespaces-at '(labels ((b ())) -here- (labels ((b () #'b)) -here-))))
+	   (lexical-namespace-1 (car lexical-namespaces))
+	   (lexical-namespace-2 (cadr lexical-namespaces))
+	   (b-1 (namespace-lookup 'fun 'b lexical-namespace-1))
+	   (b-2 (namespace-lookup 'fun 'b lexical-namespace-2)))
       (assert (not (eq b-1 b-2)))
       (assert (eq b-1 (car (form-body (nso-definition b-2)))))))
   (let* ((ast (parse-with-empty-namespaces '(test #'test 2 3)))
 	 (call-fun (form-fun ast))
 	 (call-arguments (form-arguments ast)))
     (assert (eq call-fun (car call-arguments))))
-  ;; TODO: FIXME:
-  ;; (let* ((ast (parse-with-empty-namespaces '(setf (aref a x) x)))
-  ;; 	 (args (form-arguments ast))
-  ;; 	 (aref-x (cadr (form-arguments (car args))))
-  ;; 	 (arg-x (cadr args)))
-  ;;   (assert (eq aref-x arg-x)))
-  )
+  (let* ((ast (parse-with-empty-namespaces '(setf (aref a x) x)))
+  	 (args (form-arguments ast))
+  	 (aref-x (cadr (form-arguments (car args))))
+  	 (arg-x (cadr args)))
+    (assert (eq aref-x arg-x))))
 (test-parse-symbol-reference)
 
 (defun test-parse-declaration ()
@@ -1323,13 +1324,13 @@ Returns two values: a list containing the lexical variable namespaces, and a lis
 
 (defun test-parse-lambda-list ()
   (declare (optimize (debug 3)))
-  (flet ((lexical-namespaces-at (form)
-	   (lexical-namespaces-at form '-here-)))
-    (let* ((variables (lexical-namespaces-at '(let ((a 1)) -here- (flet ((test (a &optional (b (progn -here- a))) -here-)) -here-))))
-	   (a1-sym (namespace-lookup 'a (car variables)))
-	   (a2-sym (namespace-lookup 'a (cadr variables)))
-	   (a3-sym (namespace-lookup 'a (caddr variables)))
-	   (a4-sym (namespace-lookup 'a (cadddr variables))))
+  (flet ((namespaces-at (form)
+	   (namespaces-at form '-here-)))
+    (let* ((lexical-namespaces (namespaces-at '(let ((a 1)) -here- (flet ((test (a &optional (b (progn -here- a))) -here-)) -here-))))
+	   (a1-sym (namespace-lookup 'var 'a (car lexical-namespaces)))
+	   (a2-sym (namespace-lookup 'var 'a (cadr lexical-namespaces)))
+	   (a3-sym (namespace-lookup 'var 'a (caddr lexical-namespaces)))
+	   (a4-sym (namespace-lookup 'var 'a (cadddr lexical-namespaces))))
       (assert (equal a1-sym a4-sym))
       (assert (equal a2-sym a3-sym))
       (assert (not (equal a1-sym a2-sym)))))
