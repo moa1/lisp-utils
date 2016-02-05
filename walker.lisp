@@ -77,14 +77,16 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :namespace-blo
    :lexical-namespace
    :free-namespace
-   :make-empty-lexical-namespace
-   :make-empty-free-namespace
    :namespace-boundp
    :namespace-lookup
    :shallow-copy-lexical-namespace
    :augment-lexical-namespace
+   :augment-free-namespace
    :namespace-lookup/create
    :default-namespace-lookup/create
+   :make-empty-lexical-namespace
+   :make-empty-free-namespace
+   :make-default-free-common-lisp-namespace
    ;; DECLARATIONS
    :declspec
    :declspec-parent
@@ -209,16 +211,6 @@ Type declarations are parsed, but the contained types are neither parsed nor int
 
 (in-package :walker)
 
-(defstruct (lexenv
-	     (:constructor make-lexenv-kw))
-  "A lexical environment."
-  variables
-  functions
-  blocks
-  ;; tags
-  ;; types ;i.e. class- or structure-names
-  )
-
 ;;;; NAMESPACES
 
 (defclass nso ()
@@ -232,12 +224,15 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    (declspecs :initarg :declspecs :accessor nso-declspecs :type list
 	      :documentation "a list of DECLSPECs that apply to this symbol")
    )
-  (:documentation "A symbol referring to a variable or function.
+  (:documentation "A symbol referring to a variable, function or macro.
 Note that symbols are always parsed in a lexical manner, regardless of whether the actual variable this symbol is referring to may be a lexical or special variable. For example, the symbols *A* in the form (LET ((*A* 1)) *A*) may refer to a lexical or special variable."))
 (defclass var (sym)
-  ())
+  ()
+  (:documentation "The symbol of a variable"))
 (defclass fun (sym)
-  ())
+  ((macrop :initform nil :initarg :macrop :accessor nso-macrop :type boolean
+	   :documentation "NIL for functions, non-NIL for macros"))
+  (:documentation "The symbol of a function or macro"))
 (defclass blo (nso)
   ((definition :initarg :definition :accessor nso-definition
 	       :documentation "the parsed object (which should be an instance of a subclass of BLOCK-NAMING-FORM) that it is defined in, NIL if not known"))
@@ -248,7 +243,11 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 (defmethod print-object ((object sym) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))
+	(cond
+	  ((typep object 'fun)
+	   (format stream "NAME:~S FREEP:~S MACROP:~S" (nso-name object) (nso-freep object) (nso-macrop object)))
+	  (t
+	   (format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))))
 	(format stream "NAME:~S" (nso-name object)))))
 (defmethod print-object ((object blo) stream)
   (print-unreadable-object (object stream :type t :identity t)
@@ -277,7 +276,9 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
   ;; note that the slots are named like NSO-objects, which allows, when given a SYMBOL-TYPE, accessing the slot named SYMBOL-TYPE and creating an instance of type SYMBOL-TYPE.
   ((var :initform nil :initarg :var :accessor namespace-var)
    (fun :initform nil :initarg :fun :accessor namespace-fun)
-   (blo :initform nil :initarg :blo :accessor namespace-blo))
+   (blo :initform nil :initarg :blo :accessor namespace-blo)
+   ;; types ;i.e. class- or structure-names
+   )
   (:documentation "A namespace"))
 (defclass lexical-namespace (namespace)
   ()
@@ -289,11 +290,6 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
 (defmethod print-object ((object namespace) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "VARs:~S FUNs:~S BLOs:~S" (namespace-var object) (namespace-fun object) (namespace-blo object))))
-
-(defun make-empty-lexical-namespace ()
-  (make-instance 'lexical-namespace))
-(defun make-empty-free-namespace ()
-  (make-instance 'free-namespace))
 
 (defgeneric namespace-boundp (symbol-type symbol namespace)
   (:documentation "Return non-NIL if SYMBOL is bound in NAMESPACE in the slot SYMBOL-TYPE, NIL otherwise."))
@@ -327,6 +323,14 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
 	  (acons (nso-name nso-object) nso-object (slot-value new-namespace nso-type)))
     new-namespace))
 
+(defgeneric augment-free-namespace (nso-object namespace)
+  (:documentation "Add NSO-OBJECT (which must be a subtype of NSO) to the free NAMESPACE. Return NIL."))
+(defmethod augment-free-namespace (nso-object (namespace free-namespace))
+  (let* ((nso-type (type-of nso-object)))
+    (setf (slot-value namespace nso-type)
+	  (acons (nso-name nso-object) nso-object (slot-value namespace nso-type)))
+    nil))
+
 (defgeneric namespace-lookup/create (symbol-type symbol lexical-namespace free-namespace)
   (:documentation "If the SYMBOL is bound in LEXICAL-NAMESPACE in the slot SYMBOL-TYPE, then return the object bound to SYMBOL. If the SYMBOL is bound in FREE-NAMESPACE in the slot SYMBOL-TYPE, then return the object bound to SYMBOL. Otherwise create a free NSO-instance of type SYMBOL-TYPE, modify FREE-NAMESPACE so that SYMBOL is bound to new NSO-instance and return the NSO-instance."))
 (defun default-namespace-lookup/create (symbol-type symbol lexical-namespace free-namespace new-nso)
@@ -336,8 +340,7 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
     ((namespace-boundp symbol-type symbol free-namespace)
      (namespace-lookup symbol-type symbol free-namespace))
     (t
-     (setf (slot-value free-namespace symbol-type)
-	   (acons symbol new-nso (slot-value free-namespace symbol-type)))
+     (augment-free-namespace new-nso free-namespace)
      new-nso)))
 (defmethod namespace-lookup/create ((symbol-type (eql 'var)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
@@ -351,6 +354,12 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
   (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t))) ;do not bind :DEFINITION
 
+(defun make-empty-lexical-namespace ()
+  (make-instance 'lexical-namespace))
+
+(defun make-empty-free-namespace ()
+  (make-instance 'free-namespace))
+
 (let ((lex (make-empty-lexical-namespace))
       (fre (make-empty-free-namespace)))
   (setf lex (augment-lexical-namespace (make-instance 'var :name 'a :freep nil) lex))
@@ -361,6 +370,20 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
   (namespace-lookup/create 'var 'a lex fre)
   (assert (null (namespace-var lex)))
   (assert (namespace-lookup 'var 'a fre)))
+
+;; TODO: add global variables defined by Common Lisp.
+(defun make-default-free-common-lisp-namespace ()
+  "Return a free namespace in which all [TODO: variables,] functions, and macros available by default in package COMMON-LISP are present. The FUN-objects in the return namespace must have their MACROP-slot bound appropriately, so that parsing '(DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL) doesn't fail anymore."
+  (let ((free-namespace (make-instance 'free-namespace))
+	;; the list of Common Lisp macros: (determined by looking at differences between SBCL and CLISP of global *LISP-MACROS* computed in file all-lisp-symbols.lisp)
+	(common-lisp-macros '(AND ASSERT CALL-METHOD CASE CCASE CHECK-TYPE COND CTYPECASE DECF DECLAIM DEFCLASS DEFCONSTANT DEFGENERIC DEFINE-COMPILER-MACRO DEFINE-CONDITION DEFINE-METHOD-COMBINATION DEFINE-MODIFY-MACRO DEFINE-SETF-EXPANDER DEFINE-SYMBOL-MACRO DEFMACRO DEFMETHOD DEFPACKAGE DEFPARAMETER DEFSETF DEFSTRUCT DEFTYPE DEFUN DEFVAR DESTRUCTURING-BIND DO DO* DO-ALL-SYMBOLS DO-EXTERNAL-SYMBOLS DO-SYMBOLS DOLIST DOTIMES ECASE ETYPECASE FORMATTER HANDLER-BIND HANDLER-CASE IGNORE-ERRORS IN-PACKAGE INCF LAMBDA LOOP LOOP-FINISH MULTIPLE-VALUE-BIND MULTIPLE-VALUE-LIST MULTIPLE-VALUE-SETQ NTH-VALUE OR POP PPRINT-LOGICAL-BLOCK PRINT-UNREADABLE-OBJECT PROG PROG* PROG1 PROG2 PSETF PSETQ PUSH PUSHNEW REMF RESTART-BIND RESTART-CASE RETURN ROTATEF SETF SHIFTF STEP TIME TRACE TYPECASE UNLESS UNTRACE WHEN WITH-ACCESSORS WITH-COMPILATION-UNIT WITH-CONDITION-RESTARTS WITH-HASH-TABLE-ITERATOR WITH-INPUT-FROM-STRING WITH-OPEN-FILE WITH-OPEN-STREAM WITH-OUTPUT-TO-STRING WITH-PACKAGE-ITERATOR WITH-SIMPLE-RESTART WITH-SLOTS WITH-STANDARD-IO-SYNTAX))
+	;; the list of Common Lisp functions: (determined by global *LISP-FUNCTIONS* computed in file all-lisp-symbols.lisp, which are equal between SBCL and CLISP)
+	(common-lisp-functions '(* + - / /= 1+ 1- < <= = > >= ABORT ABS ACONS ACOS ACOSH ADD-METHOD ADJOIN ADJUST-ARRAY ADJUSTABLE-ARRAY-P ALLOCATE-INSTANCE ALPHA-CHAR-P ALPHANUMERICP APPEND APPLY APROPOS APROPOS-LIST AREF ARITHMETIC-ERROR-OPERANDS ARITHMETIC-ERROR-OPERATION ARRAY-DIMENSION ARRAY-DIMENSIONS ARRAY-DISPLACEMENT ARRAY-ELEMENT-TYPE ARRAY-HAS-FILL-POINTER-P ARRAY-IN-BOUNDS-P ARRAY-RANK ARRAY-ROW-MAJOR-INDEX ARRAY-TOTAL-SIZE ARRAYP ASH ASIN ASINH ASSOC ASSOC-IF ASSOC-IF-NOT ATAN ATANH ATOM BIT BIT-AND BIT-ANDC1 BIT-ANDC2 BIT-EQV BIT-IOR BIT-NAND BIT-NOR BIT-NOT BIT-ORC1 BIT-ORC2 BIT-VECTOR-P BIT-XOR BOOLE BOTH-CASE-P BOUNDP BREAK BROADCAST-STREAM-STREAMS BUTLAST BYTE BYTE-POSITION BYTE-SIZE CAAAAR CAAADR CAAAR CAADAR CAADDR CAADR CAAR CADAAR CADADR CADAR CADDAR CADDDR CADDR CADR CAR CDAAAR CDAADR CDAAR CDADAR CDADDR CDADR CDAR CDDAAR CDDADR CDDAR CDDDAR CDDDDR CDDDR CDDR CDR CEILING CELL-ERROR-NAME CERROR CHANGE-CLASS CHAR CHAR-CODE CHAR-DOWNCASE CHAR-EQUAL CHAR-GREATERP CHAR-INT CHAR-LESSP CHAR-NAME CHAR-NOT-EQUAL CHAR-NOT-GREATERP CHAR-NOT-LESSP CHAR-UPCASE CHAR/= CHAR< CHAR<= CHAR= CHAR> CHAR>= CHARACTER CHARACTERP CIS CLASS-NAME CLASS-OF CLEAR-INPUT CLEAR-OUTPUT CLOSE CLRHASH CODE-CHAR COERCE COMPILE COMPILE-FILE COMPILE-FILE-PATHNAME COMPILED-FUNCTION-P COMPILER-MACRO-FUNCTION COMPLEMENT COMPLEX COMPLEXP COMPUTE-APPLICABLE-METHODS COMPUTE-RESTARTS CONCATENATE CONCATENATED-STREAM-STREAMS CONJUGATE CONS CONSP CONSTANTLY CONSTANTP CONTINUE COPY-ALIST COPY-LIST COPY-PPRINT-DISPATCH COPY-READTABLE COPY-SEQ COPY-STRUCTURE COPY-SYMBOL COPY-TREE COS COSH COUNT COUNT-IF COUNT-IF-NOT DECODE-FLOAT DECODE-UNIVERSAL-TIME DELETE DELETE-DUPLICATES DELETE-FILE DELETE-IF DELETE-IF-NOT DELETE-PACKAGE DENOMINATOR DEPOSIT-FIELD DESCRIBE DESCRIBE-OBJECT DIGIT-CHAR DIGIT-CHAR-P DIRECTORY DIRECTORY-NAMESTRING DISASSEMBLE DOCUMENTATION DPB DRIBBLE ECHO-STREAM-INPUT-STREAM ECHO-STREAM-OUTPUT-STREAM ED EIGHTH ELT ENCODE-UNIVERSAL-TIME ENDP ENOUGH-NAMESTRING ENSURE-DIRECTORIES-EXIST ENSURE-GENERIC-FUNCTION EQ EQL EQUAL EQUALP ERROR EVAL EVENP EVERY EXP EXPORT EXPT FBOUNDP FCEILING FDEFINITION FFLOOR FIFTH FILE-AUTHOR FILE-ERROR-PATHNAME FILE-LENGTH FILE-NAMESTRING FILE-POSITION FILE-STRING-LENGTH FILE-WRITE-DATE FILL FILL-POINTER FIND FIND-ALL-SYMBOLS FIND-CLASS FIND-IF FIND-IF-NOT FIND-METHOD FIND-PACKAGE FIND-RESTART FIND-SYMBOL FINISH-OUTPUT FIRST FLOAT FLOAT-DIGITS FLOAT-PRECISION FLOAT-RADIX FLOAT-SIGN FLOATP FLOOR FMAKUNBOUND FORCE-OUTPUT FORMAT FOURTH FRESH-LINE FROUND FTRUNCATE FUNCALL FUNCTION-KEYWORDS FUNCTION-LAMBDA-EXPRESSION FUNCTIONP GCD GENSYM GENTEMP GET GET-DECODED-TIME GET-DISPATCH-MACRO-CHARACTER GET-INTERNAL-REAL-TIME GET-INTERNAL-RUN-TIME GET-MACRO-CHARACTER GET-OUTPUT-STREAM-STRING GET-PROPERTIES GET-SETF-EXPANSION GET-UNIVERSAL-TIME GETF GETHASH GRAPHIC-CHAR-P HASH-TABLE-COUNT HASH-TABLE-P HASH-TABLE-REHASH-SIZE HASH-TABLE-REHASH-THRESHOLD HASH-TABLE-SIZE HASH-TABLE-TEST HOST-NAMESTRING IDENTITY IMAGPART IMPORT INITIALIZE-INSTANCE INPUT-STREAM-P INSPECT INTEGER-DECODE-FLOAT INTEGER-LENGTH INTEGERP INTERACTIVE-STREAM-P INTERN INTERSECTION INVALID-METHOD-ERROR INVOKE-DEBUGGER INVOKE-RESTART INVOKE-RESTART-INTERACTIVELY ISQRT KEYWORDP LAST LCM LDB LDB-TEST LDIFF LENGTH LISP-IMPLEMENTATION-TYPE LISP-IMPLEMENTATION-VERSION LIST LIST* LIST-ALL-PACKAGES LIST-LENGTH LISTEN LISTP LOAD LOAD-LOGICAL-PATHNAME-TRANSLATIONS LOG LOGAND LOGANDC1 LOGANDC2 LOGBITP LOGCOUNT LOGEQV LOGICAL-PATHNAME LOGICAL-PATHNAME-TRANSLATIONS LOGIOR LOGNAND LOGNOR LOGNOT LOGORC1 LOGORC2 LOGTEST LOGXOR LONG-SITE-NAME LOWER-CASE-P MACHINE-INSTANCE MACHINE-TYPE MACHINE-VERSION MACRO-FUNCTION MACROEXPAND MACROEXPAND-1 MAKE-ARRAY MAKE-BROADCAST-STREAM MAKE-CONCATENATED-STREAM MAKE-CONDITION MAKE-DISPATCH-MACRO-CHARACTER MAKE-ECHO-STREAM MAKE-HASH-TABLE MAKE-INSTANCE MAKE-INSTANCES-OBSOLETE MAKE-LIST MAKE-LOAD-FORM MAKE-LOAD-FORM-SAVING-SLOTS MAKE-PACKAGE MAKE-PATHNAME MAKE-RANDOM-STATE MAKE-SEQUENCE MAKE-STRING MAKE-STRING-INPUT-STREAM MAKE-STRING-OUTPUT-STREAM MAKE-SYMBOL MAKE-SYNONYM-STREAM MAKE-TWO-WAY-STREAM MAKUNBOUND MAP MAP-INTO MAPC MAPCAN MAPCAR MAPCON MAPHASH MAPL MAPLIST MASK-FIELD MAX MEMBER MEMBER-IF MEMBER-IF-NOT MERGE MERGE-PATHNAMES METHOD-COMBINATION-ERROR METHOD-QUALIFIERS MIN MINUSP MISMATCH MOD MUFFLE-WARNING NAME-CHAR NAMESTRING NBUTLAST NCONC NINTERSECTION NINTH NO-APPLICABLE-METHOD NO-NEXT-METHOD NOT NOTANY NOTEVERY NRECONC NREVERSE NSET-DIFFERENCE NSET-EXCLUSIVE-OR NSTRING-CAPITALIZE NSTRING-DOWNCASE NSTRING-UPCASE NSUBLIS NSUBST NSUBST-IF NSUBST-IF-NOT NSUBSTITUTE NSUBSTITUTE-IF NSUBSTITUTE-IF-NOT NTH NTHCDR NULL NUMBERP NUMERATOR NUNION ODDP OPEN OPEN-STREAM-P OUTPUT-STREAM-P PACKAGE-ERROR-PACKAGE PACKAGE-NAME PACKAGE-NICKNAMES PACKAGE-SHADOWING-SYMBOLS PACKAGE-USE-LIST PACKAGE-USED-BY-LIST PACKAGEP PAIRLIS PARSE-INTEGER PARSE-NAMESTRING PATHNAME PATHNAME-DEVICE PATHNAME-DIRECTORY PATHNAME-HOST PATHNAME-MATCH-P PATHNAME-NAME PATHNAME-TYPE PATHNAME-VERSION PATHNAMEP PEEK-CHAR PHASE PLUSP POSITION POSITION-IF POSITION-IF-NOT PPRINT PPRINT-DISPATCH PPRINT-FILL PPRINT-INDENT PPRINT-LINEAR PPRINT-NEWLINE PPRINT-TAB PPRINT-TABULAR PRIN1 PRIN1-TO-STRING PRINC PRINC-TO-STRING PRINT PRINT-NOT-READABLE-OBJECT PRINT-OBJECT PROBE-FILE PROCLAIM PROVIDE RANDOM RANDOM-STATE-P RASSOC RASSOC-IF RASSOC-IF-NOT RATIONAL RATIONALIZE RATIONALP READ READ-BYTE READ-CHAR READ-CHAR-NO-HANG READ-DELIMITED-LIST READ-FROM-STRING READ-LINE READ-PRESERVING-WHITESPACE READ-SEQUENCE READTABLE-CASE READTABLEP REALP REALPART REDUCE REINITIALIZE-INSTANCE REM REMHASH REMOVE REMOVE-DUPLICATES REMOVE-IF REMOVE-IF-NOT REMOVE-METHOD REMPROP RENAME-FILE RENAME-PACKAGE REPLACE REQUIRE REST RESTART-NAME REVAPPEND REVERSE ROOM ROUND ROW-MAJOR-AREF RPLACA RPLACD SBIT SCALE-FLOAT SCHAR SEARCH SECOND SET SET-DIFFERENCE SET-DISPATCH-MACRO-CHARACTER SET-EXCLUSIVE-OR SET-MACRO-CHARACTER SET-PPRINT-DISPATCH SET-SYNTAX-FROM-CHAR SEVENTH SHADOW SHADOWING-IMPORT SHARED-INITIALIZE SHORT-SITE-NAME SIGNAL SIGNUM SIMPLE-BIT-VECTOR-P SIMPLE-CONDITION-FORMAT-ARGUMENTS SIMPLE-CONDITION-FORMAT-CONTROL SIMPLE-STRING-P SIMPLE-VECTOR-P SIN SINH SIXTH SLEEP SLOT-BOUNDP SLOT-EXISTS-P SLOT-MAKUNBOUND SLOT-MISSING SLOT-UNBOUND SLOT-VALUE SOFTWARE-TYPE SOFTWARE-VERSION SOME SORT SPECIAL-OPERATOR-P SQRT STABLE-SORT STANDARD-CHAR-P STORE-VALUE STREAM-ELEMENT-TYPE STREAM-ERROR-STREAM STREAM-EXTERNAL-FORMAT STREAMP STRING STRING-CAPITALIZE STRING-DOWNCASE STRING-EQUAL STRING-GREATERP STRING-LEFT-TRIM STRING-LESSP STRING-NOT-EQUAL STRING-NOT-GREATERP STRING-NOT-LESSP STRING-RIGHT-TRIM STRING-TRIM STRING-UPCASE STRING/= STRING< STRING<= STRING= STRING> STRING>= STRINGP SUBLIS SUBSEQ SUBSETP SUBST SUBST-IF SUBST-IF-NOT SUBSTITUTE SUBSTITUTE-IF SUBSTITUTE-IF-NOT SUBTYPEP SVREF SXHASH SYMBOL-FUNCTION SYMBOL-NAME SYMBOL-PACKAGE SYMBOL-PLIST SYMBOL-VALUE SYMBOLP SYNONYM-STREAM-SYMBOL TAILP TAN TANH TENTH TERPRI THIRD TRANSLATE-LOGICAL-PATHNAME TRANSLATE-PATHNAME TREE-EQUAL TRUENAME TRUNCATE TWO-WAY-STREAM-INPUT-STREAM TWO-WAY-STREAM-OUTPUT-STREAM TYPE-ERROR-DATUM TYPE-ERROR-EXPECTED-TYPE TYPE-OF TYPEP UNBOUND-SLOT-INSTANCE UNEXPORT UNINTERN UNION UNREAD-CHAR UNUSE-PACKAGE UPDATE-INSTANCE-FOR-DIFFERENT-CLASS UPDATE-INSTANCE-FOR-REDEFINED-CLASS UPGRADED-ARRAY-ELEMENT-TYPE UPGRADED-COMPLEX-PART-TYPE UPPER-CASE-P USE-PACKAGE USE-VALUE USER-HOMEDIR-PATHNAME VALUES VALUES-LIST VECTOR VECTOR-POP VECTOR-PUSH VECTOR-PUSH-EXTEND VECTORP WARN WILD-PATHNAME-P WRITE WRITE-BYTE WRITE-CHAR WRITE-LINE WRITE-SEQUENCE WRITE-STRING WRITE-TO-STRING Y-OR-N-P YES-OR-NO-P ZEROP)))
+    (loop for macro in common-lisp-macros do
+	 (augment-free-namespace (make-instance 'fun :name macro :freep t :declspecs nil :macrop t) free-namespace)) ;do not bind :DEFINITION
+    (loop for function in common-lisp-functions do
+	 (augment-free-namespace (make-instance 'fun :name function :freep t :declspecs nil :macrop nil) free-namespace)) ;do not bind :DEFINITION
+    free-namespace))
 
 ;;;; DECLARATIONS
 
@@ -1189,14 +1212,6 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	   ((find head '(go macrolet symbol-macrolet tagbody)) ;TODO: TAGBODY, SYMBOL-MACROLET and MACROLET are tricky to implement, see their CLHS and below.
 	    (error "parsing special form ~S not implemented yet" head))
 	   (t
-	    ;; FIXME: TODO: I have to differentiate between function- and macro-applications. This is because macro arguments are not evaluated, but function arguments are. Currently, a call to defun is parsed like this:
-	    ;;   WALKER> (PARSE-WITH-EMPTY-NAMESPACES '(DEFUN BLA (A B &OPTIONAL C) (LIST A B C)))
-	    ;;   #<APPLICATION-FORM #<FUN NAME:DEFUN FREEP:T {D8D7C31}> #<VAR NAME:BLA FREEP:T {D8D7D69}> #<APPLICATION-FORM #<FUN NAME:A FREEP:T {D8D7E21}> #<VAR NAME:B FREEP:T {D8D7F31}> #<VAR NAME:&OPTIONAL FREEP:T {D8D7FD1}> #<VAR NAME:C FREEP:T {D8D9F59}> {D8D7EC1}> #<APPLICATION-FORM #<FUN NAME:LIST FREEP:T {D8DD001}> #<VAR NAME:A FREEP:T {D8DD121}> #<VAR NAME:B FREEP:T {D8DD1B1}> #<VAR NAME:C FREEP:T {D8DD251}> {D8DD099}> {D8D7CC9}>
-	    ;; But this is hard to post-process since, for example, I would have to recreate the lambda list '(A B &OPTIONAL C) from the parsed representation '#<APPLICATION-FORM #<FUN NAME:A FREEP:T {D8D7E21}> #<VAR NAME:B FREEP:T {D8D7F31}> #<VAR NAME:&OPTIONAL FREEP:T {D8D7FD1}> #<VAR NAME:C FREEP:T {D8D9F59}> {D8D7EC1}>, which doesn't make sense. It could be even worse:
-	    ;;   WALKER> (DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL)
-	    ;;   WALKER> (BLA 1 (2 3))
-	    ;;   (1 2 3 NIL)
-	    ;; Parsing the DEFMACRO fails with an incorrect error: (PARSE-WITH-EMPTY-NAMESPACES '(DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL)), because (IF S) is parsed. So to conclude, I should make a flag MACROP in the definition of FUN, (or maybe make FUN and the new class MAC distinct subtypes of SYM), and if it is found here that FUN-NAME (see below) is looked up as a macro, then not parse the ARG-FORMS at all.
 	    (assert (symbolp head) () "Invalid function application ~S" form)
 	    (let* ((fun-name head)
 		   (arg-forms rest)
@@ -1206,17 +1221,22 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	      (loop do
 		   (when (null arg-forms) (return))
 		   (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function application" arg-forms)
-		   (push (reparse (car arg-forms) current) parsed-arguments)
+		   (push (let ((arg-form (car arg-forms)))
+			   (if (nso-macrop fun) arg-form (reparse arg-form current)))
+			 parsed-arguments)
 		   (setf arg-forms (cdr arg-forms)))
 	      (setf (form-arguments current) (nreverse parsed-arguments))
 	      current))))))))
 
-(defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
-  (parse form (make-empty-lexical-namespace) (make-empty-free-namespace) nil
-	 :customparsep-function customparsep-function
-	 :customparse-function customparse-function
-	 :customparsedeclspecp-function customparsedeclspecp-function
-	 :customparsedeclspec-function customparsedeclspec-function))
+(defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function free-common-lisp-namespace)
+  "If FREE-COMMON-LISP-NAMESPACE is non-NIL, a free namespace created by #'MAKE-DEFAULT-FREE-COMMON-LISP-NAMESPACE is used."
+  (let ((lexical-namespace (make-empty-lexical-namespace))
+	(free-namespace (if free-common-lisp-namespace (make-default-free-common-lisp-namespace) (make-empty-free-namespace))))
+    (parse form lexical-namespace free-namespace nil
+	   :customparsep-function customparsep-function
+	   :customparse-function customparse-function
+	   :customparsedeclspecp-function customparsedeclspecp-function
+	   :customparsedeclspec-function customparsedeclspec-function)))
 
 ;; tests for PARSE
 (defun namespaces-at (form heresymbol)
@@ -1294,7 +1314,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	 (call-fun (form-fun ast))
 	 (call-arguments (form-arguments ast)))
     (assert (eq call-fun (car call-arguments))))
-  (let* ((ast (parse-with-empty-namespaces '(setf (aref a x) x)))
+  (let* ((ast (parse-with-empty-namespaces '(bla (aref a x) x)))
   	 (args (form-arguments ast))
   	 (aref-x (cadr (form-arguments (car args))))
   	 (arg-x (cadr args)))
@@ -1383,24 +1403,24 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 (defun test-load-time-value-form ()
   (declare (optimize (debug 3)))
   (let* ((form '(progn
-		 (setf a 2)
+		 (bla a 2)
 		 (let ((a 7))
-		   (setf a 8)
+		   (bla a 8)
 		   (load-time-value a))))
 	 (ast (parse-with-empty-namespaces form))
 	 (progn-body (form-body ast))
-	 (a-setf1 (car (form-arguments (car progn-body))))
+	 (a-bla1 (car (form-arguments (car progn-body))))
 	 (let-form (cadr progn-body))
 	 (let-body (form-body let-form))
 	 (a-let (binding-sym (car (form-bindings let-form))))
-	 (a-setf2 (car (form-arguments (car let-body))))
+	 (a-bla2 (car (form-arguments (car let-body))))
 	 (a-load-time-value (form-value (cadr let-body))))
-    (assert (nso-freep a-setf1))
+    (assert (nso-freep a-bla1))
     (assert (not (nso-freep a-let)))
-    (assert (not (nso-freep a-setf2)))
+    (assert (not (nso-freep a-bla2)))
     (assert (nso-freep a-load-time-value))
-    (assert (eq a-let a-setf2))
-    ;; TODO: (assert (eq a-setf1 a-load-time-value))
+    (assert (eq a-let a-bla2))
+    (assert (eq a-bla1 a-load-time-value))
     ))
 (test-load-time-value-form)
 
@@ -1412,6 +1432,12 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (symbolp quote-a))
     (assert (eq quote-a 'a))))
 (test-quote-form)
+
+(defun test-macro-application ()
+  ;; Test that differentiating between function- and macro-applications works. Macro arguments must not be evaluated, but function arguments must. Otherwise, parsing a macro-call can fail with an incorrect error: (PARSE-WITH-EMPTY-NAMESPACES '(DEFMACRO BLA (A (IF S)) (PRINT (LIST A IF S)) NIL) :FREE-COMMON-LISP-NAMESPACE NIL), because (IF S) is parsed like an IF-form. Therefore a non-NIL flag MACROP in an instance of FUN, (or maybe a distinction between FUN and a new class MAC as subtypes of SYM), makes that if FUN-NAME is looked up as a macro, then the ARG-FORMS are not parsed at all.
+  (parse-with-empty-namespaces '(defmacro bla (a (if s)) (print (list a if s)) nil)
+			       :free-common-lisp-namespace t))
+(test-macro-application)
 
 ;; TODO:
 ;; TAGBODY, MACROLET, SYMBOL-MACROLET will be tricky to implement and I don't know what properties an implementation has to fulfill:
