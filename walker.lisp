@@ -1395,8 +1395,8 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 (defun test-parent ()
   (declare (optimize (debug 3)))
   (let* ((form '(lambda () (funcall bla)))
-	 (ast (walker:parse-with-empty-namespaces form))
-	 (body (walker:form-body ast)))
+	 (ast (parse-with-empty-namespaces form))
+	 (body (form-body ast)))
     (assert (eq (form-parent (car body)) ast))))
 (test-parent)
 
