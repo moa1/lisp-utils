@@ -96,6 +96,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :declspec-type
    :declspec-funs
    :parse-declaration-in-body
+   :parse-declaration-and-documentation-in-body
    ;; LAMBDA LISTS
    :argument
    :argument-parent
@@ -202,7 +203,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :application-form
    :form-fun
    :form-arguments
-   :body-with-declspecs
+   :format-body
    :parse-and-set-functiondef
    :parse
    :parse-with-empty-namespaces
@@ -468,6 +469,29 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun '(setf a) free-namespace)))
     (assert (not (namespace-boundp 'var '(setf a) free-namespace)))))
+
+(defun parse-declaration-and-documentation-in-body (body lexical-namespace free-namespace parent &key customparsep-function customparse-function)
+  "Parses declarations and documentation in the beginning of BODY.
+Returns three values: the rest of the BODY that does not start with a DECLARE-expression or a documentation string, and a list of DECLSPEC-objects, and a documentation string, or NIL if none is present in BODY.
+Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE."
+  (let ((documentation nil)
+	(declspecs nil))
+    (loop do
+	 (multiple-value-bind (body-rest declspecs1) (parse-declaration-in-body body lexical-namespace free-namespace parent :customparsep-function customparsep-function :customparse-function customparse-function)
+	   (setf declspecs (nconc declspecs declspecs1))
+	   (cond
+	     ((and (consp body) (stringp (car body-rest)))
+	      (if documentation
+		  (error "Two documentation strings ~S and ~S present, but only one allowed" documentation (car body-rest))
+		  (setf documentation (car body-rest)))
+	      (setf body (cdr body-rest)))
+	     (t
+	      (return (values body-rest declspecs documentation))))))))
+
+(let ((lexical-namespace (make-empty-lexical-namespace))
+      (free-namespace (make-empty-free-namespace)))
+  (multiple-value-bind (body declspecs documentation) (parse-declaration-and-documentation-in-body '((declare (type number a)) "doc" (declare (type fixnum a)) 5) lexical-namespace free-namespace nil)
+    (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type) (typep (cadr declspecs) 'declspec-type) (equal documentation "doc")))))
 
 (defmethod print-object ((object declspec-type) stream)
   (print-unreadable-object (object stream :type t :identity nil)
@@ -811,7 +835,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass functiondef (body-form)
   ((parent :initarg :parent :accessor form-parent)
    (llist :initarg :llist :accessor form-llist :type llist)
-   (declspecs :initarg :declspecs :accessor form-declspecs :type list))
+   (declspecs :initarg :declspecs :accessor form-declspecs :type list)
+   (documentation :initarg :documentation :accessor form-documentation :type (or nil string)))
   (:documentation "Used to define a function without name."))
 (defclass block-naming-form () ;Note: objects of this type must never be created, only subtypes of this type.
   ((blo :initarg :blo :accessor form-blo :type blo)))
@@ -873,24 +898,33 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
       (format stream "~S ~S" (binding-sym object) (binding-value object)))))
-(defun body-with-declspecs (object)
-  (if (null (form-declspecs object))
-      (if (= (length (form-body object)) 1)
-	  (car (form-body object))
-	  (form-body object))
-      (cons (cons 'declare (form-declspecs object)) (form-body object))))
+(defun format-body (object declspecsp documentationp)
+  (labels ((rec (list)
+	       (if (null list)
+		   ""
+		   (let ((out (format nil "~S" (car list))))
+		     (loop for form in (cdr list) do
+			  (setf out (concatenate 'string out (format nil " ~S" form))))
+		     out))))
+    (if (and documentationp (form-documentation object))
+	(if (or (null declspecsp) (null (form-declspecs object)))
+	    (rec (cons (form-documentation object) (form-body object)))
+	    (rec (cons (form-documentation object) (cons (cons 'declare (form-declspecs object)) (form-body object)))))
+	(if (or (null declspecsp) (null (form-declspecs object)))
+	    (rec (form-body object))
+	    (rec (cons (cons 'declare (form-declspecs object)) (form-body object)))))))
 (defmethod print-object ((object bindings-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "BINDINGS:~S ~S" (form-bindings object) (body-with-declspecs object))
+	(format stream "BINDINGS:~S ~A" (form-bindings object) (format-body object t nil))
 	(format stream "~S" (form-body object)))))
 (defmethod print-object ((object fun-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
-      (format stream "~S ~S ~S" (binding-sym object) (form-llist object) (body-with-declspecs object)))))
+      (format stream "~S ~S ~A" (binding-sym object) (form-llist object) (format-body object t t)))))
 (defmethod print-object ((object lambda-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-llist object) (body-with-declspecs object))))
+    (format stream "~S ~A" (form-llist object) (format-body object t t))))
 (defmethod print-object ((object block-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~S" (form-blo object) (form-body object))))
@@ -899,7 +933,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S ~S" (form-blo object) (form-value object))))
 (defmethod print-object ((object locally-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S" (body-with-declspecs object))))
+    (format stream "~A" (format-body object t nil))))
 (defmethod print-object ((object the-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~S" (form-type object) (form-value object))))
@@ -966,9 +1000,10 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
       (multiple-value-bind (new-llist lexical-namespace-in-functiondef)
 	  (parse-lambda-list lambda-list lexical-namespace free-namespace current-functiondef #'reparse :allow-macro-lambda-list nil)
 	(setf (form-llist current-functiondef) new-llist)
-	(multiple-value-bind (body parsed-declspecs)
-	    (parse-declaration-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
+	(multiple-value-bind (body parsed-declspecs parsed-documentation)
+	    (parse-declaration-and-documentation-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 	  (setf (form-declspecs current-functiondef) parsed-declspecs)
+	  (setf (form-documentation current-functiondef) parsed-documentation)
 	  (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :lexical-namespace lexical-namespace-in-functiondef))))
 	    (setf (form-body current-functiondef) parsed-body))))
       current-functiondef)))
