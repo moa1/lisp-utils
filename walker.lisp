@@ -58,6 +58,7 @@ It should have as little semantics in it as possible (while still being useful a
 Type declarations are parsed, but the contained types are neither parsed nor interpreted.")
   (:use :cl)
   (:export ;for classes: export the class and _all_ accessors
+   :proper-list-p
    ;; NAMESPACES
    :nso
    :nso-name
@@ -214,6 +215,14 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ))
 
 (in-package :walker)
+
+;; TODO: FIXME: Package WALKER should handle input containing arbitrary nonsense gracefully, except maybe circular lists. TODO: FIXME: CLHS seems to require allowing circular constants. Related are "Issues/iss079_w.htm", which talks about circular constants, "Issues/iss215_w.htm" talks about #'MAKE-LOAD-FORM. I don't know about circular code (which could maybe implemented by a JMP/LONGJMP). I would have to splatter the checks for circular lists in the whole code since the user might call any function with a circular list.
+(defun proper-list-p (list)
+  "Return T if LIST is a proper list, NIL otherwise."
+  ;; TODO: FIXME: check for circularity.
+  (and (listp list)
+       (do ((rest list (cdr rest)))
+	   ((or (null rest) (not (listp rest))) (null rest)))))
 
 ;;;; NAMESPACES
 
@@ -431,6 +440,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 			    (let* ((typespec (car body))
 				   (syms (cdr body)))
 			      ;; will not check TYPESPEC, has to be done in user code.
+			      (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
 			      (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym lexical-namespace free-namespace)))
 				     (parsed-declspec (ecase identifier
 							((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
@@ -439,24 +449,21 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 				     (push parsed-declspec (nso-declspecs sym)))
 				parsed-declspec)))
 			   ((eq identifier 'optimize)
-			    (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
-			    (let ((qualities nil))
-			      (do* ((l body (if (listp (cdr l)) (cdr l) (error "Dotted list in ~S declaration: ~S" identifier expr)))
-				    (body (car l) (car l)))
-				   ((null l))
-				(setf qualities
-				      (if (consp body)
-					  (let ((quality (car body))
-						(rest (cdr body)))
-					    (assert (and (symbolp quality) (consp rest) (find (car rest) '(0 1 2 3)) (null (cdr rest))) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
-					    (acons quality (car rest) qualities))
-					  (let ((quality body))
-					    (assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
-					    (acons quality nil qualities)))))
-			      (make-instance 'declspec-optimize :parent parent :qualities (nreverse qualities))))
+			    (assert (proper-list-p body) () "~S declaration is not a proper list: ~S" identifier expr)
+			    (let ((qualities (loop for quality-value in body collect
+						  (if (consp quality-value)
+						      (let ((quality (car quality-value))
+							    (rest (cdr quality-value)))
+							(assert (and (symbolp quality) (consp rest) (find (car rest) '(0 1 2 3)) (null (cdr rest))) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+							(cons quality (car rest)))
+						      (let ((quality quality-value))
+							(assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+							(cons quality nil))))))
+			      (make-instance 'declspec-optimize :parent parent :qualities qualities)))
 			   ((find identifier '(ignore ignorable))
 			    (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
 			    (let* ((syms body))
+			      (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
 			      (let* ((parsed-syms (loop for sym in syms collect
 						       (cond
 							 ((symbolp sym)
@@ -479,8 +486,10 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 	       (cond
 		 ((and (listp head) (eq (car head) 'declare))
 		  (let* ((declspecs (cdr head)))
+		    (assert (proper-list-p declspecs) () "Not a proper list: ~S" declspecs)
 		    (parse-declare rest (parse-declspecs declspecs collected-declspecs))))
 		 (t (values body (nreverse collected-declspecs)))))))
+    (assert (proper-list-p body) () "Not a proper list: ~S" body)
     (parse-declare body nil)))
 
 (let ((lexical-namespace (make-empty-lexical-namespace))
@@ -1068,13 +1077,14 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	    (parse-declaration-and-documentation-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 	  (setf (form-declspecs current-functiondef) parsed-declspecs)
 	  (setf (form-documentation current-functiondef) parsed-documentation)
+	  (assert (proper-list-p body) () "Not a proper list: ~S" body)
 	  (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :lexical-namespace lexical-namespace-in-functiondef))))
 	    (setf (form-body current-functiondef) parsed-body))))
       current-functiondef)))
 
 ;; TODO: maybe rename to PARSE-FORM.
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
-;; Must handle arbitrary lists (also TODO: FIXME: circular lists).
+;; TODO: FIXME: Must handle arbitrary nonsense input gracefully. (see comment near #'PROPER-LIST-P.)
 (defun parse (form lexical-namespace free-namespace parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   (declare (optimize (debug 3)))
   (labels ((reparse (form parent &key (lexical-namespace lexical-namespace))
@@ -1082,7 +1092,10 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		    :customparsep-function customparsep-function
 		    :customparse-function customparse-function
 		    :customparsedeclspecp-function customparsedeclspecp-function
-		    :customparsedeclspec-function customparsedeclspec-function)))
+		    :customparsedeclspec-function customparsedeclspec-function))
+	   (parse-body (body current &key (lexical-namespace lexical-namespace))
+	     (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
+	     (loop for form in body collect (reparse form current :lexical-namespace lexical-namespace))))
     (cond
       ((and (not (null customparsep-function)) (funcall customparsep-function form lexical-namespace free-namespace parent))
        (funcall customparse-function form lexical-namespace free-namespace parent))
@@ -1109,7 +1122,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	   ((eq head 'progn)
 	    (let* ((current (make-instance 'progn-form :parent parent :body nil))
 		   (body rest)
-		   (parsed-body (loop for form in body collect (reparse form current))))
+		   (parsed-body (parse-body body current)))
 	      (setf (form-body current) parsed-body)
 	      current))
 	   ;; TODO: FIXME: maybe I have to handle something specially in FLET and LABELS. The CLHS on FLET and LABELS says: "Also, within the scope of flet, global setf expander definitions of the function-name defined by flet do not apply. Note that this applies to (defsetf f ...), not (defmethod (setf f) ...)." What does that mean?
@@ -1119,6 +1132,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (body (cdr rest))
 		   (form-type (ecase head ((let) 'let-form) ((let*) 'let*-form) ((flet) 'flet-form) ((labels) 'labels-form)))
 		   (current (make-instance form-type :parent parent :body nil))) ;:BINDINGS and :DECLSPECS are defined below
+	      (assert (proper-list-p definitions) () "Not a proper list: ~S" definitions)
 	      (labels ((make-var-binding (def lexical-namespace)
 			 (assert (and (consp def) (symbolp (car def)) (not (null (car def))) (not (null (cdr def))) (null (cddr def))) () "cannot parse definition in ~S-form:~%~S" head def)
 			 (let* ((name (car def))
@@ -1163,10 +1177,8 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		      (parse-declaration-in-body body new-lexical-namespace free-namespace current :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 		    (setf (form-bindings current) parsed-bindings)
 		    (setf (form-declspecs current) parsed-declspecs)
-		    (let ((parsed-body (loop for form in body collect
-					    (reparse form current :lexical-namespace new-lexical-namespace))))
-		      (setf (form-body current) parsed-body)
-		      current))))))
+		    (setf (form-body current) (parse-body body current :lexical-namespace new-lexical-namespace))
+		    current)))))
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
 		   (current (make-instance 'lambda-form)))
@@ -1178,8 +1190,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (body (cdr rest))
 		   (blo (make-instance 'blo :name name :freep nil))
 		   (current (make-instance 'block-form :parent parent :blo blo))
-		   (parsed-body (loop for form in body collect
-				     (reparse form current :lexical-namespace (augment-lexical-namespace blo lexical-namespace)))))
+		   (parsed-body (parse-body body current :lexical-namespace (augment-lexical-namespace blo lexical-namespace))))
 	      (setf (nso-definition blo) current)
 	      (setf (form-body current) parsed-body)
 	      current))
@@ -1199,10 +1210,8 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	      (multiple-value-bind (body parsed-declspecs)
 		  (parse-declaration-in-body body lexical-namespace free-namespace current :customparsep-function customparsedeclspecp-function :customparse-function customparsedeclspec-function)
 		(setf (form-declspecs current) parsed-declspecs)
-		(let ((parsed-body (loop for form in body collect
-					(reparse form current))))
-		  (setf (form-body current) parsed-body)
-		  current))))
+		(setf (form-body current) (parse-body body current)))
+	      current))
 	   ((eq head 'the)
 	    (assert (and (consp rest) (or (symbolp (car rest)) (consp (car rest))) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse THE-form ~S" form)
 	    (let* ((value-type-form (car rest))
@@ -1245,7 +1254,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (body (cdr rest))
 		   (current (make-instance 'catch-form :parent parent))
 		   (parsed-tag (reparse tag current))
-		   (parsed-body (loop for form in body collect (reparse form current))))
+		   (parsed-body (parse-body body current)))
 	      (setf (form-tag current) parsed-tag (form-body current) parsed-body)
 	      current))
 	   ((eq head 'throw)
@@ -1262,7 +1271,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	    (let* ((situations-form (car rest))
 		   (body (cdr rest))
 		   (current (make-instance 'eval-when-form :parent parent :situations situations-form))
-		   (parsed-body (loop for form in body collect (reparse form current))))
+		   (parsed-body (parse-body body current)))
 	      (setf (form-body current) parsed-body)
 	      current))
 	   ((eq head 'load-time-value)
@@ -1284,7 +1293,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (body (cdr rest))
 		   (current (make-instance (ecase head ((multiple-value-call) 'multiple-value-call-form) ((multiple-value-prog1) 'multiple-value-prog1-form)) :parent parent))
 		   (parsed-function (reparse function-form current))
-		   (parsed-body (loop for form in body collect (reparse form current))))
+		   (parsed-body (parse-body body current)))
 	      (setf (form-function current) parsed-function (form-body current) parsed-body)
 	      current))
 	   ((eq head 'progv)
@@ -1296,7 +1305,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (current (make-instance 'progv-form :parent parent))
 		   (parsed-symbols (reparse symbols-form current))
 		   (parsed-values (reparse values-form current))
-		   (parsed-body (loop for form in body collect (reparse form current))))
+		   (parsed-body (parse-body body current)))
 	      (setf (form-symbols current) parsed-symbols (form-values current) parsed-values (form-body current) parsed-body)
 	      current))
 	   ((eq head 'unwind-protect)
@@ -1305,7 +1314,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (cleanup-body (cdr rest))
 		   (current (make-instance 'unwind-protect-form :parent parent))
 		   (parsed-protected (reparse protected-form current))
-		   (parsed-cleanup-body (loop for form in cleanup-body collect (reparse form current))))
+		   (parsed-cleanup-body (parse-body cleanup-body current)))
 	      (setf (form-protected current) parsed-protected (form-body current) parsed-cleanup-body)
 	      current))
 	   ((find head '(go macrolet symbol-macrolet tagbody)) ;TODO: TAGBODY, SYMBOL-MACROLET and MACROLET are tricky to implement, see their CLHS and below.
