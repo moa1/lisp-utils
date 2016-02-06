@@ -215,7 +215,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
 ;;;; NAMESPACES
 
 (defclass nso ()
-  ((name :initarg :name :accessor nso-name :type (or symbol list)) ;LIST is allowed for functions named (SETF NAME)
+  ((name :initarg :name :accessor nso-name :type (or symbol list) :documentation "LIST is allowed for functions named (SETF NAME)")
    (freep :initarg :freep :accessor nso-freep :type boolean
 	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace."))
   (:documentation "a namespace-object (NSO) containing a name and information whether it is free or bound"))
@@ -509,32 +509,32 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass required-argument (argument)
   ())
 (defclass optional-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null generalform)) ;NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)
-   (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var)))) ;NIL means not present
+  ((init :initarg :init :accessor argument-init :type (or null generalform) :documentation "NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)")
+   (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var) :documentation "NIL means not present")))
 (defclass key-argument (optional-argument)
-  ((keywordp :initarg :keywordp :accessor argument-keywordp :type boolean) ;NIL means not present
-   (keyword :initarg :keyword :accessor argument-keyword :type symbol))) ;has no meaning if KEYWORDP==NIL
+  ((keywordp :initarg :keywordp :accessor argument-keywordp :type boolean :documentation "NIL means not present")
+   (keyword :initarg :keyword :accessor argument-keyword :type symbol :documentation "has no meaning if KEYWORDP==NIL")))
 (defclass aux-argument (argument)
   ((init :initarg :init :accessor argument-init :type (or null generalform))))
 (defclass llist ()
   ((parent :initarg :parent :accessor form-parent)))
 (defclass ordinary-llist (llist)
-  ((required :initarg :required :accessor llist-required :type list) ;list, with each element of type REQUIRED-ARGUMENT.
-   (optional :initarg :optional :accessor llist-optional :type list) ;list, with each element of type OPTIONAL-ARGUMENT.
+  ((required :initarg :required :accessor llist-required :type list :documentation "list, with each element of type REQUIRED-ARGUMENT")
+   (optional :initarg :optional :accessor llist-optional :type list :documentation "list, with each element of type OPTIONAL-ARGUMENT")
    (rest :initarg :rest :accessor llist-rest :type (or null argument))
-   (key :initarg :key :accessor llist-key :type list) ;list, with each element of type KEY-ARGUMENT.
+   (key :initarg :key :accessor llist-key :type list :documentation "list, with each element of type KEY-ARGUMENT")
    (allow-other-keys :initarg :allow-other-keys :accessor llist-allow-other-keys :type boolean)
-   (aux :initarg :aux :accessor llist-aux :type list))) ;list, with each element of type AUX-ARGUMENT.
+   (aux :initarg :aux :accessor llist-aux :type list :documentation "list, with each element of type AUX-ARGUMENT")))
 (defclass macro-llist (llist)
   ((whole :initarg :whole :accessor llist-whole :type (or null argument llist))
    (environment :initarg :environment :accessor llist-environment :type (or null argument))
-   (required :initarg :required :accessor llist-required :type list) ;list, with each element of type ARGUMENT, or LLIST (for macro-lambda-lists).
-   (optional :initarg :optional :accessor llist-optional :type list) ;list, with each element of type OPTIONAL-ARGUMENT, or LLIST (for macro-lambda-lists).
+   (required :initarg :required :accessor llist-required :type list :documentation "list, with each element of type ARGUMENT, or LLIST (for macro-lambda-lists)")
+   (optional :initarg :optional :accessor llist-optional :type list :documentation "list, with each element of type OPTIONAL-ARGUMENT, or LLIST (for macro-lambda-lists)")
    (rest :initarg :rest :accessor llist-rest :type (or null argument llist))
    (body :initarg :body :accessor llist-body :type (or null argument llist))
-   (key :initarg :key :accessor llist-key :type list) ;list, with each element of type KEY-ARGUMENT, or LLIST (for macro-lambda-lists).
+   (key :initarg :key :accessor llist-key :type list :documentation "list, with each element of type KEY-ARGUMENT, or LLIST (for macro-lambda-lists)")
    (allow-other-keys :initarg :allow-other-keys :accessor llist-allow-other-keys :type boolean)
-   (aux :initarg :aux :accessor llist-aux :type list))) ;list, with each element of type AUX-ARGUMENT.
+   (aux :initarg :aux :accessor llist-aux :type list :documentation "list, with each element of type AUX-ARGUMENT")))
 
 (defun parse-required-argument (varname)
   ;; probably not TODO (because whether a variable is constant is semantic, not syntax, and therefore not to be checked in a parser): add checking for "constant variable" in: CLHS 3.4.1 Ordinary Lambda Lists says: A var or supplied-p-parameter must be a symbol that is not the name of a constant variable.
@@ -814,20 +814,22 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass form ()
   ((parent :initarg :parent :accessor form-parent))
   (:documentation "A cons form as described in 'CLHS 3.1.2.1.2 Conses as Forms'"))
-(defclass body-form () ;Note: objects of this type must never be created, only subtypes of this type.
-  ((body :initarg :body :accessor form-body :type list))) ;list of GENERALFORMs
+(defclass body-form ()
+  ((body :initarg :body :accessor form-body :type list :documentation "list of GENERALFORMs"))
+  (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
 (defclass special-form (form)
   ())
 (defclass progn-form (special-form body-form)
   ())
 (defclass binding ()
-  ((parent :initarg :parent :accessor binding-parent) ;e.g. the LET-form in which it is defined.
+  ((parent :initarg :parent :accessor binding-parent :documentation "the LET-form in which the binding is defined.")
    (sym :initarg :sym :accessor binding-sym :type sym)))
 (defclass var-binding (binding)
   ((value :initarg :value :accessor binding-value :documentation "The form initializing the variable." :type generalform)))
-(defclass bindings-form ()  ;Note: objects of this type must never be created, only subtypes of this type.
-  ((bindings :initarg :bindings :accessor form-bindings :type list) ;list of VAR-BINDINGs, or FUN-BINDINGs
-   (declspecs :initarg :declspecs :accessor form-declspecs :type list))) ;list of DECLSPECs
+(defclass bindings-form ()
+  ((bindings :initarg :bindings :accessor form-bindings :type list :documentation "list of VAR-BINDINGs, or FUN-BINDINGs")
+   (declspecs :initarg :declspecs :accessor form-declspecs :type list :documentation "list of DECLSPECs"))
+  (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
 (defclass let-form (special-form body-form bindings-form)
   ())
 (defclass let*-form (special-form body-form bindings-form)
@@ -838,8 +840,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
    (declspecs :initarg :declspecs :accessor form-declspecs :type list)
    (documentation :initarg :documentation :accessor form-documentation :type (or nil string)))
   (:documentation "Used to define a function without name."))
-(defclass block-naming-form () ;Note: objects of this type must never be created, only subtypes of this type.
-  ((blo :initarg :blo :accessor form-blo :type blo)))
+(defclass block-naming-form ()
+  ((blo :initarg :blo :accessor form-blo :type blo))
+  (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
 (defclass block-form (special-form body-form block-naming-form)
   ())
 (defclass fun-binding (binding functiondef block-naming-form)
@@ -863,8 +866,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
    (then :initarg :then :accessor form-then :type generalform)
    (else :initarg :else :accessor form-else :type (or null generalform))))
 (defclass setq-form (special-form)
-  ((vars :initarg :vars :accessor form-vars :type list) ;list of VARs
-   (values :initarg :values :accessor form-values :type list))) ;list of GENERALFORMs
+  ((vars :initarg :vars :accessor form-vars :type list :documentation "list of VARs")
+   (values :initarg :values :accessor form-values :type list :documentation "list of GENERALFORMs")))
 (defclass catch-form (special-form body-form)
   ((tag :initarg :tag :accessor form-tag :type generalform)))
 (defclass throw-form (special-form)
@@ -888,7 +891,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((protected :initarg :protected :accessor form-protected :type generalform)))
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
-   (arguments :initarg :arguments :accessor form-arguments :type list))) ;list of GENERALFORMs
+   (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of GENERALFORMs")))
 
 ;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
 (defmethod print-object ((object progn-form) stream)
