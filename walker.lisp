@@ -95,6 +95,9 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :declspec-ftype
    :declspec-type
    :declspec-funs
+   :declspec-optimize :declspec-qualities
+   :declspec-ignore :declspec-syms
+   :declspec-ignorable :declspec-syms
    :parse-declaration-in-body
    :parse-declaration-and-documentation-in-body
    ;; LAMBDA LISTS
@@ -396,6 +399,12 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
 (defclass declspec-ftype (declspec)
   ((type :initarg :type :accessor declspec-type)
    (funs :initarg :funs :accessor declspec-funs :type list)))
+(defclass declspec-optimize (declspec)
+  ((qualities :initform nil :initarg :qualities :accessor declspec-qualities :type alist :documentation "An ALIST with the optimize quality as CAR and the optimize value, which must be one of NIL,0,1,2,3, as CDR, where NIL means that no value was given")))
+(defclass declspec-ignore (declspec)
+  ((syms :initarg :syms :accessor declspec-syms :type list :documentation "list of VARs and FUNs")))
+(defclass declspec-ignorable (declspec)
+  ((syms :initarg :syms :accessor declspec-syms :type list :documentation "list of VARs and FUNs")))
 
 (defun parse-declaration-in-body (body lexical-namespace free-namespace parent &key customparsep-function customparse-function)
   "Parses declarations in the beginning of BODY.
@@ -429,7 +438,38 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 				(loop for sym in parsed-syms do
 				     (push parsed-declspec (nso-declspecs sym)))
 				parsed-declspec)))
-			   ((find identifier '(dynamic-extent ignore optimize inline special ignorable notinline))
+			   ((eq identifier 'optimize)
+			    (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+			    (let ((qualities nil))
+			      (do* ((l body (if (listp (cdr l)) (cdr l) (error "Dotted list in ~S declaration: ~S" identifier expr)))
+				    (body (car l) (car l)))
+				   ((null l))
+				(setf qualities
+				      (if (consp body)
+					  (let ((quality (car body))
+						(rest (cdr body)))
+					    (assert (and (symbolp quality) (consp rest) (find (car rest) '(0 1 2 3)) (null (cdr rest))) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+					    (acons quality (car rest) qualities))
+					  (let ((quality body))
+					    (assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+					    (acons quality nil qualities)))))
+			      (make-instance 'declspec-optimize :parent parent :qualities (nreverse qualities))))
+			   ((find identifier '(ignore ignorable))
+			    (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+			    (let* ((syms body))
+			      (let* ((parsed-syms (loop for sym in syms collect
+						       (cond
+							 ((symbolp sym)
+							  (namespace-lookup/create 'var sym lexical-namespace free-namespace))
+							 ((and (consp sym) (eq (car sym) 'function) (valid-function-name-p (cadr sym)))
+							  (namespace-lookup/create 'fun (cadr sym) lexical-namespace free-namespace))
+							 (t
+							  (error "Symbol in ~S declaration must be either a SYMBOL or a function name, but is ~S" identifier sym)))))
+				     (parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable)) :parent parent :syms parsed-syms)))
+				(loop for sym in parsed-syms do
+				     (push parsed-declspec (nso-declspecs sym)))
+				parsed-declspec)))
+			   ((find identifier '(dynamic-extent inline special notinline))
 			    (error "declaration identifier ~A not implemented yet" identifier))
 			   (t (error "Unknown declaration specifier ~S" expr)))))
 		    (parse-declspecs (cdr declspecs) (cons parsed-declspec collected-declspecs)))))))
@@ -469,6 +509,18 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun '(setf a) free-namespace)))
     (assert (not (namespace-boundp 'var '(setf a) free-namespace)))))
+(let ((lexical-namespace (make-empty-lexical-namespace))
+      (free-namespace (make-empty-free-namespace)))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (optimize (debug 3) speed)) 5) lexical-namespace free-namespace nil)
+    (assert (equal body '(5)))
+    (assert (let ((d (car declspecs))) (and (typep d 'declspec-optimize) (equal (declspec-qualities d) '((debug . 3) (speed . nil))))))))
+(let ((lexical-namespace (make-empty-lexical-namespace))
+      (free-namespace (make-empty-free-namespace)))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ignore a (function b))) 5) lexical-namespace free-namespace nil)
+    (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ignore)))
+    (assert (let ((syms (declspec-syms (car declspecs)))) (typep (car syms) 'var) (typep (cadr syms) 'fun)))
+    (assert (eq (car (declspec-syms (car declspecs))) (namespace-lookup 'var 'a free-namespace)))
+    (assert (eq (cadr (declspec-syms (car declspecs))) (namespace-lookup 'fun 'b free-namespace)))))
 
 (defun parse-declaration-and-documentation-in-body (body lexical-namespace free-namespace parent &key customparsep-function customparse-function)
   "Parses declarations and documentation in the beginning of BODY.
@@ -498,7 +550,16 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
     (format stream "~S" (cons 'type (cons (declspec-type object) (declspec-vars object))))))
 (defmethod print-object ((object declspec-ftype) stream)
   (print-unreadable-object (object stream :type t :identity nil)
-    (format stream "~S" (cons 'ftype (cons (declspec-type object) (declspec-vars object))))))
+    (format stream "~S" (cons 'ftype (cons (declspec-type object) (declspec-funs object))))))
+(defmethod print-object ((object declspec-optimize) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~S" (cons 'optimize (mapcar (lambda (acons) (let ((quality (car acons)) (value (cdr acons))) (if (null value) quality (list quality value)))) (declspec-qualities object))))))
+(defmethod print-object ((object declspec-ignore) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~S" (cons 'ignore (declspec-syms object)))))
+(defmethod print-object ((object declspec-ignorable) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~S" (cons 'ignorable (declspec-syms object)))))
 
 ;;;; LAMBDA LISTS
 ;; see CLHS 3.4 Lambda Lists
