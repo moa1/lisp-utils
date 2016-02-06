@@ -1129,7 +1129,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	      (setf (form-value current) parsed-value)
 	      current))
 	   ((eq head 'locally)
-	    (assert (and (consp rest) (consp (car rest)) (consp (cdr rest))) () "Cannot parse LOCALLY-form ~S" form)
+	    (assert (and (consp rest) (consp (car rest))) () "Cannot parse LOCALLY-form ~S" form)
 	    (let ((body rest)
 		  (current (make-instance 'locally-form :parent parent)))
 	      (multiple-value-bind (body parsed-declspecs)
