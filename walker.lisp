@@ -207,6 +207,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :application-form
    :form-fun
    :form-arguments
+   :macroapplication-form :form-lexicalnamespace :form-freenamespace
    :format-body
    :parse-and-set-functiondef
    :parse
@@ -313,6 +314,7 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
 (defgeneric namespace-lookup (symbol-type symbol namespace)
   (:documentation "Look up SYMBOL in NAMESPACE in the slot SYMBOL-TYPE and return it. Signal an error if SYMBOL is not bound."))
 (defmethod namespace-lookup (symbol-type symbol (namespace namespace))
+  (assert (slot-exists-p namespace symbol-type) () "NSO-type ~S not present in ~S~%(Maybe ~S needs to be in package WALKER?)" symbol-type namespace symbol-type)
   (let* ((alist (slot-value namespace symbol-type))
 	 (cons (assoc symbol alist)))
     (assert (not (null cons)) () "SYMBOL ~A with NSO-type ~S not bound in ~S" symbol symbol-type namespace)
@@ -962,6 +964,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
    (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of GENERALFORMs")))
+(defclass macroapplication-form (application-form)
+  ((lexicalnamespace :initarg :lexicalnamespace :accessor form-lexicalnamespace :type lexicalnamespace :documentation "The lexical namespace at the macro application form")
+   (freenamespace :initarg :freenamespace :accessor form-freenamespace :type freenamespace :documentation "The free namespace at the macro application form")))
 
 ;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
 (defmethod print-object ((object progn-form) stream)
@@ -973,12 +978,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
       (format stream "~S ~S" (binding-sym object) (binding-value object)))))
 (defun format-body (object declspecsp documentationp)
   (labels ((rec (list)
-	       (if (null list)
-		   ""
-		   (let ((out (format nil "~S" (car list))))
-		     (loop for form in (cdr list) do
-			  (setf out (concatenate 'string out (format nil " ~S" form))))
-		     out))))
+	     (if (null list)
+		 ""
+		 (let ((out (format nil "~S" (car list))))
+		   (loop for form in (cdr list) do
+			(setf out (concatenate 'string out (format nil " ~S" form))))
+		   out))))
     (if (and documentationp (form-documentation object))
 	(if (or (null declspecsp) (null (form-declspecs object)))
 	    (rec (cons (form-documentation object) (form-body object)))
@@ -1053,6 +1058,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S" (form-fun object))
     (loop for arg in (form-arguments object) do
 	 (format stream " ~S" arg))))
+(defmethod print-object ((object macroapplication-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (form-fun object))
+    (loop for arg in (form-arguments object) do
+	 (format stream " ~S" arg))
+    (format stream " ~S ~S" (form-lexicalnamespace object) (form-freenamespace object))))
 
 (defun parse-and-set-functiondef (form lexical-namespace free-namespace current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
@@ -1324,13 +1335,16 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	    (let* ((fun-name head)
 		   (arg-forms rest)
 		   (fun (namespace-lookup/create 'fun fun-name lexical-namespace free-namespace))
-		   (current (make-instance 'application-form :parent parent :fun fun))
+		   (macrop (nso-macrop fun))
+		   (current (if macrop
+				(make-instance 'macroapplication-form :parent parent :fun fun :lexicalnamespace lexical-namespace :freenamespace free-namespace)
+				(make-instance 'application-form :parent parent :fun fun)))
 		   (parsed-arguments nil))
 	      (loop do
 		   (when (null arg-forms) (return))
 		   (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function application" arg-forms)
 		   (push (let ((arg-form (car arg-forms)))
-			   (if (nso-macrop fun) arg-form (reparse arg-form current)))
+			   (if macrop arg-form (reparse arg-form current)))
 			 parsed-arguments)
 		   (setf arg-forms (cdr arg-forms)))
 	      (setf (form-arguments current) (nreverse parsed-arguments))
