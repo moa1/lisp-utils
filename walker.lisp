@@ -235,7 +235,9 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
 
 (defmethod print-object ((object namespace) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "VARs:~S FUNs:~S BLOs:~S" (namespace-var object) (namespace-fun object) (namespace-blo object))))
+    (if *print-detailed-walker-objects*
+	(format stream "VARs:~S FUNs:~S BLOs:~S" (namespace-var object) (namespace-fun object) (namespace-blo object))
+	(format stream "number of VARs:~S number of FUNs:~S number of BLOs:~S" (length (namespace-var object)) (length (namespace-fun object)) (length (namespace-blo object))))))
 
 (defgeneric namespace-boundp (symbol-type symbol namespace)
   (:documentation "Return non-NIL if SYMBOL is bound in NAMESPACE in the slot SYMBOL-TYPE, NIL otherwise."))
@@ -906,6 +908,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
    (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of GENERALFORMs")))
+;; Probably FREENAMESPACE should be a slot in MACROAPPLICATION-FORM, since CLHS says that the lexical environment is saved, but nothing about the free environment: CLHS Glossary "environment parameter n. A parameter in a defining form f for which there is no corresponding argument; instead, this parameter receives as its value an environment object which corresponds to the lexical environment in which the defining form f appeared."
 (defclass macroapplication-form (application-form)
   ((lexicalnamespace :initarg :lexicalnamespace :accessor form-lexicalnamespace :type lexicalnamespace :documentation "The lexical namespace at the macro application form")
    (freenamespace :initarg :freenamespace :accessor form-freenamespace :type freenamespace :documentation "The free namespace at the macro application form")))
@@ -1005,7 +1008,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S" (form-fun object))
     (loop for arg in (form-arguments object) do
 	 (format stream " ~S" arg))
-    (format stream " ~S ~S" (form-lexicalnamespace object) (form-freenamespace object))))
+    (format stream " ~S" (form-lexicalnamespace object))
+    ;; TODO: FIXME: the following should not override user-settings: maybe add an additional setting *PRINT-DETAILED-WALKER-OBJECTS*==:DEFAULT?
+    (let ((*print-detailed-walker-objects* nil))
+      (format stream " ~S" (form-freenamespace object)))))
 
 (defun parse-and-set-functiondef (form lexical-namespace free-namespace current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
