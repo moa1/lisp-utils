@@ -140,6 +140,9 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :unwind-protect-form :form-protected
    :application-form :form-fun :form-arguments
    :macroapplication-form :form-lexicalnamespace :form-freenamespace
+   :symbol-macrolet-form
+   :macrolet-form
+   ;; END OF FORMs
    :format-body
    :parse-and-set-functiondef
    :parse
@@ -169,15 +172,15 @@ Type declarations are parsed, but the contained types are neither parsed nor int
 	       :documentation "the parsed object (of type (OR BINDING LLIST)) it is defined in, NIL if not known")
    (declspecs :initarg :declspecs :accessor nso-declspecs :type list
 	      :documentation "a list of DECLSPECs that apply to this symbol")
-   )
+   (macrop :initform nil :initarg :macrop :accessor nso-macrop :type boolean
+	   :documentation "NIL for variables and functions, non-NIL for symbol macros and macros"))
   (:documentation "A symbol referring to a variable, function or macro.
 Note that symbols are always parsed in a lexical manner, regardless of whether the actual variable this symbol is referring to may be a lexical or special variable. For example, the symbols *A* in the form (LET ((*A* 1)) *A*) may refer to a lexical or special variable."))
 (defclass var (sym)
   ()
-  (:documentation "The symbol of a variable"))
+  (:documentation "The symbol of a variable or symbol macro"))
 (defclass fun (sym)
-  ((macrop :initform nil :initarg :macrop :accessor nso-macrop :type boolean
-	   :documentation "NIL for functions, non-NIL for macros"))
+  ()
   (:documentation "The symbol of a function or macro"))
 (defclass blo (nso)
   ((definition :initarg :definition :accessor nso-definition
@@ -189,11 +192,7 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 (defmethod print-object ((object sym) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(cond
-	  ((typep object 'fun)
-	   (format stream "NAME:~S FREEP:~S MACROP:~S" (nso-name object) (nso-freep object) (nso-macrop object)))
-	  (t
-	   (format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))))
+	(format stream "NAME:~S FREEP:~S MACROP:~S" (nso-name object) (nso-freep object) (nso-macrop object))
 	(format stream "NAME:~S" (nso-name object)))))
 (defmethod print-object ((object blo) stream)
   (print-unreadable-object (object stream :type t :identity t)
@@ -202,19 +201,24 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 	(format stream "NAME:~S" (nso-name object)))))
 
 (defun valid-function-name-p (name)
-  "Checks whether NAME is naming a function, i.e. is either of the form NAME or (SETF NAME).
-In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the NAME. Returns NIL if FORM is not a function form."
-  (if (symbolp name)
-      (values 'fun name)
-      (when (and (consp name) (eq (car name) 'setf) (consp (cdr name)) (null (cddr name)))
-	(let ((name (cadr name)))
-	  (values 'setf-fun name)))))
+  "Checks whether NAME is naming a function, i.e. is either of the form SYMBOL or (SETF SYMBOL). In those cases, return as first value 'FUN or 'SETF-FUN, and as second value NAME.
+Returns NIL if NAME is not a function name.
+Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list (setf symbol) that is the name of a function in that environment.\""
+  (cond
+    ((symbolp name)
+     (values 'fun name))
+    ((and (consp name) (eq (car name) 'setf) (consp (cdr name)) (symbolp (cadr name)) (null (cddr name)))
+     (values 'setf-fun name))
+    (t
+     nil)))
 
-(assert (equal (multiple-value-list (valid-function-name-p nil)) '(FUN NIL)))
-(assert (equal (multiple-value-list (valid-function-name-p t)) '(FUN T)))
-(assert (equal (multiple-value-list (valid-function-name-p 'a)) '(FUN A)))
-(assert (equal (multiple-value-list (valid-function-name-p '(setf a))) '(SETF-FUN A)))
+(assert (equal (multiple-value-list (valid-function-name-p nil)) '(fun nil)))
+(assert (equal (multiple-value-list (valid-function-name-p t)) '(fun t)))
+(assert (equal (multiple-value-list (valid-function-name-p 'a)) '(fun a)))
+(assert (equal (multiple-value-list (valid-function-name-p '(setf a))) '(setf-fun (setf a))))
+(assert (null (valid-function-name-p '5)))
 (assert (null (valid-function-name-p '(setf a b))))
+(assert (null (valid-function-name-p '(setf 5))))
 
 ;; The three Lisp namespaces (VARIABLES FUNCTIONS BLOCKS) are encapsulated in a class NAMESPACE. The LEXICAL-NAMESPACE-object and the FREE-NAMESPACE-object are both passed to the PARSE*-functions. Instances of LEXICAL-NAMESPACE and FREE-NAMESPACE are passed to the custom parser functions so that the user can derive a more specialized class from LEXICAL-NAMESPACE and FREE-NAMESPACE and add additional namespaces (in additional slots), and access these slots in the custom parser functions. For the LEXICAL-NAMESPACE, the slots VARIABLES FUNCTIONS BLOCKS are implemented as ALISTS like before. For every augmentation (e.g. with a FUN-object) to an instance of the class LEXICAL-NAMESPACE, a new instance of the class LEXICAL-NAMESPACE is created, with the respective slot (e.g. slot FUN) updated to the augmented ALIST. In addition, there is a FREE-NAMESPACE, which contains the slots VARIABLES FUNCTIONS BLOCKS, which are ALISTS. If a free namespace-object should be augmented, then the corresponding slot in the FREE-NAMESPACE object is modified (but no new FREE-NAMESPACE object created). This way, 1. the LEXICAL-NAMESPACE-object that is passed to PARSE*-functions (like PARSE-DECLARATION-IN-BODY) and augmented there can be passed to other PARSE*-functions there and augmented there and so on, and augmented lexical NSO-objects are forgotten automatically when the other PARSE*-functions return without returning their newly created LEXICAL-NAMESPACE-object, but 2. the FREE-NAMESPACE-object passed to the PARSE*-functions is always the same object and thus augmentations to its slots are reflected in all PARSE*-functions.
 
@@ -243,14 +247,14 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
   (:documentation "Return non-NIL if SYMBOL is bound in NAMESPACE in the slot SYMBOL-TYPE, NIL otherwise."))
 (defmethod namespace-boundp (symbol-type symbol (namespace namespace))
   (let* ((alist (slot-value namespace symbol-type)))
-    (not (null (assoc symbol alist)))))
+    (not (null (assoc symbol alist :test #'equal))))) ;#'EQUAL for functions named (SETF SYMBOL).
 
 (defgeneric namespace-lookup (symbol-type symbol namespace)
   (:documentation "Look up SYMBOL in NAMESPACE in the slot SYMBOL-TYPE and return it. Signal an error if SYMBOL is not bound."))
 (defmethod namespace-lookup (symbol-type symbol (namespace namespace))
   (assert (slot-exists-p namespace symbol-type) () "NSO-type ~S not present in ~S~%(Maybe ~S needs to be in package WALKER?)" symbol-type namespace symbol-type)
   (let* ((alist (slot-value namespace symbol-type))
-	 (cons (assoc symbol alist)))
+	 (cons (assoc symbol alist :test #'equal))) ;#'EQUAL for functions named (SETF SYMBOL).
     (assert (not (null cons)) () "SYMBOL ~A with NSO-type ~S not bound in ~S" symbol symbol-type namespace)
     (cdr cons)))
 
@@ -295,10 +299,8 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
   (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'fun)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
-  (multiple-value-bind (fun-type name) (valid-function-name-p symbol)
-    (declare (ignore name))
-    (assert (not (null fun-type)) () "Invalid function name ~S" symbol)
-    (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil)))) ;do not bind :DEFINITION
+  (assert (not (null (valid-function-name-p symbol))) () "Invalid function name ~S" symbol)
+  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'blo)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
   (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t))) ;do not bind :DEFINITION
@@ -403,6 +405,7 @@ In those cases, return as first value 'FUN or 'SETF-FUN, and as second value the
 			     (loop for sym in parsed-syms do
 				  (push parsed-declspec (nso-declspecs sym)))
 			     parsed-declspec)))
+			;; probably not TODO (since the parser should contain as little semantics as possible): when adding DYNAMIC-EXTENT and SPECIAL, add an assertion that, as defined in CLHS on DYNAMIC-EXTENT, "The vars and fns named in a dynamic-extent declaration must not refer to symbol macro or macro bindings." and an assertion that, as defined in CLHS on SYMBOL-MACROLET, "Exactly the same declarations are allowed as for let with one exception: symbol-macrolet signals an error if a special declaration names one of the symbols being defined by symbol-macrolet."
 			((find identifier '(dynamic-extent inline special notinline))
 			 (error "declaration identifier ~A not implemented yet" identifier))
 			(t (error "Unknown declaration specifier ~S" expr)))))
@@ -838,10 +841,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass progn-form (special-form body-form)
   ())
 (defclass binding ()
-  ((parent :initarg :parent :accessor binding-parent :documentation "the LET-form in which the binding is defined.")
+  ((parent :initarg :parent :accessor binding-parent :documentation "the LET-FORM, LET*-FORM, FLET-FORM, LABELS-FORM, SYMBOL-MACROLET-FORM, or MACROLET-FORM in which the binding is defined.")
    (sym :initarg :sym :accessor binding-sym :type sym)))
 (defclass var-binding (binding)
-  ((value :initarg :value :accessor binding-value :documentation "The form initializing the variable." :type generalform)))
+  ((value :initarg :value :accessor binding-value :documentation "The form initializing the variable, or the expansion form of the symbol macro." :type generalform)))
 (defclass bindings-form ()
   ((bindings :initarg :bindings :accessor form-bindings :type list :documentation "list of VAR-BINDINGs, or FUN-BINDINGs")
    (declspecs :initarg :declspecs :accessor form-declspecs :type list :documentation "list of DECLSPECs"))
@@ -855,7 +858,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
    (llist :initarg :llist :accessor form-llist :type llist)
    (declspecs :initarg :declspecs :accessor form-declspecs :type list)
    (documentation :initarg :documentation :accessor form-documentation :type (or nil string)))
-  (:documentation "Used to define a function without name."))
+  (:documentation "The definition of a function or macro function without name. The name is provided by class BINDING."))
 (defclass block-naming-form ()
   ((blo :initarg :blo :accessor form-blo :type blo))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
@@ -908,10 +911,14 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
    (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of GENERALFORMs")))
-;; Probably FREENAMESPACE should be a slot in MACROAPPLICATION-FORM, since CLHS says that the lexical environment is saved, but nothing about the free environment: CLHS Glossary "environment parameter n. A parameter in a defining form f for which there is no corresponding argument; instead, this parameter receives as its value an environment object which corresponds to the lexical environment in which the defining form f appeared."
+;; Probably FREENAMESPACE should not be a slot in MACROAPPLICATION-FORM, since CLHS says that the lexical environment is saved, but says nothing about the free environment: CLHS Glossary "environment parameter n. A parameter in a defining form f for which there is no corresponding argument; instead, this parameter receives as its value an environment object which corresponds to the lexical environment in which the defining form f appeared."
 (defclass macroapplication-form (application-form)
   ((lexicalnamespace :initarg :lexicalnamespace :accessor form-lexicalnamespace :type lexicalnamespace :documentation "The lexical namespace at the macro application form")
    (freenamespace :initarg :freenamespace :accessor form-freenamespace :type freenamespace :documentation "The free namespace at the macro application form")))
+(defclass symbol-macrolet-form (special-form body-form bindings-form)
+  ())
+(defclass macrolet-form (special-form body-form bindings-form)
+  ())
 
 ;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
 (defmethod print-object ((object progn-form) stream)
@@ -1008,13 +1015,14 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S" (form-fun object))
     (loop for arg in (form-arguments object) do
 	 (format stream " ~S" arg))
-    (format stream " ~S" (form-lexicalnamespace object))
+    (format stream " LEXICALNAMESPACE:~S" (form-lexicalnamespace object))
     ;; TODO: FIXME: the following should not override user-settings: maybe add an additional setting *PRINT-DETAILED-WALKER-OBJECTS*==:DEFAULT?
     (let ((*print-detailed-walker-objects* nil))
       (format stream " ~S" (form-freenamespace object)))))
 
-(defun parse-and-set-functiondef (form lexical-namespace free-namespace current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+(defun parse-and-set-functiondef (form parse-lambda-list-function lexical-namespace free-namespace current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
+PARSE-LAMBDA-LIST-FUNCTION must be a function that accepts (LAMBDA-LIST LEXICAL-NAMESPACE FREE-NAMESPACE CURRENT-FUNCTIONDEF REPARSE-FUNCTION), parses the LAMBDA-LIST and returns two values: 1. the new LLIST, i.e. an instance of (a subclass of) class LLIST. 2. the lexical namespace augmented by the variables in LAMBDA-LIST.
 Side-effects: Creates yet unknown free variables and functions and add them to FREE-NAMESPACE."
   (flet ((reparse (form parent &key (lexical-namespace lexical-namespace))
 	   (parse form lexical-namespace free-namespace parent
@@ -1030,7 +1038,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	     (values lambda-list body))))
     (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
       (multiple-value-bind (new-llist lexical-namespace-in-functiondef)
-	  (parse-lambda-list lambda-list lexical-namespace free-namespace current-functiondef #'reparse :allow-macro-lambda-list nil)
+	  (funcall parse-lambda-list-function lambda-list lexical-namespace free-namespace current-functiondef #'reparse)
 	(setf (form-llist current-functiondef) new-llist)
 	(multiple-value-bind (body parsed-declspecs parsed-documentation)
 	    (parse-declaration-and-documentation-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
@@ -1085,39 +1093,47 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	      (setf (form-body current) parsed-body)
 	      current))
 	   ;; TODO: FIXME: maybe I have to handle something specially in FLET and LABELS. The CLHS on FLET and LABELS says: "Also, within the scope of flet, global setf expander definitions of the function-name defined by flet do not apply. Note that this applies to (defsetf f ...), not (defmethod (setf f) ...)." What does that mean?
-	   ((find head '(let let* flet labels))
+	   ((find head '(let let* flet labels symbol-macrolet macrolet))
 	    (assert (and (consp rest) (listp (car rest))) () "cannot parse ~S-form:~%~S" head form)
 	    (let* ((definitions (car rest))
 		   (body (cdr rest))
-		   (form-type (ecase head ((let) 'let-form) ((let*) 'let*-form) ((flet) 'flet-form) ((labels) 'labels-form)))
+		   (form-type (ecase head ((let) 'let-form) ((let*) 'let*-form) ((flet) 'flet-form) ((labels) 'labels-form) ((symbol-macrolet) 'symbol-macrolet-form) ((macrolet) 'macrolet-form)))
 		   (current (make-instance form-type :parent parent :body nil))) ;:BINDINGS and :DECLSPECS are defined below
 	      (assert (proper-list-p definitions) () "Not a proper list: ~S" definitions)
 	      (labels ((make-var-binding (def lexical-namespace)
-			 (assert (and (consp def) (symbolp (car def)) (not (null (car def))) (not (null (cdr def))) (null (cddr def))) () "cannot parse definition in ~S-form:~%~S" head def)
-			 (let* ((name (car def))
-				(value-form (cadr def))
+			 (ecase head
+			   ((let let*)
+			    (assert (or (symbolp def) (and (consp def) (symbolp (car def)) (or (null (cdr def)) (null (cddr def))))) () "cannot parse definition in ~S-form:~%~S" head def))
+			   ((symbol-macrolet)
+			    (assert (and (consp def) (symbolp (car def)) (not (null (car def))) (not (null (cdr def))) (null (cddr def))) () "cannot parse definition in ~S-form:~%~S" head def)))
+			 (let* ((name (if (consp def) (car def) def))
+				(value-form-present-p (consp def))
+				(value-form (if (consp def) (cadr def) nil))
 				(binding (make-instance 'var-binding :parent current))
-				(parsed-value (reparse value-form binding :lexical-namespace lexical-namespace))
-				(sym (make-instance 'var :name name :freep nil :definition binding :declspecs nil)))
+				(parsed-value (ecase head ((let* let) (if value-form-present-p (reparse value-form binding :lexical-namespace lexical-namespace) nil)) ((symbol-macrolet) value-form)))
+				(macrop (ecase head ((let* let) nil) ((symbol-macrolet) t)))
+				(sym (make-instance 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop)))
 			   (setf (binding-sym binding) sym) (setf (binding-value binding) parsed-value)
 			   binding))
 		       (make-fun-binding (def lexical-namespace)
 			 (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def)
-			 (multiple-value-bind (fun-type block-name) (valid-function-name-p (car def)) ;CLHS Glossary function block name: If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name.
-			   (declare (ignore fun-type))
-			   (let* ((name (car def))
-				  (body-form (cdr def))
+			 (multiple-value-bind (fun-type name) (valid-function-name-p (car def))
+			   (assert (or (not (eq head 'macrolet)) (symbolp name)) () "macro function name in ~S-definition must be a SYMBOL, but is ~S" head (car def))
+			   (let* ((body-form (cdr def))
+				  (block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
 				  (blo (make-instance 'blo :name block-name :freep nil))
 				  (binding (make-instance 'fun-binding :parent current :blo blo))
-				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil)))
-			     (parse-and-set-functiondef body-form (augment-lexical-namespace blo lexical-namespace) free-namespace binding :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+				  (macrop (ecase head ((flet labels) nil) ((macrolet) t)))
+				  (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
+				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop)))
+			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 			     (setf (binding-sym binding) sym)
 			     (setf (nso-definition blo) binding)
 			     binding))))
 		(multiple-value-bind (parsed-bindings new-lexical-namespace)
-		    (let ((parse-value-function (ecase head ((let let*) #'make-var-binding) ((flet labels) #'make-fun-binding))))
+		    (let ((parse-value-function (ecase head ((let let* symbol-macrolet) #'make-var-binding) ((flet labels macrolet) #'make-fun-binding))))
 		      (cond
-			((find head '(let flet))
+			((find head '(let flet symbol-macrolet macrolet))
 			 (let* ((parsed-bindings (loop for def in definitions collect (funcall parse-value-function def lexical-namespace)))
 				(parsed-syms (loop for binding in parsed-bindings collect (binding-sym binding)))
 				(new-lexical-namespace lexical-namespace))
@@ -1141,7 +1157,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
 		   (current (make-instance 'lambda-form)))
-	      (parse-and-set-functiondef lambda-list-and-body lexical-namespace free-namespace current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+	      (parse-and-set-functiondef lambda-list-and-body #'parse-ordinary-lambda-list lexical-namespace free-namespace current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 	      current))
 	   ((eq head 'block)
 	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" form)
@@ -1276,10 +1292,10 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (parsed-cleanup-body (parse-body cleanup-body current)))
 	      (setf (form-protected current) parsed-protected (form-body current) parsed-cleanup-body)
 	      current))
-	   ((find head '(go macrolet symbol-macrolet tagbody)) ;TODO: TAGBODY, SYMBOL-MACROLET and MACROLET are tricky to implement, see their CLHS and below.
+	   ((find head '(go tagbody)) ;TODO: for how to implement TAGBODY, see their CLHS and below.
 	    (error "parsing special form ~S not implemented yet" head))
 	   (t
-	    (assert (symbolp head) () "Invalid function application ~S" form)
+	    (assert (symbolp head) () "Function or macro application must start with a symbol, but is ~S" form)
 	    (let* ((fun-name head)
 		   (arg-forms rest)
 		   (fun (namespace-lookup/create 'fun fun-name lexical-namespace free-namespace))
@@ -1290,7 +1306,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (parsed-arguments nil))
 	      (loop do
 		   (when (null arg-forms) (return))
-		   (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function application" arg-forms)
+		   (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function or macro application" arg-forms)
 		   (push (let ((arg-form (car arg-forms)))
 			   (if macrop arg-form (reparse arg-form current)))
 			 parsed-arguments)
@@ -1334,6 +1350,10 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let* ((a 1)) a)))))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(flet ((a ())) #'a)))))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(labels ((a ())) #'a)))))))
+    (assert (parse-with-empty-namespaces '(let ((a)) a)))
+    (assert (parse-with-empty-namespaces '(let (a) a)))
+    (assert (parse-with-empty-namespaces '(let* ((a)) a)))
+    (assert (parse-with-empty-namespaces '(let* (a) a)))
     (assert (let* ((lexical-namespace (car (namespaces-at '(let ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
@@ -1423,6 +1443,14 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	   (a4-sym (namespace-lookup 'var 'a (cadddr lexical-namespaces))))
       (assert (equal a1-sym a4-sym))
       (assert (equal a2-sym a3-sym))
+      (assert (not (equal a1-sym a2-sym))))
+    (let* ((lexical-namespaces (namespaces-at '(let ((a 1)) -here- (macrolet ((test (a (&optional (c (progn -here- a)))) -here-)) -here-))))
+	   (a1-sym (namespace-lookup 'var 'a (car lexical-namespaces)))
+	   (a2-sym (namespace-lookup 'var 'a (cadr lexical-namespaces)))
+	   (a3-sym (namespace-lookup 'var 'a (caddr lexical-namespaces)))
+	   (a4-sym (namespace-lookup 'var 'a (cadddr lexical-namespaces))))
+      (assert (equal a1-sym a4-sym))
+      (assert (equal a2-sym a3-sym))
       (assert (not (equal a1-sym a2-sym)))))
   (let* ((ast (parse-with-empty-namespaces '(flet ((test (a &optional (b a)) b)) a b)))
 	 (test (car (form-bindings ast)))
@@ -1434,9 +1462,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	 (body-b (second (form-body ast))))
     (assert (equal llist-a llist-binit))
     (assert (not (equal llist-a body-a)))
-    (assert (not (equal llist-b body-b))))
-  ;; TODO maybe: In the AST returned by (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((TEST (A (&OPTIONAL (C A))) -HERE-)))) at lexical position -HERE- the init form of ARGUMENT-C must be equal to (ARGUMENT-VAR A-ARGUMENT).
-  )
+    (assert (not (equal llist-b body-b)))))
 (test-parse-lambda-list)
 
 (defun test-parse-block-reference ()
@@ -1506,7 +1532,10 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 (defun test-macro-application ()
   ;; Test that differentiating between function- and macro-applications works. Macro arguments must not be evaluated, but function arguments must. Otherwise, parsing a macro-call can fail with an incorrect error: (PARSE-WITH-EMPTY-NAMESPACES '(DEFMACRO BLA (A (IF S)) (PRINT (LIST A IF S)) NIL) :FREE-COMMON-LISP-NAMESPACE NIL), because (IF S) is parsed like an IF-form. Therefore a non-NIL flag MACROP in an instance of FUN, (or maybe a distinction between FUN and a new class MAC as subtypes of SYM), makes that if FUN-NAME is looked up as a macro, then the ARG-FORMS are not parsed at all.
   (parse-with-empty-namespaces '(defmacro bla (a (if s)) (print (list a if s)) nil)
-			       :free-common-lisp-namespace t))
+			       :free-common-lisp-namespace t)
+  ;; add a check that (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing. (I first have to check how SBCL and CLISP handle the backquote (`).)
+  ;; add a check that (PARSE-WITH-EMPTY-NAMESPACES '(SYMBOL-MACROLET ((A 2)) A)) does the right thing.
+  )
 (test-macro-application)
 
 ;; TODO:
@@ -1515,19 +1544,20 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 ;; 1. "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element. If a statement is a macro form and its macro expansion is an atom, that atom is treated as a statement, not a tag." What does that mean?
 ;; The CLHS for SYMBOL-MACROLET says:
 ;; 0. "The expansion of a symbol macro is subject to further macro expansion in the same lexical environment as the symbol macro invocation": this should be easy to implement if I put the SYMBOL-MACROLETed variables in an lexical namespace. In fact the CLHS on SYMBOL-MACROLET also says "SYMBOL-MACROLET lexically establishes expansion functions for each of the symbol macros named by symbols".
-;; 1. "The use of symbol-macrolet can be shadowed by let...", see below.
+;; 1. "The use of symbol-macrolet can be shadowed by let...", see below. This will be handled automatically since the symbol macros are in the same lexical namespace as normal variables defined by LET,LET*,LAMBDA,LLIST.
 ;; 2. "SYMBOL-MACROLET signals an error if a special declaration names one of the symbols being defined by SYMBOL-MACROLET.": add a testcase that (PARSE '(SYMBOL-MACROLET ((A B)) (DECLARE (SPECIAL A)))) fails.
-;; 3. "any use of SETQ to set the value of one of the specified variables is treated as if it were a SETF. PSETQ of a symbol defined as a symbol macro is treated as if it were a PSETF, and MULTIPLE-VALUE-SETQ is treated as if it were a SETF of values.": This could mean that during evaluation of the symbol-macro I have to handle the special forms SETQ, PSETQ, MULTIPLE-VALUE-SETQ specially.
+;; 3. "any use of SETQ to set the value of one of the specified variables is treated as if it were a SETF. PSETQ of a symbol defined as a symbol macro is treated as if it were a PSETF, and MULTIPLE-VALUE-SETQ is treated as if it were a SETF of values.": This could mean that during evaluation (so not in the parser since it should contain as little semantics as possible) of the symbol-macro I have to handle the special forms SETQ, PSETQ, MULTIPLE-VALUE-SETQ specially.
 ;; TODO: test-case for SYMBOL-MACROLET:
 ;; (let ((a 1) ;A-LET1
 ;;       (b 2)) ;B-LET1
 ;;   (symbol-macrolet ((a b))
-;;     (let ((a 5) ;A-LET2
-;;           (b 6)) ;B-LET2
-;;       (print (list a b)) ;A-LIST1, B-LIST1
-;;       (setf a 7 b 8))) ;A-SETF, B-SETF
-;;   (list a b)) ;A-LIST2, B-LIST2
-;; should print (5 6) and return (1 2). So I should check that (EQ A-LET1 A-LIST2), (EQ B-LET1 B-LIST2), (EQ A-LET2 A-LIST1 A-SETF), (EQ B-LET2 B-LIST1 B-SETF), (NOT (EQ A-LET2 A-LET1)), (NOT (EQ B-LET2 B-LET1)).
+;;     (values
+;;      (let ((a 5) ;A-LET2
+;; 	   (b 6)) ;B-LET2
+;;        (prog1 (list a b) ;A-LIST1, B-LIST1
+;; 	 (setf a 7 b 8))) ;A-SETF, B-SETF
+;;      (list a b)))) ;A-LIST2, B-LIST2
+;; should return (VALUES (5 6) (1 2)). So I should check that (EQ A-LET1 A-LIST2), (EQ B-LET1 B-LIST2), (EQ A-LET2 A-LIST1 A-SETF), (EQ B-LET2 B-LIST1 B-SETF), (NOT (EQ A-LET2 A-LET1)), (NOT (EQ B-LET2 B-LET1)).
 
 ;; On TAGBODY:
 ;; TAGBODY always returns NIL, which means that a single-symbol statement in TAGBODY always means a tag, even as the last element of TAGBODY. The following form returns NIL (and not 1):
