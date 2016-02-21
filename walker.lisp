@@ -66,6 +66,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :var
    :fun :nso-macrop
    :blo :nso-definition
+   :tag :nso-definition :nso-gopoint :nso-jumpers
    :*print-detailed-walker-objects*
    :valid-function-name-p
    :namespace :namespace-var :namespace-fun :namespace-blo
@@ -142,6 +143,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :macroapplication-form :form-lexicalnamespace :form-freenamespace
    :symbol-macrolet-form
    :macrolet-form
+   :tagbody-form :form-body
+   :go-form
    ;; END OF FORMs
    :format-body
    :parse-and-set-functiondef
@@ -185,7 +188,16 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 (defclass blo (nso)
   ((definition :initarg :definition :accessor nso-definition
 	       :documentation "the parsed object (which should be an instance of a subclass of BLOCK-NAMING-FORM) that it is defined in, NIL if not known"))
+  ;; To add a slot that contains the list of RETURN-FROM-FORMs that jump to the end of (leave) the block named by this BLO (analogous to slot GOFORMS in TAG) maybe makes sense since one would want to know the forms in the code that jump to the end of the block. (But should I then also add a slot REFERENCES to all variables and functions? That would take too much memory for a general-purpose parser.) If I add such a slot it should be named JUMPERS to be consistent with class TAG.
   (:documentation "A named block."))
+(defclass tag (nso)
+  ((definition :initarg :definition :accessor nso-definition
+	       :documentation "the parsed object (which should be an instance of class TAGBODY-FORM (or a subclass of that)) that it is defined in, NIL if not known")
+   (gopoint :initarg :gopoint :accessor nso-gopoint :type list
+	    :documentation "The list with elements of type GENERALFORM or TAG that come after the TAG in the body of DEFINITION.")
+   (jumpers :initarg :jumpers :accessor nso-jumpers :type list
+   	    :documentation "The list of GO-FORMs that jump to this TAG."))
+  (:documentation "A tag in a TAGBODY form."))
 
 (defvar *print-detailed-walker-objects* t "If T, print more details of objects in package WALKER.")
 
@@ -195,6 +207,11 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 	(format stream "NAME:~S FREEP:~S MACROP:~S" (nso-name object) (nso-freep object) (nso-macrop object))
 	(format stream "NAME:~S" (nso-name object)))))
 (defmethod print-object ((object blo) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (if *print-detailed-walker-objects*
+	(format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))
+	(format stream "NAME:~S" (nso-name object)))))
+(defmethod print-object ((object tag) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
 	(format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))
@@ -227,21 +244,22 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   ((var :initform nil :initarg :var :accessor namespace-var)
    (fun :initform nil :initarg :fun :accessor namespace-fun)
    (blo :initform nil :initarg :blo :accessor namespace-blo)
+   (tag :initform nil :initarg :tag :accessor namespace-tag)
    ;; types ;i.e. class- or structure-names
    )
   (:documentation "A namespace"))
 (defclass lexical-namespace (namespace)
   ()
-  (:documentation "A lexical namespace (containing bound namespace objects). This means that (NSO-FREEP OBJECT)==NIL for all OBJECTS in VARIABLES, FUNCTIONS, BLOCKS."))
+  (:documentation "A lexical namespace (containing bound namespace objects). This means that (NSO-FREEP OBJECT)==NIL for all OBJECTs in any slot of the namespace."))
 (defclass free-namespace (namespace)
   ()
-  (:documentation "A namespace of free (i.e. unbound) namespace objects (e.g. variables). This means that (NSO-FREEP OBJECT)==T for all OBJECTS in VARIABLES, FUNCTIONS, BLOCKS."))
+  (:documentation "A namespace of free (i.e. unbound) namespace objects (e.g. variables). This means that (NSO-FREEP OBJECT)==T for all OBJECTs in any slot of the namespace."))
 
 (defmethod print-object ((object namespace) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "VARs:~S FUNs:~S BLOs:~S" (namespace-var object) (namespace-fun object) (namespace-blo object))
-	(format stream "number of VARs:~S number of FUNs:~S number of BLOs:~S" (length (namespace-var object)) (length (namespace-fun object)) (length (namespace-blo object))))))
+	(format stream "VARs:~S FUNs:~S BLOs:~S TAGs:~S" (namespace-var object) (namespace-fun object) (namespace-blo object) (namespace-tag object))
+	(format stream "number of VARs:~S number of FUNs:~S number of BLOs:~S number of TAGs:~S" (length (namespace-var object)) (length (namespace-fun object)) (length (namespace-blo object)) (length (namespace-tag object))))))
 
 (defgeneric namespace-boundp (symbol-type symbol namespace)
   (:documentation "Return non-NIL if SYMBOL is bound in NAMESPACE in the slot SYMBOL-TYPE, NIL otherwise."))
@@ -264,10 +282,11 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (make-instance 'lexical-namespace
 		 :var (namespace-var namespace)
 		 :fun (namespace-fun namespace)
-		 :blo (namespace-blo namespace)))
+		 :blo (namespace-blo namespace)
+		 :tag (namespace-tag namespace)))
 
 (defgeneric augment-lexical-namespace (nso-object namespace)
-  (:documentation "Create a copy of the lexical namespace NAMESPACE, augment the copy with NSO-OBJECT (which must be a subtype of NSO), and return the copy."))
+  (:documentation "Create a copy of the lexical namespace NAMESPACE, add the NSO-OBJECT (which must be a subtype of NSO) to the copy, and return the copy."))
 (defmethod augment-lexical-namespace (nso-object (namespace lexical-namespace))
   (assert (not (nso-freep nso-object)) () "Cannot augment a lexical namespace with free namespace object ~S" nso-object)
   (let* ((new-namespace (shallow-copy-lexical-namespace namespace))
@@ -919,6 +938,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ())
 (defclass macrolet-form (special-form body-form bindings-form)
   ())
+(defclass tagbody-form (special-form body-form)
+  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR GENERALFORM TAG)"))) ;redefine BODY here to allow deviating documentation from BODY-FORM.
+(defclass go-form (special-form)
+  ((tag :initarg :tag :accessor form-tag :type tag)))
 
 ;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
 (defmethod print-object ((object progn-form) stream)
@@ -1019,6 +1042,14 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     ;; TODO: FIXME: the following should not override user-settings: maybe add an additional setting *PRINT-DETAILED-WALKER-OBJECTS*==:DEFAULT?
     (let ((*print-detailed-walker-objects* nil))
       (format stream " ~S" (form-freenamespace object)))))
+(defmethod print-object ((object tagbody-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (form-body object))))
+(defmethod print-object ((object go-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (form-tag object))))
+
+;;;; END OF FORMs
 
 (defun parse-and-set-functiondef (form parse-lambda-list-function lexical-namespace free-namespace current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
@@ -1292,8 +1323,39 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 		   (parsed-cleanup-body (parse-body cleanup-body current)))
 	      (setf (form-protected current) parsed-protected (form-body current) parsed-cleanup-body)
 	      current))
-	   ((find head '(go tagbody)) ;TODO: for how to implement TAGBODY, see their CLHS and below.
-	    (error "parsing special form ~S not implemented yet" head))
+	   ((eq head 'tagbody)
+	    (let ((body rest)
+		  (current (make-instance 'tagbody-form :parent parent))
+		  (lexical-namespace lexical-namespace))
+	      (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
+	      ;; pass over BODY thrice: in the first pass, establish lexical TAGs, because a GO-form referencing a tag defined after the GO would not know about the tag; in the second, create the parsed body (containing GO-FORMs); in the third, set slot :GOPOINT of the TAGs to the correct position in the parsed body list.
+	      (loop for form in body do
+		   (cond
+		     ;; The CLHS for TAGBODY says "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element. If a statement is a macro form and its macro expansion is an atom, that atom is treated as a statement, not a tag.". So we know symbols in the body are always tags, and that later in macro-expansion we cannot ever produce a tag.
+		     ((atom form)
+		      (assert (symbolp form) () "Cannot parse TAGBODY-form: it must only contain go-points (which must be symbols) or conses, but contains ~S" form)
+		      (let ((tag (make-instance 'tag :name form :freep nil :definition current :jumpers nil))) ;:gopoint is defined below
+			(setf lexical-namespace (augment-lexical-namespace tag lexical-namespace))))))
+	      (let ((parsed-body (loop for form in body collect
+				      (cond
+					((atom form)
+					 (namespace-lookup 'tag form lexical-namespace))
+					(t
+					 (reparse form current :lexical-namespace lexical-namespace))))))
+		(loop for parsed-form-rest on parsed-body do
+		     (let ((parsed-form (car parsed-form-rest)))
+		       (when (typep parsed-form 'tag)
+			 (setf (nso-gopoint parsed-form) (cdr parsed-form-rest)))))
+		(setf (form-body current) parsed-body))
+	      current))
+	   ((eq head 'go)
+	    (assert (and (consp rest) (symbolp (car rest)) (null (cdr rest))) () "Cannot parse GO-form ~S" form)
+	    (let ((tag-name (car rest)))
+	      (assert (namespace-boundp 'tag tag-name lexical-namespace) () "Undefined tag ~S in GO-form ~S" tag-name form)
+	      (let* ((tag (namespace-lookup 'tag tag-name lexical-namespace))
+		     (current (make-instance 'go-form :parent parent :tag tag)))
+		(push current (nso-jumpers tag))
+		current)))
 	   (t
 	    (assert (symbolp head) () "Function or macro application must start with a symbol, but is ~S" form)
 	    (let* ((fun-name head)
@@ -1538,33 +1600,21 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   )
 (test-macro-application)
 
-;; TODO:
-;; TAGBODY, MACROLET, SYMBOL-MACROLET will be tricky to implement and I don't know what properties an implementation has to fulfill:
-;; The CLHS for TAGBODY says:
-;; 1. "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element. If a statement is a macro form and its macro expansion is an atom, that atom is treated as a statement, not a tag." What does that mean?
+;; Notes on MACROLET, SYMBOL-MACROLET:
 ;; The CLHS for SYMBOL-MACROLET says:
 ;; 0. "The expansion of a symbol macro is subject to further macro expansion in the same lexical environment as the symbol macro invocation": this should be easy to implement if I put the SYMBOL-MACROLETed variables in an lexical namespace. In fact the CLHS on SYMBOL-MACROLET also says "SYMBOL-MACROLET lexically establishes expansion functions for each of the symbol macros named by symbols".
 ;; 1. "The use of symbol-macrolet can be shadowed by let...", see below. This will be handled automatically since the symbol macros are in the same lexical namespace as normal variables defined by LET,LET*,LAMBDA,LLIST.
 ;; 2. "SYMBOL-MACROLET signals an error if a special declaration names one of the symbols being defined by SYMBOL-MACROLET.": add a testcase that (PARSE '(SYMBOL-MACROLET ((A B)) (DECLARE (SPECIAL A)))) fails.
 ;; 3. "any use of SETQ to set the value of one of the specified variables is treated as if it were a SETF. PSETQ of a symbol defined as a symbol macro is treated as if it were a PSETF, and MULTIPLE-VALUE-SETQ is treated as if it were a SETF of values.": This could mean that during evaluation (so not in the parser since it should contain as little semantics as possible) of the symbol-macro I have to handle the special forms SETQ, PSETQ, MULTIPLE-VALUE-SETQ specially.
-;; TODO: test-case for SYMBOL-MACROLET:
-;; (let ((a 1) ;A-LET1
-;;       (b 2)) ;B-LET1
-;;   (symbol-macrolet ((a b))
-;;     (values
-;;      (let ((a 5) ;A-LET2
-;; 	   (b 6)) ;B-LET2
-;;        (prog1 (list a b) ;A-LIST1, B-LIST1
-;; 	 (setf a 7 b 8))) ;A-SETF, B-SETF
-;;      (list a b)))) ;A-LIST2, B-LIST2
-;; should return (VALUES (5 6) (1 2)). So I should check that (EQ A-LET1 A-LIST2), (EQ B-LET1 B-LIST2), (EQ A-LET2 A-LIST1 A-SETF), (EQ B-LET2 B-LIST1 B-SETF), (NOT (EQ A-LET2 A-LET1)), (NOT (EQ B-LET2 B-LET1)).
 
-;; On TAGBODY:
+;; Notes on TAGBODY:
+;; The CLHS for TAGBODY says:
+;; 1. "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element. If a statement is a macro form and its macro expansion is an atom, that atom is treated as a statement, not a tag."
 ;; TAGBODY always returns NIL, which means that a single-symbol statement in TAGBODY always means a tag, even as the last element of TAGBODY. The following form returns NIL (and not 1):
 ;; (let ((a 1))
 ;;   (tagbody
 ;;    a))
-;; Raises an error that A and B are nonexistant tags:
+;; Raises an error that A and B are nonexistant tags. Does not raise an error using #'PARSE, because ECASE is defined as a macro in Common Lisp and so the GO-forms in it are not expanded yet.
 ;; (let ((branch :b)
 ;;       (a 1)
 ;;       (b 10))
@@ -1592,3 +1642,47 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 ;; (1 12)
 ;; WALKER> (test :b)
 ;; (1 11)
+
+;; TODO: add function TEST-SYMBOL-MACROLET with the following
+;; (let ((a 1) ;A-LET1
+;;       (b 2)) ;B-LET1
+;;   (symbol-macrolet ((a b))
+;;     (values
+;;      (let ((a 5) ;A-LET2
+;; 	   (b 6)) ;B-LET2
+;;        (prog1 (list a b) ;A-LIST1, B-LIST1
+;; 	 (setf a 7 b 8))) ;A-SETF, B-SETF
+;;      (list a b)))) ;A-LIST2, B-LIST2
+;; should return (VALUES (5 6) (1 2)). So I should check that (EQ A-LET1 A-LIST2), (EQ B-LET1 B-LIST2), (EQ A-LET2 A-LIST1 A-SETF), (EQ B-LET2 B-LIST1 B-SETF), (NOT (EQ A-LET2 A-LET1)), (NOT (EQ B-LET2 B-LET1)).
+
+(defun test-tagbody ()
+  (let* ((form '(tagbody
+		 (go a)
+		 a
+		 (tagbody
+		  a
+		    (go a))))
+	 (tagbody1 (parse-with-empty-namespaces form))
+	 (go1-form (nth 0 (form-body tagbody1)))
+	 (a1-tag (nth 1 (form-body tagbody1)))
+	 (tagbody2 (nth 2 (form-body tagbody1)))
+	 (a2-tag (nth 0 (form-body tagbody2)))
+	 (go2-form (nth 1 (form-body tagbody2))))
+    (assert (eq (form-tag go1-form) a1-tag))
+    (assert (eq (form-tag go2-form) a2-tag))
+    (assert (not (eq a1-tag a2-tag)))
+    (assert (eq (nso-gopoint a1-tag) (nthcdr 2 (form-body tagbody1))))
+    (assert (eq (nso-gopoint a2-tag) (nthcdr 1 (form-body tagbody2))))
+    (assert (equal (nso-jumpers a1-tag) (list go1-form)))
+    (assert (equal (nso-jumpers a2-tag) (list go2-form))))
+  (assert (parse-with-empty-namespaces '(tagbody
+					 (go b)
+					 b
+					 (tagbody
+					  a
+					    (go b)))))
+  (assert (parse-with-empty-namespaces '(symbol-macrolet ((a 1))
+					 (tagbody
+					    (go a)
+					  a))))) ;this A must be parsed as TAG, and the GO above must refer to a known tag. See CLHS for TAGBODY: "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element."
+(test-tagbody)
