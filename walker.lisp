@@ -152,6 +152,52 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse
    :parse-with-empty-namespaces
    :namespaces-at
+   ;; DEPARSER
+   :deparse-nso
+   :deparse-declspec-type
+   :deparse-declspec-ftype
+   :deparse-declspec-optimize
+   :deparse-declspec-ignore
+   :deparse-declspec-ignorable
+   :deparse-required-argument
+   :deparse-optional-argument
+   :deparse-key-argument
+   :deparse-ordinary-llist
+   :deparse-macro-llist
+   :deparse-selfevalobject
+   :deparse-body
+   :deparse-function-form
+   :deparse-progn-form
+   :deparse-var-binding
+   :deparse-let-form
+   :deparse-let*-form
+   :deparse-block-form
+   :deparse-fun-binding
+   :deparse-flet-form
+   :deparse-labels-form
+   :deparse-lambda-form
+   :deparse-return-from-form
+   :deparse-locally-form
+   :deparse-the-form
+   :deparse-if-form
+   :deparse-setq-form
+   :deparse-catch-form
+   :deparse-throw-form
+   :deparse-eval-when-form
+   :deparse-load-time-value-form
+   :deparse-quote-form
+   :deparse-multiple-value-call-form
+   :deparse-multiple-value-prog1-form
+   :deparse-progv-form
+   :deparse-unwind-protect-form
+   :deparse-application-form
+   :deparse-symbol-macrolet-form
+   :deparse-macrolet-form
+   :deparse-tagbody-form
+   :deparse-go-form
+   :deparse-typecase
+   :deparse
+   :map-ast
    ))
 
 (in-package :walker)
@@ -1092,6 +1138,10 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
 ;; TODO: FIXME: Must handle arbitrary nonsense input gracefully. (see comment near #'PROPER-LIST-P.)
 (defun parse (form lexical-namespace free-namespace parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+  "Recursively parse the Common Lisp FORM. During parsing, LEXICAL-NAMESPACE is augmented with the found namespace objects, but the originally passed LEXICAL-NAMESPACE instance is not modified. FREE-NAMESPACE is modified by adding namespace objects that are free in FORM. Use PARENT as the :PARENT slot in the returned abstract syntax tree (AST).
+If CUSTOMPARSEP-FUNCTION is NIL, then both custom parse functions are not called. Otherwise, CUSTOMPARSEP-FUNCTION and CUSTOMPARSE-FUNCTION must be functions with 4 parameters: the currently parsed form, the current lexical namespace, the free namespace, and the parent of the currently parsed form. If CUSTOMPARSEP-FUNCTION returns non-NIL, PARSE returns the values of calling CUSTOMPARSE-FUNCTION with above 4 parameters. Otherwise, PARSE parses the FORM and the elements in it recursively and constructs an AST, i.e. an instance of one of the -FORM classes.
+CUSTOMPARSEDECLSPECP-FUNCTION and CUSTOMPARSEDECLSPEC-FUNCTION are passed to the functions parsing declarations.
+Return the parsed abstract syntax tree (AST)."
   (declare (optimize (debug 3)))
   (labels ((reparse (form parent &key (lexical-namespace lexical-namespace))
 	     (parse form lexical-namespace free-namespace parent
@@ -1695,3 +1745,326 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 					    (go a)
 					  a))))) ;this A must be parsed as TAG, and the GO above must refer to a known tag. See CLHS for TAGBODY: "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element."
 (test-tagbody)
+
+;;;; DEPARSER
+
+(defun deparse-nso (nso parent recurse-function)
+  (declare (ignore parent recurse-function))
+  (nso-name nso))
+
+(defun deparse-declspec-type (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'type
+	 (declspec-type declspec) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+	 (mapcar (lambda (var) (funcall recurse-function var declspec))
+		 (declspec-vars declspec))))
+(defun deparse-declspec-ftype (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'ftype
+	 (declspec-type declspec) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+	 (mapcar (lambda (fun) (funcall recurse-function fun declspec))
+		 (declspec-funs declspec))))
+(defun deparse-declspec-optimize (declspec parent recurse-function)
+  (declare (ignore parent recurse-function))
+  (list* 'optimize
+	 (mapcar (lambda (acons)
+		   (let ((quality (car acons)) (value (cdr acons)))
+		     (if (null value) quality (list quality value)))) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+		 (declspec-qualities declspec))))
+(defun deparse-declspec-ignore (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'ignore
+	 (mapcar (lambda (var)
+		   (funcall recurse-function var declspec))
+		 (declspec-syms declspec))))
+(defun deparse-declspec-ignorable (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'ignorable
+	 (mapcar (lambda (var) (funcall recurse-function var declspec))
+		 (declspec-syms declspec))))
+
+(defun deparse-required-argument (argument parent recurse-function)
+  (declare (ignore parent))
+  (funcall recurse-function (argument-var argument) argument))
+(defun deparse-optional-argument (argument parent recurse-function)
+  (declare (ignore parent))
+  (cons (funcall recurse-function (argument-var argument) argument)
+	(when (argument-init argument)
+	  (cons (funcall recurse-function (argument-init argument) argument)
+		(when (argument-suppliedp argument)
+		  (cons (funcall recurse-function (argument-suppliedp argument) argument)
+			nil))))))
+(defun deparse-key-argument (argument parent recurse-function)
+  (declare (ignore parent))
+  (cond
+    ((and (null (argument-init argument)) (null (argument-suppliedp argument)))
+     (funcall recurse-function (argument-var argument) argument))
+    (t
+     (cons (if (argument-keywordp argument)
+	       (list (funcall recurse-function (argument-keyword argument) argument)
+		     (funcall recurse-function (argument-var argument) argument))
+	       (funcall recurse-function (argument-var argument) argument))
+	   (when (argument-init argument)
+	     (cons (funcall recurse-function (argument-init argument) argument)
+		   (when (argument-suppliedp argument)
+		     (cons (funcall recurse-function (argument-suppliedp argument) argument)
+			   nil))))))))
+(defun deparse-ordinary-llist (llist parent recurse-function)
+  (declare (ignore parent))
+  (flet ((recurse-function (argument)
+	   (funcall recurse-function argument llist)))
+    (nconc
+     (mapcar #'recurse-function (llist-required llist))
+     (let ((it (llist-optional llist))) (when it (cons '&optional (mapcar #'recurse-function it))))
+     (let ((it (llist-rest llist))) (when it (list '&rest (recurse-function it))))
+     (let ((it (llist-key llist))) (when it (cons '&key (mapcar #'recurse-function it))))
+     (let ((it (llist-allow-other-keys llist))) (when it (list '&allow-other-keys)))
+     (let ((it (llist-aux llist))) (when it (cons '&aux (mapcar #'recurse-function it)))))))
+(defun deparse-macro-llist (llist parent recurse-function)
+  (declare (ignore parent))
+  (flet ((recurse-function (argument)
+	   (funcall recurse-function argument llist)))
+    (nconc
+     (let ((it (llist-whole llist))) (when it (list '&whole (recurse-function it))))
+     (let ((it (llist-environment llist))) (when it (list '&environment (recurse-function it))))
+     (mapcar #'recurse-function (llist-required llist))
+     (let ((it (llist-optional llist))) (when it (cons '&optional (mapcar #'recurse-function it))))
+     (let ((it (llist-rest llist))) (when it (list '&rest (recurse-function it))))
+     (let ((it (llist-body llist))) (when it (list '&body (recurse-function it))))
+     (let ((it (llist-key llist))) (when it (cons '&key (mapcar #'recurse-function it))))
+     (let ((it (llist-allow-other-keys llist))) (when it (list '&allow-other-keys))) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+     (let ((it (llist-aux llist))) (when it (cons '&aux (mapcar #'recurse-function it)))))))
+
+(defun deparse-selfevalobject (selfevalobject parent recurse-function)
+  (declare (ignore parent recurse-function))
+  (selfevalobject-object selfevalobject)) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+(defun deparse-body (ast recurse-function declspecsp documentationp)
+  (labels ((recurse-function (form)
+	     (funcall recurse-function form ast))
+	   (rec (list)
+	     (mapcar #'recurse-function list)))
+    (if (and documentationp (form-documentation ast))
+	(if (and declspecsp (form-declspecs ast))
+	    (list* (form-documentation ast) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+		   (cons 'declare (rec (form-declspecs ast)))
+		   (rec (form-body ast)))
+	    (list* (form-documentation ast)
+		   (rec (form-body ast))))
+	(if (and declspecsp (form-declspecs ast))
+	    (list* (cons 'declare (rec (form-declspecs ast)))
+		   (rec (form-body ast)))
+	    (rec (form-body ast))))))
+(defun deparse-function-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list 'function
+	(funcall recurse-function (form-object ast) ast)))
+(defun deparse-progn-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (deparse-body ast recurse-function nil nil))
+(defun deparse-var-binding (binding parent recurse-function)
+  (declare (ignore parent))
+  (if (or (binding-value binding)
+	  (nso-macrop (binding-sym binding))) ;(SYMBOL-MACROLET ((A NIL)) A) must not be converted to (SYMBOL-MACROLET ((A)) A)
+      (list (funcall recurse-function (binding-sym binding) binding)
+	    (if (typep (binding-value binding) 'generalform)
+		(funcall recurse-function (binding-value binding) binding)
+		(binding-value binding)))
+      (funcall recurse-function (binding-sym binding) binding)))
+(defun deparse-let-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'let
+	 (mapcar (lambda (binding) (funcall recurse-function binding ast)) (form-bindings ast))
+	 (deparse-body ast recurse-function t nil)))
+(defun deparse-let*-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'let*
+	 (mapcar (lambda (binding) (funcall recurse-function binding ast)) (form-bindings ast))
+	 (deparse-body ast recurse-function t nil)))
+(defun deparse-block-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'block
+	 (funcall recurse-function (form-blo ast) ast)
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-fun-binding (binding parent recurse-function)
+  (declare (ignore parent))
+  (list* (funcall recurse-function (binding-sym binding) binding)
+	 (funcall recurse-function (form-llist binding) binding)
+	 (deparse-body binding recurse-function t t)))
+(defun deparse-flet-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'flet
+	 (mapcar (lambda (binding) (funcall recurse-function binding ast)) (form-bindings ast))
+	 (deparse-body ast recurse-function t nil)))
+(defun deparse-labels-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'labels
+	 (mapcar (lambda (binding) (funcall recurse-function binding ast)) (form-bindings ast))
+	 (deparse-body ast recurse-function t nil)))
+(defun deparse-lambda-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'lambda
+	 (funcall recurse-function (form-llist ast) ast)
+	 (deparse-body ast recurse-function t t)))
+(defun deparse-return-from-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'return-from
+	 (funcall recurse-function (form-blo ast) ast)
+	 (when (form-value ast)
+	   (list (funcall recurse-function (form-value ast) ast)))))
+(defun deparse-locally-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'locally
+	 (deparse-body ast recurse-function t nil)))
+(defun deparse-the-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list 'the
+	(form-type ast) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+	(funcall recurse-function (form-value ast) ast)))
+(defun deparse-if-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'if
+	 (funcall recurse-function (form-test ast) ast)
+	 (funcall recurse-function (form-then ast) ast)
+	 (when (form-else ast)
+	   (funcall recurse-function (form-else ast) ast))))
+(defun deparse-setq-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'setq
+	 (apply #'nconc (loop for var in (form-vars ast) for value in (form-values ast) collect
+			     (list (funcall recurse-function var ast)
+				   (funcall recurse-function value ast))))))
+(defun deparse-catch-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'catch
+	 (funcall recurse-function (form-tag ast) ast)
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-throw-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'throw
+	 (funcall recurse-function (form-tag ast) ast)
+	 (funcall recurse-function (form-value ast) ast)))
+(defun deparse-eval-when-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'eval-when
+	 (form-situations ast) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-load-time-value-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list 'load-time-value
+	(funcall recurse-function (form-value ast) ast)
+	(form-readonly ast))) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+(defun deparse-quote-form (ast parent recurse-function)
+  (declare (ignore parent recurse-function))
+  (list 'quote
+	(form-object ast))) ;TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)
+(defun deparse-multiple-value-call-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'multiple-value-call
+	 (funcall recurse-function (form-function ast) ast)
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-multiple-value-prog1-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'multiple-value-prog1
+	 (funcall recurse-function (form-function ast) ast)
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-progv-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'progv
+	 (funcall recurse-function (form-symbols ast) ast)
+	 (funcall recurse-function (form-values ast) ast)
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-unwind-protect-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'unwind-protect
+	 (funcall recurse-function (form-protected ast) ast)
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-application-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* (funcall recurse-function (form-fun ast) ast)
+	 (mapcar (lambda (argument) (funcall recurse-function argument ast)) (form-arguments ast))))
+(defun deparse-symbol-macrolet-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'symbol-macrolet
+	 (mapcar (lambda (binding) (funcall recurse-function binding ast)) (form-bindings ast))
+	 (deparse-body ast recurse-function t nil)))
+(defun deparse-macrolet-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'macrolet
+	 (mapcar (lambda (binding) (funcall recurse-function binding ast)) (form-bindings ast))
+	 (deparse-body ast recurse-function t nil)))
+(defun deparse-tagbody-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* 'tagbody
+	 (deparse-body ast recurse-function nil nil)))
+(defun deparse-go-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list 'go
+	(funcall recurse-function (form-tag ast) ast)))
+
+(defun deparse-typecase (ast)
+  (etypecase ast
+    (nso #'deparse-nso)
+    (declspec-type #'deparse-declspec-type)
+    (declspec-ftype #'deparse-declspec-ftype)
+    (declspec-optimize #'deparse-declspec-optimize)
+    (declspec-ignore #'deparse-declspec-ignore)
+    (declspec-ignorable #'deparse-declspec-ignorable)
+    (required-argument #'deparse-required-argument)
+    (optional-argument #'deparse-optional-argument)
+    (key-argument #'deparse-key-argument)
+    (ordinary-llist #'deparse-ordinary-llist)
+    (macro-llist #'deparse-macro-llist)
+    (selfevalobject #'deparse-selfevalobject)
+    (function-form #'deparse-function-form)
+    (progn-form #'deparse-progn-form)
+    (var-binding #'deparse-var-binding)
+    (let-form #'deparse-let-form)
+    (let*-form #'deparse-let*-form)
+    (block-form #'deparse-block-form)
+    (fun-binding #'deparse-fun-binding)
+    (flet-form #'deparse-flet-form)
+    (labels-form #'deparse-labels-form)
+    (lambda-form #'deparse-lambda-form)
+    (return-from-form #'deparse-return-from-form)
+    (locally-form #'deparse-locally-form)
+    (the-form #'deparse-the-form)
+    (if-form #'deparse-if-form)
+    (setq-form #'deparse-setq-form)
+    (catch-form #'deparse-catch-form)
+    (throw-form #'deparse-throw-form)
+    (eval-when-form #'deparse-eval-when-form)
+    (load-time-value-form #'deparse-load-time-value-form)
+    (quote-form #'deparse-quote-form)
+    (multiple-value-call-form #'deparse-multiple-value-call-form)
+    (multiple-value-prog1-form #'deparse-multiple-value-prog1-form)
+    (progv-form #'deparse-progv-form)
+    (unwind-protect-form #'deparse-unwind-protect-form)
+    (application-form #'deparse-application-form)
+    (symbol-macrolet-form #'deparse-symbol-macrolet-form)
+    (macrolet-form #'deparse-macrolet-form)
+    (tagbody-form #'deparse-tagbody-form)
+    (go-form #'deparse-go-form)))
+
+(defun deparse (ast &key parent customdeparsep-function customdeparse-function)
+  "Return the Lisp form encoded by the AST.
+This works by recursively calling the DEPARSE-* function matching the current sub-form of the AST.
+PARENT is passed to the DEPARSE-* functions, which ignore it.
+Before a DEPARSE-* function is called, and if CUSTOMPARSEP-FUNCTION is non-NIL, it is called with the current AST and its parent, and if it returns non-NIL, then instead of calling a DEPARSE-* function on the current AST, CUSTOMPARSE-FUNCTION is called with two parameters: the current AST and its parent. This allows handling some sub-forms of the AST differently, for example not to recurse into some of them."
+  (if (and customdeparsep-function (funcall customdeparsep-function ast parent))
+      (funcall customdeparse-function ast parent)
+      (funcall (deparse-typecase ast) ast parent #'deparse)))
+
+(defun map-ast (function ast &key parent customdeparsep-function customdeparse-function)
+  "Recursively apply FUNCTION to all objects occurring in the AST in the order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
+For each object, call FUNCTION with two parameters: the current AST and the parent of the current AST.
+Before FUNCTION is called, and if CUSTOMPARSEP-FUNCTION is non-NIL, it is called with the current AST and its parent, and if it returns non-NIL, then instead of calling FUNCTION, CUSTOMPARSE-FUNCTION is called with two parameters: the current AST and its parent. This allows handling some sub-forms of the AST differently, for example not to recurse into some of them.
+Return NIL."
+  ;;TODO: FIXME: the DEPARSE-* functions above do not call RECURSE-FUNCTION for some slots (those which are not parsed by #'PARSE). Come up with a scheme that allows an adapted RECURSE-FUNCTION to know what type those unparsed slots are (e.g. type specifiers). The slots to which this applies is marked above with "TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)".
+  (labels ((helper (ast parent)
+	     (if (and customdeparsep-function (funcall customdeparsep-function ast parent))
+		 (funcall customdeparse-function ast parent)
+		 (progn
+		   (funcall function ast parent)
+		   (funcall (deparse-typecase ast) ast parent #'helper)))
+	     nil))
+    (helper ast parent)))
