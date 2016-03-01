@@ -1446,7 +1446,7 @@ Return the parsed abstract syntax tree (AST)."
 	   :customparsedeclspec-function customparsedeclspec-function)))
 
 ;; tests for PARSE
-(defun namespaces-at (form heresymbol)
+(defun namespaces-at (form heresymbol &key free-common-lisp-namespace)
   "Parse FORM and collect the namespaces at the positions in FORM marked by the symbol HERESYMBOL.
 Returns two values: a list containing the lexical namespaces, and a list containing the free namespaces."
   (let* ((lexical-namespace-here-list nil)
@@ -1458,7 +1458,8 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 				 :customparse-function (lambda (form lexical-namespace free-namespace parent)
 							 (declare (ignorable form parent))
 							 (push lexical-namespace lexical-namespace-here-list)
-							 (push free-namespace free-namespace-here-list)))
+							 (push free-namespace free-namespace-here-list))
+				 :free-common-lisp-namespace free-common-lisp-namespace)
     (values (nreverse lexical-namespace-here-list) (nreverse free-namespace-here-list))))
 
 (defun test-parse-symbol-reference ()
@@ -1650,14 +1651,18 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (eq quote-a 'a))))
 (test-quote-form)
 
-(defun test-macro-application ()
-  ;; Test that differentiating between function- and macro-applications works. Macro arguments must not be evaluated, but function arguments must. Otherwise, parsing a macro-call can fail with an incorrect error: (PARSE-WITH-EMPTY-NAMESPACES '(DEFMACRO BLA (A (IF S)) (PRINT (LIST A IF S)) NIL) :FREE-COMMON-LISP-NAMESPACE NIL), because (IF S) is parsed like an IF-form. Therefore a non-NIL flag MACROP in an instance of FUN, (or maybe a distinction between FUN and a new class MAC as subtypes of SYM), makes that if FUN-NAME is looked up as a macro, then the ARG-FORMS are not parsed at all.
-  (parse-with-empty-namespaces '(defmacro bla (a (if s)) (print (list a if s)) nil)
+(defun test-macro-form ()
+  ;; Test that differentiating between function- and macro-applications works. Macro arguments must not be evaluated, but function arguments must. Otherwise, parsing a macro-call can fail with an incorrect error: (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((BLA (A (IF S)) (PRINT (LIST A IF S)) NIL))) :FREE-COMMON-LISP-NAMESPACE NIL), because (IF S) is parsed like an IF-form. Therefore a non-NIL flag MACROP in an instance of FUN, (or maybe a distinction between FUN and a new class MAC as subtypes of SYM), makes that if FUN-NAME is looked up as a macro, then the ARG-FORMS are not parsed at all.
+  (parse-with-empty-namespaces '(macrolet ((bla (a (if s)) (print (list a if s)) nil)))
 			       :free-common-lisp-namespace t)
-  ;; add a check that (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing. (I first have to check how SBCL and CLISP handle the backquote (`).)
-  ;; add a check that (PARSE-WITH-EMPTY-NAMESPACES '(SYMBOL-MACROLET ((A 2)) A)) does the right thing.
+  (let* ((form '(symbol-macrolet ((a 2)) a))
+	 (ast (parse-with-empty-namespaces form))
+	 (a-binding (binding-sym (car (form-bindings ast))))
+	 (a-body (car (form-body ast))))
+    (assert (eq a-binding a-body)))
+  ;; I should not add a check that (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing since this would require evaluation of macro A, which should not be part of WALKER because it should contain as little semantics as possible. (If you want to add semantics somewhere else, you might consider passing to #'PARSE a form read using the package FARE-QUASIQUOTE since different Lisps read the backquote (`) differently.)
   )
-(test-macro-application)
+(test-macro-form)
 
 ;; Notes on MACROLET, SYMBOL-MACROLET:
 ;; The CLHS for SYMBOL-MACROLET says:
@@ -1673,7 +1678,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 ;; (let ((a 1))
 ;;   (tagbody
 ;;    a))
-;; Raises an error that A and B are nonexistant tags. Does not raise an error using #'PARSE, because ECASE is defined as a macro in Common Lisp and so the GO-forms in it are not expanded yet.
+;; Raises an error that A and B are nonexistant tags. Does not raise an error using #'PARSE-WITH-EMPTY-NAMESPACES and non-NIL key argument :FREE-COMMON-LISP-NAMESPACE, because ECASE is defined as a macro in Common Lisp and so the GO-forms in it are not expanded yet.
 ;; (let ((branch :b)
 ;;       (a 1)
 ;;       (b 10))
@@ -1702,17 +1707,26 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 ;; WALKER> (test :b)
 ;; (1 11)
 
-;; TODO: add function TEST-SYMBOL-MACROLET with the following
-;; (let ((a 1) ;A-LET1
-;;       (b 2)) ;B-LET1
-;;   (symbol-macrolet ((a b))
-;;     (values
-;;      (let ((a 5) ;A-LET2
-;; 	   (b 6)) ;B-LET2
-;;        (prog1 (list a b) ;A-LIST1, B-LIST1
-;; 	 (setf a 7 b 8))) ;A-SETF, B-SETF
-;;      (list a b)))) ;A-LIST2, B-LIST2
-;; should return (VALUES (5 6) (1 2)). So I should check that (EQ A-LET1 A-LIST2), (EQ B-LET1 B-LIST2), (EQ A-LET2 A-LIST1 A-SETF), (EQ B-LET2 B-LIST1 B-SETF), (NOT (EQ A-LET2 A-LET1)), (NOT (EQ B-LET2 B-LET1)).
+(defun test-symbol-macrolet ()
+  (flet ((namespaces-at (form)
+	   (namespaces-at form '-here-)))
+    (let* ((form '(let ((a 1) ;A-LET1
+			(b 2)) ;B-LET1
+		   -here-
+		   (symbol-macrolet ((a b))
+		     (values
+		      (let ((a 5) ;A-LET2
+			    (b 6)) ;B-LET2
+			-here-
+			(list a b))
+		      -here-
+		      (list a b))))) ;returns (VALUES (5 6) (2 2)).
+	   (lexnss (namespaces-at form))
+	   (a1 (namespace-lookup 'var 'a (car lexnss)))
+	   (a2 (namespace-lookup 'var 'a (cadr lexnss)))
+	   (a3 (namespace-lookup 'var 'a (caddr lexnss))))
+      (assert (not (or (eq a1 a2) (eq a1 a3) (eq a2 a3)))))))
+(test-symbol-macrolet)
 
 (defun test-tagbody ()
   (let* ((form '(tagbody
