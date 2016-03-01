@@ -112,6 +112,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form :form-parent
    :body-form :form-body
    :special-form
+   :function-form :form-object
    :progn-form
    :binding :binding-parent :binding-sym
    :var-binding :binding-value
@@ -857,6 +858,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
 (defclass special-form (form)
   ())
+(defclass function-form (special-form)
+  ((object :initarg :object :accessor form-object :type (or fun lambda-form))))
 (defclass progn-form (special-form body-form)
   ())
 (defclass binding ()
@@ -944,6 +947,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((tag :initarg :tag :accessor form-tag :type tag)))
 
 ;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
+(defmethod print-object ((object function-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (form-object object))))
 (defmethod print-object ((object progn-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-body object))))
@@ -1112,13 +1118,13 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	   ((eq head 'function)
 	    (assert (and (consp rest) (null (cdr rest))) () "Invalid FUNCTION-form ~S" form)
 	    (let ((name-form (car rest)))
-	      ;;TODO: FIXME: encapsulate the result values (and adapt #'PRINT-OBJECT of a FUN) of the following into a to-be-created FUNCTION-OPERATOR-class (or FUNCTION-FORM-class?) so that (UNPARSE (PARSE form)) == form. Currently (PARSE '(FUNCTION (LAMBDA ())))==(PARSE '(LAMBDA ())), which violates above declaration that package WALKER should have as little semantics as possible.
-	      (cond
-		((valid-function-name-p name-form)
-		 (namespace-lookup/create 'fun name-form lexical-namespace free-namespace))
-		((and (consp name-form) (eq (car name-form) 'lambda))
-		 (reparse name-form parent))
-		(t (error "Invalid FUNCTION-form ~S" form)))))
+	      (make-instance 'function-form :parent parent
+			     :object (cond
+				       ((valid-function-name-p name-form)
+					(namespace-lookup/create 'fun name-form lexical-namespace free-namespace))
+				       ((and (consp name-form) (eq (car name-form) 'lambda))
+					(reparse name-form parent))
+				       (t (error "Invalid FUNCTION-form ~S" form))))))
 	   ((eq head 'progn)
 	    (let* ((current (make-instance 'progn-form :parent parent :body nil))
 		   (body rest)
@@ -1410,11 +1416,11 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   (flet ((namespaces-at (form)
 	   (namespaces-at form '-here-)))
     (assert (nso-freep (parse-with-empty-namespaces 'a)))
-    (assert (nso-freep (parse-with-empty-namespaces '(function a))))
+    (assert (nso-freep (form-object (parse-with-empty-namespaces '(function a)))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let ((a 1)) a)))))))
     (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let* ((a 1)) a)))))))
-    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(flet ((a ())) #'a)))))))
-    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(labels ((a ())) #'a)))))))
+    (assert (not (nso-freep (form-object (car (form-body (parse-with-empty-namespaces '(flet ((a ())) #'a))))))))
+    (assert (not (nso-freep (form-object (car (form-body (parse-with-empty-namespaces '(labels ((a ())) #'a))))))))
     (assert (parse-with-empty-namespaces '(let ((a)) a)))
     (assert (parse-with-empty-namespaces '(let (a) a)))
     (assert (parse-with-empty-namespaces '(let* ((a)) a)))
@@ -1426,7 +1432,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (let* ((lexical-namespace (car (namespaces-at '(flet ((b ()) (c () #'b)) -here-))))
 		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
-	      (not (eq b-sym (car (form-body (nso-definition c-sym)))))))
+	      (not (eq b-sym (form-object (car (form-body (nso-definition c-sym))))))))
     (assert (let* ((lexical-namespace (car (namespaces-at '(let* ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
@@ -1434,7 +1440,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (let* ((lexical-namespace (car (namespaces-at '(labels ((b ()) (c () #'b)) -here-))))
 		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
-	      (eq b-sym (car (form-body (nso-definition c-sym))))))
+	      (eq b-sym (form-object (car (form-body (nso-definition c-sym)))))))
     (let* ((lexical-namespaces (namespaces-at '(let ((b 5)) -here- (let ((b b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
 	   (lexical-namespace-2 (cadr lexical-namespaces))
@@ -1457,18 +1463,18 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	   (b-1 (namespace-lookup 'fun 'b lexical-namespace-1))
 	   (b-2 (namespace-lookup 'fun 'b lexical-namespace-2)))
       (assert (not (eq b-1 b-2)))
-      (assert (eq b-1 (car (form-body (nso-definition b-2))))))
+      (assert (eq b-1 (form-object (car (form-body (nso-definition b-2)))))))
     (let* ((lexical-namespaces (namespaces-at '(labels ((b ())) -here- (labels ((b () #'b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
 	   (lexical-namespace-2 (cadr lexical-namespaces))
 	   (b-1 (namespace-lookup 'fun 'b lexical-namespace-1))
 	   (b-2 (namespace-lookup 'fun 'b lexical-namespace-2)))
       (assert (not (eq b-1 b-2)))
-      (assert (eq b-1 (car (form-body (nso-definition b-2)))))))
+      (assert (eq b-1 (form-object (car (form-body (nso-definition b-2))))))))
   (let* ((ast (parse-with-empty-namespaces '(test #'test 2 3)))
 	 (call-fun (form-fun ast))
 	 (call-arguments (form-arguments ast)))
-    (assert (eq call-fun (car call-arguments))))
+    (assert (eq call-fun (form-object (car call-arguments)))))
   (let* ((ast (parse-with-empty-namespaces '(bla (aref a x) x)))
   	 (args (form-arguments ast))
   	 (aref-x (cadr (form-arguments (car args))))
@@ -1488,7 +1494,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (let* ((form '(flet ((a ())) (declare (ftype fixnum a)) #'a))
 	   (ast (parse-with-empty-namespaces form))
 	   (declspec-ftype (car (form-declspecs ast))))
-      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-funs declspec-ftype)) (car (form-body ast)))))
+      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-funs declspec-ftype)) (form-object (car (form-body ast))))))
     (let* ((ast (parse-with-empty-namespaces '(locally (declare (type fixnum a)) a)))
 	   (declspec-type (car (form-declspecs ast)))
 	   (declspec-type-a (car (declspec-vars declspec-type)))
