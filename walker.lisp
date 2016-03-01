@@ -1734,16 +1734,28 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (eq (nso-gopoint a2-tag) (nthcdr 1 (form-body tagbody2))))
     (assert (equal (nso-jumpers a1-tag) (list go1-form)))
     (assert (equal (nso-jumpers a2-tag) (list go2-form))))
-  (assert (parse-with-empty-namespaces '(tagbody
-					 (go b)
-					 b
-					 (tagbody
-					  a
-					    (go b)))))
-  (assert (parse-with-empty-namespaces '(symbol-macrolet ((a 1))
-					 (tagbody
-					    (go a)
-					  a))))) ;this A must be parsed as TAG, and the GO above must refer to a known tag. See CLHS for TAGBODY: "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element."
+  (let* ((form '(tagbody
+		 (go b)
+		 b
+		 (tagbody
+		  a
+		    (go b))))
+	 (ast (parse-with-empty-namespaces form))
+	 (tagbody1-body (form-body ast))
+	 (go1-tag-b (form-tag (car tagbody1-body)))
+	 (tagbody2-body (form-body (caddr tagbody1-body)))
+	 (go2-tag-b (form-tag (cadr tagbody2-body))))
+    (assert (eq go1-tag-b go2-tag-b)))
+  (let* ((form '(symbol-macrolet ((a 1))
+		 (tagbody
+		    (go a)
+		  a))) ;this A must be parsed as TAG, and the GO above must refer to a known tag. See CLHS for TAGBODY: "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element."
+	 (ast (parse-with-empty-namespaces form))
+	 (tagbody-form (form-body (car (form-body ast))))
+	 (go-tag-a (form-tag (car tagbody-form)))
+	 (tagbody-tag-a (cadr tagbody-form)))
+    (assert (eq go-tag-a tagbody-tag-a))
+    (assert (typep tagbody-tag-a 'tag))))
 (test-tagbody)
 
 ;;;; DEPARSER
