@@ -68,7 +68,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :blo :nso-definition
    :tag :nso-definition :nso-gopoint :nso-jumpers
    :*print-detailed-walker-objects*
-   :valid-function-name-p
+   :valid-function-name-p :fun :setf-fun
    :namespace :namespace-var :namespace-fun :namespace-blo
    :lexical-namespace
    :free-namespace
@@ -114,7 +114,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :special-form
    :function-form :form-object
    :progn-form
-   :binding :binding-parent :binding-sym
+   :binding :binding-parent :binding-sym :form-sym ;I should rename #'BINDING-SYM to FORM-SYM for consistency and easier remembering.
    :var-binding :binding-value
    :bindings-form :form-bindings :form-declspecs
    :let-form
@@ -191,6 +191,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :deparse-progv-form
    :deparse-unwind-protect-form
    :deparse-application-form
+   :deparse-macroapplication-form
    :deparse-symbol-macrolet-form
    :deparse-macrolet-form
    :deparse-tagbody-form
@@ -429,8 +430,8 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 	       (assert (symbolp identifier) () "Malformed declaration identifier ~S" identifier)
 	       (let ((parsed-declspec
 		      (cond
-			((and (not (null customparsedeclspecp-function)) (funcall customparsedeclspecp-function identifier body lexical-namespace free-namespace parent))
-			 (funcall customparsedeclspec-function identifier body lexical-namespace free-namespace parent))
+			((and (not (null customparsedeclspecp-function)) (funcall customparsedeclspecp-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
+			 (funcall customparsedeclspec-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
 			((find identifier '(type ftype))
 			 (assert (and (listp body) (listp (cdr body))) () "Malformed ~S declaration: ~S" identifier expr)
 			 (let* ((typespec (car body))
@@ -1154,8 +1155,8 @@ Return the parsed abstract syntax tree (AST)."
 	     (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
 	     (loop for form in body collect (reparse form current :lexical-namespace lexical-namespace))))
     (cond
-      ((and (not (null customparsep-function)) (funcall customparsep-function form lexical-namespace free-namespace parent))
-       (funcall customparse-function form lexical-namespace free-namespace parent))
+      ((and (not (null customparsep-function)) (funcall customparsep-function form lexical-namespace free-namespace parent :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
+       (funcall customparse-function form lexical-namespace free-namespace parent :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
       ((or (eq form nil) (eq form t))
        (make-instance 'selfevalobject :object form))
       ((symbolp form)
@@ -1246,7 +1247,7 @@ Return the parsed abstract syntax tree (AST)."
 		    current)))))
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
-		   (current (make-instance 'lambda-form)))
+		   (current (make-instance 'lambda-form :parent parent)))
 	      (parse-and-set-functiondef lambda-list-and-body #'parse-ordinary-lambda-list lexical-namespace free-namespace current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 	      current))
 	   ((eq head 'block)
@@ -1453,10 +1454,10 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   (let* ((lexical-namespace-here-list nil)
 	 (free-namespace-here-list nil))
     (parse-with-empty-namespaces form
-				 :customparsep-function (lambda (form lexical-namespace free-namespace parent)
+				 :customparsep-function (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
 							  (declare (ignore lexical-namespace free-namespace parent))
 							  (eq form heresymbol))
-				 :customparse-function (lambda (form lexical-namespace free-namespace parent)
+				 :customparse-function (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
 							 (declare (ignorable form parent))
 							 (push lexical-namespace lexical-namespace-here-list)
 							 (push free-namespace free-namespace-here-list))
@@ -2009,6 +2010,10 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   (declare (ignore parent))
   (list* (funcall recurse-function (form-fun ast) ast)
 	 (mapcar (lambda (argument) (funcall recurse-function argument ast)) (form-arguments ast))))
+(defun deparse-macroapplication-form (ast parent recurse-function)
+  (declare (ignore parent))
+  (list* (funcall recurse-function (form-fun ast) ast)
+	 (form-arguments ast)))
 (defun deparse-symbol-macrolet-form (ast parent recurse-function)
   (declare (ignore parent))
   (list* 'symbol-macrolet
@@ -2066,19 +2071,20 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (multiple-value-prog1-form #'deparse-multiple-value-prog1-form)
     (progv-form #'deparse-progv-form)
     (unwind-protect-form #'deparse-unwind-protect-form)
+    (macroapplication-form #'deparse-macroapplication-form)
     (application-form #'deparse-application-form)
     (symbol-macrolet-form #'deparse-symbol-macrolet-form)
     (macrolet-form #'deparse-macrolet-form)
     (tagbody-form #'deparse-tagbody-form)
     (go-form #'deparse-go-form)))
 
-(defun deparse (ast &key parent customdeparsep-function customdeparse-function)
+(defun deparse (ast parent &key customdeparsep-function customdeparse-function)
   "Return the Lisp form encoded by the AST.
 This works by recursively calling the DEPARSE-* function matching the current sub-form of the AST.
 PARENT is passed to the DEPARSE-* functions, which ignore it.
 Before a DEPARSE-* function is called, and if CUSTOMPARSEP-FUNCTION is non-NIL, it is called with the current AST and its parent, and if it returns non-NIL, then instead of calling a DEPARSE-* function on the current AST, CUSTOMPARSE-FUNCTION is called with two parameters: the current AST and its parent. This allows handling some sub-forms of the AST differently, for example not to recurse into some of them."
-  (if (and customdeparsep-function (funcall customdeparsep-function ast parent))
-      (funcall customdeparse-function ast parent)
+  (if (and customdeparsep-function (funcall customdeparsep-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function))
+      (funcall customdeparse-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function)
       (funcall (deparse-typecase ast) ast parent #'deparse)))
 
 (defun map-ast (function ast &key parent customdeparsep-function customdeparse-function)
@@ -2088,8 +2094,8 @@ Before FUNCTION is called, and if CUSTOMPARSEP-FUNCTION is non-NIL, it is called
 Return NIL."
   ;;TODO: FIXME: the DEPARSE-* functions above do not call RECURSE-FUNCTION for some slots (those which are not parsed by #'PARSE). Come up with a scheme that allows an adapted RECURSE-FUNCTION to know what type those unparsed slots are (e.g. type specifiers). The slots to which this applies is marked above with "TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)".
   (labels ((helper (ast parent)
-	     (if (and customdeparsep-function (funcall customdeparsep-function ast parent))
-		 (funcall customdeparse-function ast parent)
+	     (if (and customdeparsep-function (funcall customdeparsep-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function))
+		 (funcall customdeparse-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function)
 		 (progn
 		   (funcall function ast parent)
 		   (funcall (deparse-typecase ast) ast parent #'helper)))
