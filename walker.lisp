@@ -27,7 +27,7 @@
 ;;T
 ;; is accessor #'FDEFINITION redundant to #'SYMBOL-FUNCTION?
 
-;; This file contains the core of the parser, i.e. parsers for TODO all special forms.
+;; This file contains the core of the parser, i.e. parsers for all special forms.
 
 ;; CLHS 3.1.2.1.2.1 Special Forms
 ;; block      let*                  return-from      
@@ -58,7 +58,7 @@ It should have as little semantics in it as possible (while still being useful a
 Type declarations are parsed, but the contained types are neither parsed nor interpreted.")
   (:use :cl)
   (:export
-   ;; for classes: export the class and _all_ accessors on one line so that deletion doesn't have to consider all exports
+   ;; for classes: export the class and _all_ accessors on one line so that deleting a class doesn't have to consider all exports of other classes
    :proper-list-p
    ;; NAMESPACES
    :nso :nso-name :nso-freep
@@ -202,7 +202,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
 
 (in-package :walker)
 
-;; TODO: FIXME: Package WALKER should handle input containing arbitrary nonsense gracefully, except maybe circular lists. TODO: FIXME: CLHS seems to require allowing circular constants. Related are "Issues/iss079_w.htm", which talks about circular constants, "Issues/iss215_w.htm" talks about #'MAKE-LOAD-FORM. I don't know about circular code (which could maybe implemented by a JMP/LONGJMP). I would have to splatter the checks for circular lists in the whole code since the user might call any function with a circular list.
+;; TODO: FIXME: Package WALKER should handle input containing arbitrary nonsense gracefully, except maybe circular lists. TODO: FIXME: CLHS seems to require allowing circular constants. Related are "Issues/iss079_w.htm", which talks about circular constants, "Issues/iss215_w.htm" talks about #'MAKE-LOAD-FORM. I don't know about circular code (which could be implemented maybe using a JMP/LONGJMP). I would have to splatter the checks for circular lists in the whole code since the user might call any function with a circular list.
 (defun proper-list-p (list)
   "Return T if LIST is a proper list, NIL otherwise."
   ;; TODO: FIXME: check for circularity.
@@ -295,6 +295,7 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
    ;; types ;i.e. class- or structure-names
    )
   (:documentation "A namespace"))
+;; TODO: CLHS Glossary says on "lexical environment": "A lexical environment contains [...] local declarations (see declare)." So I should think about storing DECLSPECs not in VAR, but in NAMESPACE. On the other hand, VARs are stored in NAMESPACE, so the DECLSPECs are already stored in NAMESPACE indirectly.
 (defclass lexical-namespace (namespace)
   ()
   (:documentation "A lexical namespace (containing bound namespace objects). This means that (NSO-FREEP OBJECT)==NIL for all OBJECTs in any slot of the namespace."))
