@@ -393,7 +393,7 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 ;; TODO: add global variables defined by Common Lisp.
 (defun make-default-free-common-lisp-namespace ()
   "Return a free namespace in which all [TODO: variables,] functions, and macros available by default in package COMMON-LISP are present. The FUN-objects in the return namespace must have their MACROP-slot bound appropriately, so that parsing '(DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL) doesn't fail anymore."
-  (let ((free-namespace (make-instance 'free-namespace))
+  (let ((free-namespace (make-empty-free-namespace))
 	;; the list of Common Lisp macros: (determined by looking at differences between SBCL and CLISP of global *LISP-MACROS* computed in file all-lisp-symbols.lisp)
 	(common-lisp-macros '(AND ASSERT CALL-METHOD CASE CCASE CHECK-TYPE COND CTYPECASE DECF DECLAIM DEFCLASS DEFCONSTANT DEFGENERIC DEFINE-COMPILER-MACRO DEFINE-CONDITION DEFINE-METHOD-COMBINATION DEFINE-MODIFY-MACRO DEFINE-SETF-EXPANDER DEFINE-SYMBOL-MACRO DEFMACRO DEFMETHOD DEFPACKAGE DEFPARAMETER DEFSETF DEFSTRUCT DEFTYPE DEFUN DEFVAR DESTRUCTURING-BIND DO DO* DO-ALL-SYMBOLS DO-EXTERNAL-SYMBOLS DO-SYMBOLS DOLIST DOTIMES ECASE ETYPECASE FORMATTER HANDLER-BIND HANDLER-CASE IGNORE-ERRORS IN-PACKAGE INCF LAMBDA LOOP LOOP-FINISH MULTIPLE-VALUE-BIND MULTIPLE-VALUE-LIST MULTIPLE-VALUE-SETQ NTH-VALUE OR POP PPRINT-LOGICAL-BLOCK PRINT-UNREADABLE-OBJECT PROG PROG* PROG1 PROG2 PSETF PSETQ PUSH PUSHNEW REMF RESTART-BIND RESTART-CASE RETURN ROTATEF SETF SHIFTF STEP TIME TRACE TYPECASE UNLESS UNTRACE WHEN WITH-ACCESSORS WITH-COMPILATION-UNIT WITH-CONDITION-RESTARTS WITH-HASH-TABLE-ITERATOR WITH-INPUT-FROM-STRING WITH-OPEN-FILE WITH-OPEN-STREAM WITH-OUTPUT-TO-STRING WITH-PACKAGE-ITERATOR WITH-SIMPLE-RESTART WITH-SLOTS WITH-STANDARD-IO-SYNTAX))
 	;; the list of Common Lisp functions: (determined by global *LISP-FUNCTIONS* computed in file all-lisp-symbols.lisp, which are equal between SBCL and CLISP)
@@ -1776,6 +1776,8 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 
 ;;;; DEPARSER
 
+;; TODO: remove parameter PARENT. it is useless, because to obtain the parent simply do (FORM-PARENT AST).
+
 (defun deparse-nso (nso parent recurse-function)
   (declare (ignore parent recurse-function))
   (nso-name nso))
@@ -2083,9 +2085,11 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 This works by recursively calling the DEPARSE-* function matching the current sub-form of the AST.
 PARENT is passed to the DEPARSE-* functions, which ignore it.
 Before a DEPARSE-* function is called, and if CUSTOMPARSEP-FUNCTION is non-NIL, it is called with the current AST and its parent, and if it returns non-NIL, then instead of calling a DEPARSE-* function on the current AST, CUSTOMPARSE-FUNCTION is called with two parameters: the current AST and its parent. This allows handling some sub-forms of the AST differently, for example not to recurse into some of them."
-  (if (and customdeparsep-function (funcall customdeparsep-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function))
-      (funcall customdeparse-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function)
-      (funcall (deparse-typecase ast) ast parent #'deparse)))
+  (flet ((recurse (ast parent)
+	   (deparse ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function)))
+    (if (and customdeparsep-function (funcall customdeparsep-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function))
+	(funcall customdeparse-function ast parent :customdeparsep-function customdeparsep-function :customdeparse-function customdeparse-function)
+	(funcall (deparse-typecase ast) ast parent #'recurse))))
 
 (defun map-ast (function ast &key parent customdeparsep-function customdeparse-function)
   "Recursively apply FUNCTION to all objects occurring in the AST in the order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
