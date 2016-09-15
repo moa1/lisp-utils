@@ -106,6 +106,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;;:parse-lambda-list ;do not export this as it should be split into several smaller functions.
    :parse-ordinary-lambda-list
    :parse-macro-lambda-list
+   :form-var ;for future extensions
    ;; FORMS
    :generalform
    :selfevalobject :selfevalobject-object
@@ -114,8 +115,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :special-form
    :function-form :form-object
    :progn-form
-   :binding :binding-parent :binding-sym :form-sym ;I should rename #'BINDING-SYM to FORM-SYM for consistency and easier remembering.
-   :var-binding :binding-value
+   :binding :form-parent :form-sym
+   :var-binding :form-value
    :bindings-form :form-bindings :form-declspecs
    :let-form
    :let*-form
@@ -911,10 +912,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass progn-form (special-form body-form)
   ())
 (defclass binding ()
-  ((parent :initarg :parent :accessor binding-parent :documentation "the LET-FORM, LET*-FORM, FLET-FORM, LABELS-FORM, SYMBOL-MACROLET-FORM, or MACROLET-FORM in which the binding is defined.")
-   (sym :initarg :sym :accessor binding-sym :type sym)))
+  ((parent :initarg :parent :accessor form-parent :documentation "the LET-FORM, LET*-FORM, FLET-FORM, LABELS-FORM, SYMBOL-MACROLET-FORM, or MACROLET-FORM in which the binding is defined.")
+   (sym :initarg :sym :accessor form-sym :type sym)))
 (defclass var-binding (binding)
-  ((value :initarg :value :accessor binding-value :documentation "Either NIL if not given, or the form initializing the variable, or the expansion form of the symbol macro." :type (or null generalform t))))
+  ((value :initarg :value :accessor form-value :documentation "Either NIL if not given, or the form initializing the variable, or the expansion form of the symbol macro." :type (or null generalform t))))
 (defclass bindings-form ()
   ((bindings :initarg :bindings :accessor form-bindings :type list :documentation "list of VAR-BINDINGs, or FUN-BINDINGs")
    (declspecs :initarg :declspecs :accessor form-declspecs :type list :documentation "list of DECLSPECs"))
@@ -1004,9 +1005,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object var-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
-      (format stream "~S" (binding-sym object))
-      (when (binding-value object)
-	(format stream " ~S" (binding-value object))))))
+      (format stream "~S" (form-sym object))
+      (when (form-value object)
+	(format stream " ~S" (form-value object))))))
 (defun format-body (object declspecsp documentationp)
   (labels ((rec (list)
 	     (if (null list)
@@ -1030,7 +1031,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object fun-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
-      (format stream "~S ~S ~A" (binding-sym object) (form-llist object) (format-body object t t)))))
+      (format stream "~S ~S ~A" (form-sym object) (form-llist object) (format-body object t t)))))
 (defmethod print-object ((object lambda-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~A" (form-llist object) (format-body object t t))))
@@ -1204,7 +1205,7 @@ Return the parsed abstract syntax tree (AST)."
 				(parsed-value (ecase head ((let* let) (if value-form-present-p (reparse value-form binding :lexical-namespace lexical-namespace) nil)) ((symbol-macrolet) value-form)))
 				(macrop (ecase head ((let* let) nil) ((symbol-macrolet) t)))
 				(sym (make-instance 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop)))
-			   (setf (binding-sym binding) sym) (setf (binding-value binding) parsed-value)
+			   (setf (form-sym binding) sym) (setf (form-value binding) parsed-value)
 			   binding))
 		       (make-fun-binding (def lexical-namespace)
 			 (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def)
@@ -1218,7 +1219,7 @@ Return the parsed abstract syntax tree (AST)."
 				  (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop)))
 			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
-			     (setf (binding-sym binding) sym)
+			     (setf (form-sym binding) sym)
 			     (setf (nso-definition blo) binding)
 			     binding))))
 		(multiple-value-bind (parsed-bindings new-lexical-namespace)
@@ -1226,7 +1227,7 @@ Return the parsed abstract syntax tree (AST)."
 		      (cond
 			((find head '(let flet symbol-macrolet macrolet))
 			 (let* ((parsed-bindings (loop for def in definitions collect (funcall parse-value-function def lexical-namespace)))
-				(parsed-syms (loop for binding in parsed-bindings collect (binding-sym binding)))
+				(parsed-syms (loop for binding in parsed-bindings collect (form-sym binding)))
 				(new-lexical-namespace lexical-namespace))
 			   (loop for sym in parsed-syms do (setf new-lexical-namespace (augment-lexical-namespace sym new-lexical-namespace)))
 			   (values parsed-bindings new-lexical-namespace)))
@@ -1234,7 +1235,7 @@ Return the parsed abstract syntax tree (AST)."
 			 (let* ((new-lexical-namespace lexical-namespace)
 				(parsed-bindings (loop for def in definitions collect
 						      (let* ((parsed-binding (funcall parse-value-function def new-lexical-namespace))
-							     (parsed-sym (binding-sym parsed-binding)))
+							     (parsed-sym (form-sym parsed-binding)))
 							(setf new-lexical-namespace (augment-lexical-namespace parsed-sym new-lexical-namespace))
 							parsed-binding))))
 			   (values parsed-bindings new-lexical-namespace)))
@@ -1481,7 +1482,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (let* ((lexical-namespace (car (namespaces-at '(let ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
-	      (not (eq b-sym (binding-value (nso-definition c-sym))))))
+	      (not (eq b-sym (form-value (nso-definition c-sym))))))
     (assert (let* ((lexical-namespace (car (namespaces-at '(flet ((b ()) (c () #'b)) -here-))))
 		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
@@ -1489,7 +1490,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (let* ((lexical-namespace (car (namespaces-at '(let* ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
-	      (eq b-sym (binding-value (nso-definition c-sym)))))
+	      (eq b-sym (form-value (nso-definition c-sym)))))
     (assert (let* ((lexical-namespace (car (namespaces-at '(labels ((b ()) (c () #'b)) -here-))))
 		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
@@ -1499,16 +1500,16 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	   (lexical-namespace-2 (cadr lexical-namespaces))
 	   (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
 	   (b-2 (namespace-lookup 'var 'b lexical-namespace-2)))
-      (assert (eq (selfevalobject-object (binding-value (nso-definition b-1))) 5))
-      (assert (eq b-1 (binding-value (nso-definition b-2))))
+      (assert (eq (selfevalobject-object (form-value (nso-definition b-1))) 5))
+      (assert (eq b-1 (form-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
     (let* ((lexical-namespaces (namespaces-at '(let* ((b 5)) -here- (let* ((b b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
 	   (lexical-namespace-2 (cadr lexical-namespaces))
 	   (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
 	   (b-2 (namespace-lookup 'var 'b lexical-namespace-2)))
-      (assert (eq (selfevalobject-object (binding-value (nso-definition b-1))) 5))
-      (assert (eq b-1 (binding-value (nso-definition b-2))))
+      (assert (eq (selfevalobject-object (form-value (nso-definition b-1))) 5))
+      (assert (eq b-1 (form-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
     (let* ((lexical-namespaces (namespaces-at '(flet ((b ())) -here- (flet ((b () #'b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
@@ -1543,11 +1544,11 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (let* ((form '(let ((a 1)) (declare (type fixnum a)) a))
 	   (ast (parse-with-empty-namespaces form))
 	   (declspec-type (car (form-declspecs ast))))
-      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-vars declspec-type)) (car (form-body ast)))))
+      (assert (all-equal (form-sym (car (form-bindings ast))) (car (declspec-vars declspec-type)) (car (form-body ast)))))
     (let* ((form '(flet ((a ())) (declare (ftype fixnum a)) #'a))
 	   (ast (parse-with-empty-namespaces form))
 	   (declspec-ftype (car (form-declspecs ast))))
-      (assert (all-equal (binding-sym (car (form-bindings ast))) (car (declspec-funs declspec-ftype)) (form-object (car (form-body ast))))))
+      (assert (all-equal (form-sym (car (form-bindings ast))) (car (declspec-funs declspec-ftype)) (form-object (car (form-body ast))))))
     (let* ((ast (parse-with-empty-namespaces '(locally (declare (type fixnum a)) a)))
 	   (declspec-type (car (form-declspecs ast)))
 	   (declspec-type-a (car (declspec-vars declspec-type)))
@@ -1632,7 +1633,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	 (a-bla1 (car (form-arguments (car progn-body))))
 	 (let-form (cadr progn-body))
 	 (let-body (form-body let-form))
-	 (a-let (binding-sym (car (form-bindings let-form))))
+	 (a-let (form-sym (car (form-bindings let-form))))
 	 (a-bla2 (car (form-arguments (car let-body))))
 	 (a-load-time-value (form-value (cadr let-body))))
     (assert (nso-freep a-bla1))
@@ -1659,7 +1660,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 			       :free-common-lisp-namespace t)
   (let* ((form '(symbol-macrolet ((a 2)) a))
 	 (ast (parse-with-empty-namespaces form))
-	 (a-binding (binding-sym (car (form-bindings ast))))
+	 (a-binding (form-sym (car (form-bindings ast))))
 	 (a-body (car (form-body ast))))
     (assert (eq a-binding a-body)))
   ;; I should not add a check that (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing since this would require evaluation of macro A, which should not be part of WALKER because it should contain as little semantics as possible. (If you want to add semantics somewhere else, you might consider passing to #'PARSE a form read using the package FARE-QUASIQUOTE since different Lisps read the backquote (`) differently.)
@@ -1893,13 +1894,13 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   (deparse-body ast recurse-function nil nil))
 (defun deparse-var-binding (binding parent recurse-function)
   (declare (ignore parent))
-  (if (or (binding-value binding)
-	  (nso-macrop (binding-sym binding))) ;(SYMBOL-MACROLET ((A NIL)) A) must not be converted to (SYMBOL-MACROLET ((A)) A)
-      (list (funcall recurse-function (binding-sym binding) binding)
-	    (if (typep (binding-value binding) 'generalform)
-		(funcall recurse-function (binding-value binding) binding)
-		(binding-value binding)))
-      (funcall recurse-function (binding-sym binding) binding)))
+  (if (or (form-value binding)
+	  (nso-macrop (form-sym binding))) ;(SYMBOL-MACROLET ((A NIL)) A) must not be converted to (SYMBOL-MACROLET ((A)) A)
+      (list (funcall recurse-function (form-sym binding) binding)
+	    (if (typep (form-value binding) 'generalform)
+		(funcall recurse-function (form-value binding) binding)
+		(form-value binding)))
+      (funcall recurse-function (form-sym binding) binding)))
 (defun deparse-let-form (ast parent recurse-function)
   (declare (ignore parent))
   (list* 'let
@@ -1917,7 +1918,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	 (deparse-body ast recurse-function nil nil)))
 (defun deparse-fun-binding (binding parent recurse-function)
   (declare (ignore parent))
-  (list* (funcall recurse-function (binding-sym binding) binding)
+  (list* (funcall recurse-function (form-sym binding) binding)
 	 (funcall recurse-function (form-llist binding) binding)
 	 (deparse-body binding recurse-function t t)))
 (defun deparse-flet-form (ast parent recurse-function)
