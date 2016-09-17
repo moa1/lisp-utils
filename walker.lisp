@@ -1957,7 +1957,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	 (funcall recurse-function (form-test ast) ast)
 	 (funcall recurse-function (form-then ast) ast)
 	 (when (form-else ast)
-	   (funcall recurse-function (form-else ast) ast))))
+	   (list (funcall recurse-function (form-else ast) ast)))))
 (defun deparse-setq-form (ast parent recurse-function)
   (declare (ignore parent))
   (list* 'setq
