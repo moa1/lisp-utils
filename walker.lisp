@@ -89,6 +89,10 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :declspec-optimize :declspec-qualities
    :declspec-ignore :declspec-syms
    :declspec-ignorable :declspec-syms
+   :declspec-inline :declspec-funs
+   :declspec-notinline :declspec-funs
+   :declspec-dynamic-extent :declspec-syms
+   :declspec-special :declspec-vars
    :parse-declspecs
    :parse-declaration-in-body
    :parse-declaration-and-documentation-in-body
@@ -160,6 +164,10 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :deparse-declspec-optimize
    :deparse-declspec-ignore
    :deparse-declspec-ignorable
+   :deparse-declspec-dynamic-extent
+   :deparse-declspec-inline
+   :deparse-declspec-notinline
+   :deparse-declspec-special
    :deparse-required-argument
    :deparse-optional-argument
    :deparse-key-argument
@@ -421,6 +429,14 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   ((syms :initarg :syms :accessor declspec-syms :type list :documentation "list of VARs and FUNs")))
 (defclass declspec-ignorable (declspec)
   ((syms :initarg :syms :accessor declspec-syms :type list :documentation "list of VARs and FUNs")))
+(defclass declspec-dynamic-extent (declspec)
+  ((syms :initarg :funs :accessor declspec-syms :type list :documentation "list of VARs and FUNs")))
+(defclass declspec-inline (declspec)
+  ((funs :initarg :funs :accessor declspec-funs :type list)))
+(defclass declspec-notinline (declspec)
+  ((funs :initarg :funs :accessor declspec-funs :type list)))
+(defclass declspec-special (declspec)
+  ((vars :initarg :vars :accessor declspec-vars :type list)))
 
 (defun parse-declspecs (declspecs lexical-namespace free-namespace parent &key customparsedeclspecp-function customparsedeclspec-function)
   "Example: (PARSE-DECLSPECS '((TYPE FIXNUM A B C) (IGNORE A)) (MAKE-EMPTY-LEXICAL-NAMESPACE) (MAKE-EMPTY-FREE-NAMESPACE) NIL)"
@@ -458,7 +474,7 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 						     (assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
 						     (cons quality nil))))))
 			   (make-instance 'declspec-optimize :parent parent :qualities qualities)))
-			((find identifier '(ignore ignorable))
+			((find identifier '(ignore ignorable dynamic-extent))
 			 (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
 			 (let* ((syms body))
 			   (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
@@ -470,13 +486,32 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 						       (namespace-lookup/create 'fun (cadr sym) lexical-namespace free-namespace))
 						      (t
 						       (error "Symbol in ~S declaration must be either a SYMBOL or a function name, but is ~S" identifier sym)))))
-				  (parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable)) :parent parent :syms parsed-syms)))
+				  (parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
 			     (loop for sym in parsed-syms do
 				  (push parsed-declspec (nso-declspecs sym)))
 			     parsed-declspec)))
 			;; probably not TODO (since the parser should contain as little semantics as possible): when adding DYNAMIC-EXTENT and SPECIAL, add an assertion that, as defined in CLHS on DYNAMIC-EXTENT, "The vars and fns named in a dynamic-extent declaration must not refer to symbol macro or macro bindings." and an assertion that, as defined in CLHS on SYMBOL-MACROLET, "Exactly the same declarations are allowed as for let with one exception: symbol-macrolet signals an error if a special declaration names one of the symbols being defined by symbol-macrolet."
-			((find identifier '(dynamic-extent inline special notinline))
-			 (error "declaration identifier ~A not implemented yet" identifier))
+			((find identifier '(inline notinline))
+			 (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+			 (let* ((funs body))
+			   (assert (proper-list-p funs) () "Not a proper list in ~S declaration: ~S" identifier expr)
+			   (let* ((parsed-funs (loop for fun in funs collect
+						    (progn
+						      (assert (valid-function-name-p fun))
+						      (namespace-lookup/create 'fun fun lexical-namespace free-namespace))))
+				  (parsed-declspec (make-instance (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
+			     (loop for fun in parsed-funs do
+				  (push parsed-declspec (nso-declspecs fun)))
+			     parsed-declspec)))
+			((eq identifier 'special)
+			 (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+			 (let* ((vars body))
+			   (assert (proper-list-p vars) () "Not a proper list in ~S declaration: ~S" identifier expr)
+			   (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var lexical-namespace free-namespace)))
+				  (parsed-declspec (make-instance 'declspec-special :parent parent :vars parsed-vars)))
+			     (loop for var in parsed-vars do
+				  (push parsed-declspec (nso-declspecs var)))
+			     parsed-declspec)))
 			(t (error "Unknown declaration specifier ~S" expr)))))
 		 parsed-declspec))))
     (assert (proper-list-p declspecs) () "Declaration specifications must be a proper list, but are ~S" declspecs)
@@ -548,6 +583,24 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
   (assert (typep (elt declspecs 1) 'declspec-ftype))
   (assert (typep (elt declspecs 2) 'declspec-optimize))
   (assert (typep (elt declspecs 3) 'declspec-ignore)))
+(multiple-value-bind (body declspecs)
+    (parse-declaration-in-body '((declare (inline f1 f2)) (declare (notinline f1)))
+			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil)
+  (assert (equal body nil))
+  (assert (let ((inl (elt declspecs 0)))
+	    (and (typep inl 'declspec-inline)
+		 (and (eq (nso-name (car (declspec-funs inl))) 'f1)
+		      (eq (nso-name (cadr (declspec-funs inl))) 'f2)))))
+  (assert (let ((notinl (elt declspecs 1)))
+	    (and (typep notinl 'declspec-notinline)
+		 (eq (nso-name (car (declspec-funs notinl))) 'f1)))))
+(multiple-value-bind (body declspecs)
+    (parse-declaration-in-body '((declare (special a)))
+			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil)
+  (assert (equal body nil))
+  (assert (let ((spec (elt declspecs 0)))
+	    (and (typep spec 'declspec-special)
+		 (eq (nso-name (car (declspec-vars spec))) 'a)))))
 
 (defun parse-declaration-and-documentation-in-body (body lexical-namespace free-namespace parent &key customparsedeclspecp-function customparsedeclspec-function)
   "Parses declarations and documentation in the beginning of BODY.
@@ -587,6 +640,18 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defmethod print-object ((object declspec-ignorable) stream)
   (print-unreadable-object (object stream :type t :identity nil)
     (format stream "~S" (cons 'ignorable (declspec-syms object)))))
+(defmethod print-object ((object declspec-dynamic-extent) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~S" (cons 'dynamic-extent (declspec-syms object)))))
+(defmethod print-object ((object declspec-inline) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~S" (cons 'inline (declspec-funs object)))))
+(defmethod print-object ((object declspec-notinline) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~S" (cons 'notinline (declspec-funs object)))))
+(defmethod print-object ((object declspec-special) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~S" (cons 'special (declspec-vars object)))))
 
 ;;;; LAMBDA LISTS
 ;; see CLHS 3.4 Lambda Lists
@@ -1805,14 +1870,33 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 (defun deparse-declspec-ignore (declspec parent recurse-function)
   (declare (ignore parent))
   (list* 'ignore
-	 (mapcar (lambda (var)
-		   (funcall recurse-function var declspec))
+	 (mapcar (lambda (sym) (funcall recurse-function sym declspec))
 		 (declspec-syms declspec))))
 (defun deparse-declspec-ignorable (declspec parent recurse-function)
   (declare (ignore parent))
   (list* 'ignorable
-	 (mapcar (lambda (var) (funcall recurse-function var declspec))
+	 (mapcar (lambda (sym) (funcall recurse-function sym declspec))
 		 (declspec-syms declspec))))
+(defun deparse-declspec-dynamic-extent (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'dynamic-extent
+	 (mapcar (lambda (sym) (funcall recurse-function sym declspec))
+		 (declspec-syms declspec))))
+(defun deparse-declspec-inline (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'inline
+	 (mapcar (lambda (fun) (funcall recurse-function fun declspec))
+		 (declspec-funs declspec))))
+(defun deparse-declspec-notinline (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'notinline
+	 (mapcar (lambda (fun) (funcall recurse-function fun declspec))
+		 (declspec-funs declspec))))
+(defun deparse-declspec-special (declspec parent recurse-function)
+  (declare (ignore parent))
+  (list* 'special
+	 (mapcar (lambda (var) (funcall recurse-function var declspec))
+		 (declspec-vars declspec))))
 
 (defun deparse-required-argument (argument parent recurse-function)
   (declare (ignore parent))
@@ -2044,6 +2128,10 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (declspec-optimize #'deparse-declspec-optimize)
     (declspec-ignore #'deparse-declspec-ignore)
     (declspec-ignorable #'deparse-declspec-ignorable)
+    (declspec-dynamic-extent #'deparse-declspec-dynamic-extent)
+    (declspec-inline #'deparse-declspec-inline)
+    (declspec-notinline #'deparse-declspec-notinline)
+    (declspec-special #'deparse-declspec-special)
     (required-argument #'deparse-required-argument)
     (optional-argument #'deparse-optional-argument)
     (key-argument #'deparse-key-argument)
