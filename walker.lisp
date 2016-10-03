@@ -445,75 +445,73 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 	     (let* ((identifier (car expr))
 		    (body (cdr expr)))
 	       (assert (symbolp identifier) () "Malformed declaration identifier ~S" identifier)
-	       (let ((parsed-declspec
-		      (cond
-			((and (not (null customparsedeclspecp-function)) (funcall customparsedeclspecp-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
-			 (funcall customparsedeclspec-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
-			((find identifier '(type ftype))
-			 (assert (and (listp body) (listp (cdr body))) () "Malformed ~S declaration: ~S" identifier expr)
-			 (let* ((typespec (car body))
-				(syms (cdr body)))
-			   ;; will not check TYPESPEC, has to be done in user code.
-			   (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
-			   (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym lexical-namespace free-namespace)))
-				  (parsed-declspec (ecase identifier
-						     ((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
-						     ((ftype) (make-instance 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
-			     (loop for sym in parsed-syms do
-				  (push parsed-declspec (nso-declspecs sym)))
-			     parsed-declspec)))
-			((eq identifier 'optimize)
-			 (assert (proper-list-p body) () "~S declaration is not a proper list: ~S" identifier expr)
-			 (let ((qualities (loop for quality-value in body collect
-					       (if (consp quality-value)
-						   (let ((quality (car quality-value))
-							 (rest (cdr quality-value)))
-						     (assert (and (symbolp quality) (consp rest) (find (car rest) '(0 1 2 3)) (null (cdr rest))) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
-						     (cons quality (car rest)))
-						   (let ((quality quality-value))
-						     (assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
-						     (cons quality nil))))))
-			   (make-instance 'declspec-optimize :parent parent :qualities qualities)))
-			((find identifier '(ignore ignorable dynamic-extent))
-			 (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
-			 (let* ((syms body))
-			   (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
-			   (let* ((parsed-syms (loop for sym in syms collect
-						    (cond
-						      ((symbolp sym)
-						       (namespace-lookup/create 'var sym lexical-namespace free-namespace))
-						      ((and (consp sym) (eq (car sym) 'function) (valid-function-name-p (cadr sym)))
-						       (namespace-lookup/create 'fun (cadr sym) lexical-namespace free-namespace))
-						      (t
-						       (error "Symbol in ~S declaration must be either a SYMBOL or a function name, but is ~S" identifier sym)))))
-				  (parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
-			     (loop for sym in parsed-syms do
-				  (push parsed-declspec (nso-declspecs sym)))
-			     parsed-declspec)))
-			;; probably not TODO (since the parser should contain as little semantics as possible): when adding DYNAMIC-EXTENT and SPECIAL, add an assertion that, as defined in CLHS on DYNAMIC-EXTENT, "The vars and fns named in a dynamic-extent declaration must not refer to symbol macro or macro bindings." and an assertion that, as defined in CLHS on SYMBOL-MACROLET, "Exactly the same declarations are allowed as for let with one exception: symbol-macrolet signals an error if a special declaration names one of the symbols being defined by symbol-macrolet."
-			((find identifier '(inline notinline))
-			 (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
-			 (let* ((funs body))
-			   (assert (proper-list-p funs) () "Not a proper list in ~S declaration: ~S" identifier expr)
-			   (let* ((parsed-funs (loop for fun in funs collect
-						    (progn
-						      (assert (valid-function-name-p fun))
-						      (namespace-lookup/create 'fun fun lexical-namespace free-namespace))))
-				  (parsed-declspec (make-instance (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
-			     (loop for fun in parsed-funs do
-				  (push parsed-declspec (nso-declspecs fun)))
-			     parsed-declspec)))
-			((eq identifier 'special)
-			 (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
-			 (let* ((vars body))
-			   (assert (proper-list-p vars) () "Not a proper list in ~S declaration: ~S" identifier expr)
-			   (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var lexical-namespace free-namespace)))
-				  (parsed-declspec (make-instance 'declspec-special :parent parent :vars parsed-vars)))
-			     (loop for var in parsed-vars do
-				  (push parsed-declspec (nso-declspecs var)))
-			     parsed-declspec)))
-			(t (error "Unknown declaration specifier ~S" expr)))))
-		 parsed-declspec))))
+	       (cond
+		 ((and (not (null customparsedeclspecp-function)) (funcall customparsedeclspecp-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
+		  (funcall customparsedeclspec-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
+		 ((find identifier '(type ftype))
+		  (assert (and (listp body) (listp (cdr body))) () "Malformed ~S declaration: ~S" identifier expr)
+		  (let* ((typespec (car body))
+			 (syms (cdr body)))
+		    ;; will not check TYPESPEC, has to be done in user code.
+		    (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
+		    (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym lexical-namespace free-namespace)))
+			   (parsed-declspec (ecase identifier
+					      ((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
+					      ((ftype) (make-instance 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
+		      (loop for sym in parsed-syms do
+			   (push parsed-declspec (nso-declspecs sym)))
+		      parsed-declspec)))
+		 ((eq identifier 'optimize)
+		  (assert (proper-list-p body) () "~S declaration is not a proper list: ~S" identifier expr)
+		  (let ((qualities (loop for quality-value in body collect
+					(if (consp quality-value)
+					    (let ((quality (car quality-value))
+						  (rest (cdr quality-value)))
+					      (assert (and (symbolp quality) (consp rest) (find (car rest) '(0 1 2 3)) (null (cdr rest))) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+					      (cons quality (car rest)))
+					    (let ((quality quality-value))
+					      (assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+					      (cons quality nil))))))
+		    (make-instance 'declspec-optimize :parent parent :qualities qualities)))
+		 ((find identifier '(ignore ignorable dynamic-extent))
+		  (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+		  (let* ((syms body))
+		    (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
+		    (let* ((parsed-syms (loop for sym in syms collect
+					     (cond
+					       ((symbolp sym)
+						(namespace-lookup/create 'var sym lexical-namespace free-namespace))
+					       ((and (consp sym) (eq (car sym) 'function) (valid-function-name-p (cadr sym)))
+						(namespace-lookup/create 'fun (cadr sym) lexical-namespace free-namespace))
+					       (t
+						(error "Symbol in ~S declaration must be either a SYMBOL or a function name, but is ~S" identifier sym)))))
+			   (parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
+		      (loop for sym in parsed-syms do
+			   (push parsed-declspec (nso-declspecs sym)))
+		      parsed-declspec)))
+		 ;; probably not TODO (since the parser should contain as little semantics as possible): when adding DYNAMIC-EXTENT and SPECIAL, add an assertion that, as defined in CLHS on DYNAMIC-EXTENT, "The vars and fns named in a dynamic-extent declaration must not refer to symbol macro or macro bindings." and an assertion that, as defined in CLHS on SYMBOL-MACROLET, "Exactly the same declarations are allowed as for let with one exception: symbol-macrolet signals an error if a special declaration names one of the symbols being defined by symbol-macrolet."
+		 ((find identifier '(inline notinline))
+		  (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+		  (let* ((funs body))
+		    (assert (proper-list-p funs) () "Not a proper list in ~S declaration: ~S" identifier expr)
+		    (let* ((parsed-funs (loop for fun in funs collect
+					     (progn
+					       (assert (valid-function-name-p fun))
+					       (namespace-lookup/create 'fun fun lexical-namespace free-namespace))))
+			   (parsed-declspec (make-instance (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
+		      (loop for fun in parsed-funs do
+			   (push parsed-declspec (nso-declspecs fun)))
+		      parsed-declspec)))
+		 ((eq identifier 'special)
+		  (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+		  (let* ((vars body))
+		    (assert (proper-list-p vars) () "Not a proper list in ~S declaration: ~S" identifier expr)
+		    (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var lexical-namespace free-namespace)))
+			   (parsed-declspec (make-instance 'declspec-special :parent parent :vars parsed-vars)))
+		      (loop for var in parsed-vars do
+			   (push parsed-declspec (nso-declspecs var)))
+		      parsed-declspec)))
+		 (t (error "Unknown declaration specifier ~S" expr))))))))
     (assert (proper-list-p declspecs) () "Declaration specifications must be a proper list, but are ~S" declspecs)
     (loop for declspec in declspecs collect
 	 (parse-declspec declspec))))
