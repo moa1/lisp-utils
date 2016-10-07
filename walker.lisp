@@ -225,7 +225,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
 (defclass nso ()
   ((name :initarg :name :accessor nso-name :type (or symbol list) :documentation "LIST is allowed for functions named (SETF NAME)")
    (freep :initarg :freep :accessor nso-freep :type boolean
-	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace."))
+	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace, i.e. there may be multiple NSO-instances with the same name and FREEP=T.")) ;e.g. in (LET ((X 1)) (DECLARE (SPECIAL X)) (LET ((X 2)) (LET ((OLD-X X) (X 3)) (DECLARE (SPECIAL X)) (LIST OLD-X X)))), there are two VAR-instances with name 'X and :FREEP==T.
   (:documentation "a namespace-object (NSO) containing a name and information whether it is free or bound"))
 (defclass sym (nso)
   ((definition :initarg :definition :accessor nso-definition :type (or binding llist)
@@ -509,9 +509,10 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 		    (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var lexical-namespace free-namespace)))
 			   (parsed-declspec (make-instance 'declspec-special :parent parent :vars parsed-vars)))
 		      (loop for var in parsed-vars do
+			   (setf (nso-freep var) t) ;mark all PARSED-VARS as special
 			   (push parsed-declspec (nso-declspecs var)))
 		      parsed-declspec)))
-		 (t (error "Unknown declaration specifier ~S" expr))))))))
+		 (t (error "Unknown declaration specifier ~S" expr))))))
     (assert (proper-list-p declspecs) () "Declaration specifications must be a proper list, but are ~S" declspecs)
     (loop for declspec in declspecs collect
 	 (parse-declspec declspec))))
