@@ -65,7 +65,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :sym :nso-definition :nso-declspecs
    :var
    :fun :nso-macrop
-   :blo :nso-definition
+   :blo :nso-definition :nso-jumpers
    :tag :nso-definition :nso-gopoint :nso-jumpers
    :*print-detailed-walker-objects*
    :valid-function-name-p :fun :setf-fun
@@ -244,8 +244,8 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
   (:documentation "The symbol of a function or macro"))
 (defclass blo (nso)
   ((definition :initarg :definition :accessor nso-definition
-	       :documentation "the parsed object (which should be an instance of a subclass of BLOCK-NAMING-FORM) that it is defined in, NIL if not known"))
-  ;; To add a slot that contains the list of RETURN-FROM-FORMs that jump to the end of (leave) the block named by this BLO (analogous to slot GOFORMS in TAG) maybe makes sense since one would want to know the forms in the code that jump to the end of the block. (But should I then also add a slot REFERENCES to all variables and functions? That would take too much memory for a general-purpose parser.) If I add such a slot it should be named JUMPERS to be consistent with class TAG.
+	       :documentation "the parsed object (which should be an instance of a subclass of BLOCK-NAMING-FORM) that it is defined in, NIL if not known")
+   (jumpers :initarg :jumpers :accessor nso-jumpers :type list :documentation "The list of RETURN-FROM-FORMs that return from this BLO."))
   (:documentation "A named block."))
 (defclass tag (nso)
   ((definition :initarg :definition :accessor nso-definition
@@ -380,7 +380,7 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'blo)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :jumpers nil))) ;do not bind :DEFINITION
 
 (defun make-empty-lexical-namespace ()
   (make-instance 'lexical-namespace))
@@ -1277,7 +1277,7 @@ Return the parsed abstract syntax tree (AST)."
 			   (assert (or (not (eq head 'macrolet)) (symbolp name)) () "macro function name in ~S-definition must be a SYMBOL, but is ~S" head (car def))
 			   (let* ((body-form (cdr def))
 				  (block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-				  (blo (make-instance 'blo :name block-name :freep nil))
+				  (blo (make-instance 'blo :name block-name :freep nil :jumpers nil))
 				  (binding (make-instance 'fun-binding :parent current :blo blo))
 				  (macrop (ecase head ((flet labels) nil) ((macrolet) t)))
 				  (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
@@ -1319,7 +1319,7 @@ Return the parsed abstract syntax tree (AST)."
 	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" form)
 	    (let* ((name (car rest))
 		   (body (cdr rest))
-		   (blo (make-instance 'blo :name name :freep nil))
+		   (blo (make-instance 'blo :name name :freep nil :jumpers nil))
 		   (current (make-instance 'block-form :parent parent :blo blo))
 		   (parsed-body (parse-body body current :lexical-namespace (augment-lexical-namespace blo lexical-namespace))))
 	      (setf (nso-definition blo) current)
@@ -1334,6 +1334,7 @@ Return the parsed abstract syntax tree (AST)."
 		   (current (make-instance 'return-from-form :parent parent :blo blo))
 		   (parsed-value (if value-form-p (reparse value-form current) nil)))
 	      (setf (form-value current) parsed-value)
+	      (push current (nso-jumpers blo))
 	      current))
 	   ((eq head 'locally)
 	    (assert (and (consp rest) (consp (car rest))) () "Cannot parse LOCALLY-form ~S" form)
@@ -1674,7 +1675,11 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (not (nso-freep test-fun-blo)))
     (assert (eq (nso-definition test-fun-blo) test-fun))
     (assert (not (eq test-fun-blo return-from2-blo)))
-    (assert (nso-freep return-from2-blo))))
+    (assert (nso-freep return-from2-blo)))
+  (let* ((ast (parse-with-empty-namespaces '(flet ((test () (if nil (return-from test 1) (if nil (return-from test 2) (return-from test 3))))) nil)))
+	 (test-fun (car (form-bindings ast)))
+	 (test-fun-blo (form-blo test-fun)))
+    (assert (= 3 (length (nso-jumpers test-fun-blo))))))
 (test-parse-block-reference)
 
 (defun test-parent ()
