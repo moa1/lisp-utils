@@ -374,13 +374,13 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
      new-nso)))
 (defmethod namespace-lookup/create ((symbol-type (eql 'var)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance 'var :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'fun)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
   (assert (not (null (valid-function-name-p symbol))) () "Invalid function name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance 'fun :name symbol :freep t :declspecs nil))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'blo)) symbol (lexical-namespace lexical-namespace) (free-namespace free-namespace))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance symbol-type :name symbol :freep t :jumpers nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol lexical-namespace free-namespace (make-instance 'blo :name symbol :freep t :jumpers nil))) ;do not bind :DEFINITION
 
 (defun make-empty-lexical-namespace ()
   (make-instance 'lexical-namespace))
@@ -1281,7 +1281,8 @@ Return the parsed abstract syntax tree (AST)."
 				  (binding (make-instance 'fun-binding :parent current :blo blo))
 				  (macrop (ecase head ((flet labels) nil) ((macrolet) t)))
 				  (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
-				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop)))
+				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop))
+				  (lexical-namespace (ecase head ((flet macrolet) lexical-namespace) ((labels) (augment-lexical-namespace sym lexical-namespace))))) ;note that LEXICAL-NAMESPACE is not be returned, so the SYM binding is temporary like the BLO binding.
 			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
 			     (setf (form-sym binding) sym)
 			     (setf (nso-definition blo) binding)
@@ -1589,7 +1590,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	   (b-1 (namespace-lookup 'fun 'b lexical-namespace-1))
 	   (b-2 (namespace-lookup 'fun 'b lexical-namespace-2)))
       (assert (not (eq b-1 b-2)))
-      (assert (eq b-1 (form-object (car (form-body (nso-definition b-2))))))))
+      (assert (eq b-2 (form-object (car (form-body (nso-definition b-2))))))))
   (let* ((ast (parse-with-empty-namespaces '(test #'test 2 3)))
 	 (call-fun (form-fun ast))
 	 (call-arguments (form-arguments ast)))
@@ -1598,7 +1599,13 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   	 (args (form-arguments ast))
   	 (aref-x (cadr (form-arguments (car args))))
   	 (arg-x (cadr args)))
-    (assert (eq aref-x arg-x))))
+    (assert (eq aref-x arg-x)))
+  (let* ((ast (parse-with-empty-namespaces '(labels ((b () #'b)) (b))))
+	 (b-fun (car (form-bindings ast)))
+	 (b0-sym (form-sym b-fun))
+	 (b1-sym (form-object (car (form-body b-fun))))
+	 (b2-sym (form-fun (car (form-body ast)))))
+    (assert (and (eq b0-sym b1-sym) (eq b0-sym b2-sym)))))
 (test-parse-symbol-reference)
 
 (defun test-parse-declaration ()
