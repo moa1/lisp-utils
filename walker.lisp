@@ -93,6 +93,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :declspec-notinline :declspec-funs
    :declspec-dynamic-extent :declspec-syms
    :declspec-special :declspec-vars
+   :parse-function-declaration
    :parse-declspecs
    :parse-declaration-in-body
    :parse-declaration-and-documentation-in-body
@@ -438,6 +439,37 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defclass declspec-special (declspec)
   ((vars :initarg :vars :accessor declspec-vars :type list)))
 
+(defun parse-function-declaration (decl)
+  "Given a function declaration, return two values: 1. the alist of arguments, indexed by &REQUIRED, &OPTIONAL, &REST, and &KEY 2. the list of return value types.
+Note that this function does not do recursive parsing when an argument or return value type is a function type."
+  (declare (optimize (debug 3)))
+  (assert (or (eq decl 'function) (consp decl)) () "DECL must be 'FUNCTION or a list starting with 'FUNCTION, but is ~S" decl)
+  (cond
+    ((eq decl 'function)
+     (values 'function))
+    (t
+     (assert (eq 'function (car decl)) () "DECL must start with 'FUNCTION, but is ~S" decl)
+     (assert (listp (cadr decl)) () "DECL must look like (FUNCTION (ARGUMENTS ...) VALUES), but is ~S" decl)
+     (let* ((args (cadr decl))
+	    (parsed (list (list '&required) (list '&optional) (list '&rest) (list '&key)))
+	    (current (assoc '&required parsed)))
+       (do () ((null args))
+	 (let ((h (pop args)))
+	   (if (or (eq h '&optional) (eq h '&rest) (eq h '&key))
+	       (let ((order (member (car current) '(&required &optional &rest &key))))
+		 (assert (find h order) () "ARGUMENTS in function declaration must look like (REQUIRED-ARGS...~% [&OPTIONAL OPTIONAL-ARGS...] [&REST REST-ARG] [&KEY KEY-ARGS...]), but~%~A is in the wrong position in~% ~A" h (cadr decl))
+		 (setf current (assoc h parsed)))
+	       (setf (cdr current) (cons h (cdr current))))))
+       (let ((l (assoc '&required parsed))) (setf (cdr l) (nreverse (cdr l))))
+       (let ((l (assoc '&optional parsed))) (setf (cdr l) (nreverse (cdr l))))
+       (let ((l (assoc '&key parsed))) (setf (cdr l) (nreverse (cdr l))))
+       (assert (<= (length (assoc '&rest parsed)) 2) () "DECL may have only one &REST argument")
+       (let ((values (caddr decl)))
+	 (assert (or (symbolp values) (and (consp values) (or (eq (car values) 'values) (eq (car values) 'function)))) () "VALUES in function declaration must be either a type or look like~%(VALUES TYPES...), but is~%~A" values)
+	 (if (and (consp values) (eq (car values) 'values))
+	     (values parsed (cdr values))
+	     (values parsed (list values))))))))
+
 (defun parse-declspecs (declspecs lexical-namespace free-namespace parent &key customparsedeclspecp-function customparsedeclspec-function)
   "Example: (PARSE-DECLSPECS '((TYPE FIXNUM A B C) (IGNORE A)) (MAKE-EMPTY-LEXICAL-NAMESPACE) (MAKE-EMPTY-FREE-NAMESPACE) NIL)"
   (labels ((parse-declspec (expr)
@@ -520,7 +552,8 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defun parse-declaration-in-body (body lexical-namespace free-namespace parent &key customparsedeclspecp-function customparsedeclspec-function)
   "Parses declarations in the beginning of BODY.
 Returns two values: the rest of the BODY that does not start with a DECLARE-expression, and a list of DECLSPEC-objects.
-Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE."
+Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE.
+Note that this function does not parse types, it just stores them in DECLSPEC-objects. Use #'PARSE-FUNCTION-DECLARATION for function declarations."
   (declare (optimize (debug 3)))
   (assert (listp body) () "Malformed BODY:~%~S" body)
   (labels ((parse-declare (body collected-declspecs)
