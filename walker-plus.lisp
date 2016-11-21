@@ -68,20 +68,16 @@
     (loop for arg in (walker:form-arguments object) do
 	 (format stream " ~S" arg))))
 
-(defun parse-p (form lexical-namespace free-namespace parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
-  (declare (ignore customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function lexical-namespace free-namespace parent))
+(defun parse-p (form lexical-namespace free-namespace parent)
+  (declare (ignore lexical-namespace free-namespace parent))
   (and (listp form)
        (let ((head (car form)))
 	 (find head '(multiple-value-bind values nth-value defun declaim funcall)))))
 
-(defun parse (form lexical-namespace free-namespace parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+(defun parse (form lexical-namespace free-namespace parent &key reparse declspec-reparse &allow-other-keys)
   (declare (optimize (debug 3)))
   (labels ((reparse (form parent &key (lexical-namespace lexical-namespace))
-	     (walker:parse form lexical-namespace free-namespace parent
-			   :customparsep-function customparsep-function
-			   :customparse-function customparse-function
-			   :customparsedeclspecp-function customparsedeclspecp-function
-			   :customparsedeclspec-function customparsedeclspec-function))
+	     (funcall reparse form lexical-namespace free-namespace parent :reparse reparse :declspec-reparse declspec-reparse))
 	   (parse-body (body current &key (lexical-namespace lexical-namespace))
 	     (assert (walker:proper-list-p body) () "Body is not a proper list: ~S" body)
 	     (loop for form in body collect (reparse form current :lexical-namespace lexical-namespace))))
@@ -97,7 +93,7 @@
 		(parsed-vars (loop for var-form in vars-form collect (reparse var-form current)))
 		(parsed-values (reparse values-form current)))
 	   (multiple-value-bind (body parsed-declspecs)
-	       (walker:parse-declaration-in-body body lexical-namespace free-namespace current :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+	       (walker:parse-declaration-in-body body lexical-namespace free-namespace current :declspec-reparse declspec-reparse)
 	     (setf (walker:form-vars current) parsed-vars)
 	     (setf (walker:form-values current) parsed-values)
 	     (setf (walker:form-declspecs current) parsed-declspecs)
@@ -126,14 +122,14 @@
 		  (blo (make-instance 'walker:blo :name block-name :freep nil :jumpers nil))
 		  (current (make-instance 'defun-form :parent parent :blo blo))
 		  (sym (walker:namespace-lookup/create 'walker:fun name lexical-namespace free-namespace)))
-	     (walker:parse-and-set-functiondef lambda-list-and-body #'walker:parse-ordinary-lambda-list (walker:augment-lexical-namespace blo lexical-namespace) free-namespace current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+	     (walker:parse-and-set-functiondef lambda-list-and-body #'walker:parse-ordinary-lambda-list (walker:augment-lexical-namespace blo lexical-namespace) free-namespace current :reparse reparse :declspec-reparse declspec-reparse)
 	     (setf (walker:nso-definition blo) current)
 	     (setf (walker:form-sym current) sym)
 	     current)))
 	((eq head 'declaim)
 	 (let* ((declspecs rest)
 		(current (make-instance 'declaim-form :parent parent))
-		(parsed-declspecs (walker:parse-declspecs declspecs lexical-namespace free-namespace current :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)))
+		(parsed-declspecs (walker:parse-declspecs declspecs lexical-namespace free-namespace current :declspec-reparse declspec-reparse)))
 	   (setf (walker:form-declspecs current) parsed-declspecs)
 	   current))
 	((eq head 'funcall)

@@ -93,7 +93,10 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :declspec-notinline :declspec-funs
    :declspec-dynamic-extent :declspec-syms
    :declspec-special :declspec-vars
+   :make-custom-parser
    :parse-function-declaration
+   :parse-p-declspec
+   :parse-declspec
    :parse-declspecs
    :parse-declaration-in-body
    :parse-declaration-and-documentation-in-body
@@ -155,6 +158,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; END OF FORMs
    :format-body
    :parse-and-set-functiondef
+   :parse-p
    :parse
    :parse-with-empty-namespaces
    :namespaces-at
@@ -439,6 +443,18 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defclass declspec-special (declspec)
   ((vars :initarg :vars :accessor declspec-vars :type list)))
 
+(defun make-custom-parser (parserps parsers)
+  "PARSERPS must be a list of recognizer functions that return non-NIL when the passed form can be parsed by the corresponding function in list PARSERS.
+PARSERS must be a list with the same length as parserps, which parses the passed form.
+All PARSERS must have &ALLOW-OTHER-KEYS in their argument list."
+  (declare (optimize (debug 3)))
+  (flet ((reparse (form lexical-namespace free-namespace parent &key reparse declspec-reparse)
+	   (let ((parser (loop for parsep in parserps for parser in parsers do
+			      (when (funcall parsep form lexical-namespace free-namespace parent)
+				(return parser)))))
+	     (funcall parser form lexical-namespace free-namespace parent :reparse reparse :declspec-reparse declspec-reparse))))
+    #'reparse))
+
 (defun parse-function-declaration (decl)
   "Given a function declaration, return two values: 1. the alist of arguments, indexed by &REQUIRED, &OPTIONAL, &REST, and &KEY 2. the list of return value types.
 Note that this function does not do recursive parsing when an argument or return value type is a function type."
@@ -470,86 +486,96 @@ Note that this function does not do recursive parsing when an argument or return
 	     (values parsed (cdr values))
 	     (values parsed (list values))))))))
 
-(defun parse-declspecs (declspecs lexical-namespace free-namespace parent &key customparsedeclspecp-function customparsedeclspec-function)
-  "Example: (PARSE-DECLSPECS '((TYPE FIXNUM A B C) (IGNORE A)) (MAKE-EMPTY-LEXICAL-NAMESPACE) (MAKE-EMPTY-FREE-NAMESPACE) NIL)"
-  (labels ((parse-declspec (expr)
-	     (assert (consp expr) () "Malformed declaration specification ~S" expr)
-	     (let* ((identifier (car expr))
-		    (body (cdr expr)))
-	       (assert (symbolp identifier) () "Malformed declaration identifier ~S" identifier)
-	       (cond
-		 ((and (not (null customparsedeclspecp-function)) (funcall customparsedeclspecp-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
-		  (funcall customparsedeclspec-function identifier body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
-		 ((find identifier '(type ftype))
-		  (assert (and (listp body) (listp (cdr body))) () "Malformed ~S declaration: ~S" identifier expr)
-		  (let* ((typespec (car body))
-			 (syms (cdr body)))
-		    ;; will not check TYPESPEC, has to be done in user code.
-		    (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
-		    (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym lexical-namespace free-namespace)))
-			   (parsed-declspec (ecase identifier
-					      ((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
-					      ((ftype) (make-instance 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
-		      (loop for sym in parsed-syms do
-			   (push parsed-declspec (nso-declspecs sym)))
-		      parsed-declspec)))
-		 ((eq identifier 'optimize)
-		  (assert (proper-list-p body) () "~S declaration is not a proper list: ~S" identifier expr)
-		  (let ((qualities (loop for quality-value in body collect
-					(if (consp quality-value)
-					    (let ((quality (car quality-value))
-						  (rest (cdr quality-value)))
-					      (assert (and (symbolp quality) (consp rest) (find (car rest) '(0 1 2 3)) (null (cdr rest))) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
-					      (cons quality (car rest)))
-					    (let ((quality quality-value))
-					      (assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
-					      (cons quality nil))))))
-		    (make-instance 'declspec-optimize :parent parent :qualities qualities)))
-		 ((find identifier '(ignore ignorable dynamic-extent))
-		  (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
-		  (let* ((syms body))
-		    (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
-		    (let* ((parsed-syms (loop for sym in syms collect
-					     (cond
-					       ((symbolp sym)
-						(namespace-lookup/create 'var sym lexical-namespace free-namespace))
-					       ((and (consp sym) (eq (car sym) 'function) (valid-function-name-p (cadr sym)))
-						(namespace-lookup/create 'fun (cadr sym) lexical-namespace free-namespace))
-					       (t
-						(error "Symbol in ~S declaration must be either a SYMBOL or a function name, but is ~S" identifier sym)))))
-			   (parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
-		      (loop for sym in parsed-syms do
-			   (push parsed-declspec (nso-declspecs sym)))
-		      parsed-declspec)))
-		 ;; probably not TODO (since the parser should contain as little semantics as possible): when adding DYNAMIC-EXTENT and SPECIAL, add an assertion that, as defined in CLHS on DYNAMIC-EXTENT, "The vars and fns named in a dynamic-extent declaration must not refer to symbol macro or macro bindings." and an assertion that, as defined in CLHS on SYMBOL-MACROLET, "Exactly the same declarations are allowed as for let with one exception: symbol-macrolet signals an error if a special declaration names one of the symbols being defined by symbol-macrolet."
-		 ((find identifier '(inline notinline))
-		  (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
-		  (let* ((funs body))
-		    (assert (proper-list-p funs) () "Not a proper list in ~S declaration: ~S" identifier expr)
-		    (let* ((parsed-funs (loop for fun in funs collect
-					     (progn
-					       (assert (valid-function-name-p fun))
-					       (namespace-lookup/create 'fun fun lexical-namespace free-namespace))))
-			   (parsed-declspec (make-instance (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
-		      (loop for fun in parsed-funs do
-			   (push parsed-declspec (nso-declspecs fun)))
-		      parsed-declspec)))
-		 ((eq identifier 'special)
-		  (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
-		  (let* ((vars body))
-		    (assert (proper-list-p vars) () "Not a proper list in ~S declaration: ~S" identifier expr)
-		    (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var lexical-namespace free-namespace)))
-			   (parsed-declspec (make-instance 'declspec-special :parent parent :vars parsed-vars)))
-		      (loop for var in parsed-vars do
-			   (setf (nso-freep var) t) ;mark all PARSED-VARS as special
-			   (push parsed-declspec (nso-declspecs var)))
-		      parsed-declspec)))
-		 (t (error "Unknown declaration specifier ~S" expr))))))
-    (assert (proper-list-p declspecs) () "Declaration specifications must be a proper list, but are ~S" declspecs)
-    (loop for declspec in declspecs collect
-	 (parse-declspec declspec))))
+(defun parse-p-declspec (expr lexical-namespace free-namespace parent)
+  (declare (ignore lexical-namespace free-namespace parent))
+  (assert (consp expr) () "Malformed declaration specification ~S" expr)
+  (let* ((identifier (car expr)))
+    (find identifier '(type ftype
+		       optimize
+		       ignore ignorable dynamic-extent
+		       inline notinline
+		       special))))
 
-(defun parse-declaration-in-body (body lexical-namespace free-namespace parent &key customparsedeclspecp-function customparsedeclspec-function)
+(defun parse-declspec (expr lexical-namespace free-namespace parent &key declspec-reparse &allow-other-keys)
+  (declare (ignore declspec-reparse))
+  (assert (consp expr) () "Malformed declaration specification ~S" expr)
+  (let* ((identifier (car expr))
+	 (body (cdr expr)))
+    (assert (symbolp identifier) () "Malformed declaration identifier ~S" identifier)
+    (cond
+      ((find identifier '(type ftype))
+       (assert (and (listp body) (listp (cdr body))) () "Malformed ~S declaration: ~S" identifier expr)
+       (let* ((typespec (car body))
+	      (syms (cdr body)))
+	 ;; will not check TYPESPEC, has to be done in user code.
+	 (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
+	 (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym lexical-namespace free-namespace)))
+		(parsed-declspec (ecase identifier
+				   ((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
+				   ((ftype) (make-instance 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
+	   (loop for sym in parsed-syms do
+		(push parsed-declspec (nso-declspecs sym)))
+	   parsed-declspec)))
+      ((eq identifier 'optimize)
+       (assert (proper-list-p body) () "~S declaration is not a proper list: ~S" identifier expr)
+       (let ((qualities (loop for quality-value in body collect
+			     (if (consp quality-value)
+				 (let ((quality (car quality-value))
+				       (rest (cdr quality-value)))
+				   (assert (and (symbolp quality) (consp rest) (find (car rest) '(0 1 2 3)) (null (cdr rest))) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+				   (cons quality (car rest)))
+				 (let ((quality quality-value))
+				   (assert (symbolp quality) () "Malformed ~S in ~S declaration: ~S" body identifier expr)
+				   (cons quality nil))))))
+	 (make-instance 'declspec-optimize :parent parent :qualities qualities)))
+      ((find identifier '(ignore ignorable dynamic-extent))
+       (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+       (let* ((syms body))
+	 (assert (proper-list-p syms) () "Not a proper list in ~S declaration: ~S" identifier expr)
+	 (let* ((parsed-syms (loop for sym in syms collect
+				  (cond
+				    ((symbolp sym)
+				     (namespace-lookup/create 'var sym lexical-namespace free-namespace))
+				    ((and (consp sym) (eq (car sym) 'function) (valid-function-name-p (cadr sym)))
+				     (namespace-lookup/create 'fun (cadr sym) lexical-namespace free-namespace))
+				    (t
+				     (error "Symbol in ~S declaration must be either a SYMBOL or a function name, but is ~S" identifier sym)))))
+		(parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
+	   (loop for sym in parsed-syms do
+		(push parsed-declspec (nso-declspecs sym)))
+	   parsed-declspec)))
+      ;; probably not TODO (since the parser should contain as little semantics as possible): when adding DYNAMIC-EXTENT and SPECIAL, add an assertion that, as defined in CLHS on DYNAMIC-EXTENT, "The vars and fns named in a dynamic-extent declaration must not refer to symbol macro or macro bindings." and an assertion that, as defined in CLHS on SYMBOL-MACROLET, "Exactly the same declarations are allowed as for let with one exception: symbol-macrolet signals an error if a special declaration names one of the symbols being defined by symbol-macrolet."
+      ((find identifier '(inline notinline))
+       (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+       (let* ((funs body))
+	 (assert (proper-list-p funs) () "Not a proper list in ~S declaration: ~S" identifier expr)
+	 (let* ((parsed-funs (loop for fun in funs collect
+				  (progn
+				    (assert (valid-function-name-p fun))
+				    (namespace-lookup/create 'fun fun lexical-namespace free-namespace))))
+		(parsed-declspec (make-instance (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
+	   (loop for fun in parsed-funs do
+		(push parsed-declspec (nso-declspecs fun)))
+	   parsed-declspec)))
+      ((eq identifier 'special)
+       (assert (listp body) () "Malformed ~S declaration: ~S" identifier expr)
+       (let* ((vars body))
+	 (assert (proper-list-p vars) () "Not a proper list in ~S declaration: ~S" identifier expr)
+	 (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var lexical-namespace free-namespace)))
+		(parsed-declspec (make-instance 'declspec-special :parent parent :vars parsed-vars)))
+	   (loop for var in parsed-vars do
+		(setf (nso-freep var) t) ;mark all PARSED-VARS as special
+		(push parsed-declspec (nso-declspecs var)))
+	   parsed-declspec)))
+      (t (error "Unknown declaration specifier ~S" expr)))))
+
+(defun parse-declspecs (declspecs lexical-namespace free-namespace parent &key declspec-reparse)
+  "Example: (PARSE-DECLSPECS '((TYPE FIXNUM A B C) (IGNORE A)) (MAKE-EMPTY-LEXICAL-NAMESPACE) (MAKE-EMPTY-FREE-NAMESPACE) NIL)"
+  (assert (proper-list-p declspecs) () "Declaration specifications must be a proper list, but are ~S" declspecs)
+  (loop for declspec in declspecs collect
+       (funcall declspec-reparse declspec lexical-namespace free-namespace parent :declspec-reparse declspec-reparse)))
+
+(defun parse-declaration-in-body (body lexical-namespace free-namespace parent &key declspec-reparse)
   "Parses declarations in the beginning of BODY.
 Returns two values: the rest of the BODY that does not start with a DECLARE-expression, and a list of DECLSPEC-objects.
 Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE.
@@ -563,53 +589,60 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 		 ((and (listp head) (eq (car head) 'declare))
 		  (let* ((declspecs (cdr head)))
 		    (assert (proper-list-p declspecs) () "Not a proper list: ~S" declspecs)
-		    (let ((new-declspecs (parse-declspecs declspecs lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)))
+		    (let ((new-declspecs (parse-declspecs declspecs lexical-namespace free-namespace parent :declspec-reparse declspec-reparse)))
 		      (parse-declare rest (nconc collected-declspecs new-declspecs)))))
 		 (t (values body collected-declspecs))))))
     (assert (proper-list-p body) () "Not a proper list: ~S" body)
     (parse-declare body nil)))
 
 (let ((lexical-namespace (make-empty-lexical-namespace))
-      (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) lexical-namespace free-namespace nil)
+      (free-namespace (make-empty-free-namespace))
+      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
     (assert (and (equal body '(declare (type fixnum))) (null declspecs)))))
 ;;TODO: test that (parse-declaration-in-body '((declare ()) 5) nil nil nil) throws an error.
 (let ((lexical-namespace (make-empty-lexical-namespace))
-      (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (type fixnum a)) 5) lexical-namespace free-namespace nil)
+      (free-namespace (make-empty-free-namespace))
+      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (type fixnum a)) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type)))
     (assert (nso-freep (car (declspec-vars (car declspecs)))))
     (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'var 'a free-namespace)))
     (assert (not (namespace-boundp 'fun 'a free-namespace)))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
-      (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) lexical-namespace free-namespace nil)
+      (free-namespace (make-empty-free-namespace))
+      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun 'a free-namespace)))
     (assert (not (namespace-boundp 'var 'a free-namespace)))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
-      (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) lexical-namespace free-namespace nil)
+      (free-namespace (make-empty-free-namespace))
+      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun '(setf a) free-namespace)))
     (assert (not (namespace-boundp 'var '(setf a) free-namespace)))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
-      (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (optimize (debug 3) speed)) 5) lexical-namespace free-namespace nil)
+      (free-namespace (make-empty-free-namespace))
+      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (optimize (debug 3) speed)) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
     (assert (equal body '(5)))
     (assert (let ((d (car declspecs))) (and (typep d 'declspec-optimize) (equal (declspec-qualities d) '((debug . 3) (speed . nil))))))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
-      (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ignore a (function b))) 5) lexical-namespace free-namespace nil)
+      (free-namespace (make-empty-free-namespace))
+      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ignore a (function b))) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ignore)))
     (assert (let ((syms (declspec-syms (car declspecs)))) (typep (car syms) 'var) (typep (cadr syms) 'fun)))
     (assert (eq (car (declspec-syms (car declspecs))) (namespace-lookup 'var 'a free-namespace)))
     (assert (eq (cadr (declspec-syms (car declspecs))) (namespace-lookup 'fun 'b free-namespace)))))
 (multiple-value-bind (body declspecs)
     (parse-declaration-in-body '((declare (type fixnum) (ftype (function () t))) (declare (optimize (speed 3)) (ignore)))
-			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil)
+			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil
+			       :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
   (assert (equal body nil))
   (assert (typep (elt declspecs 0) 'declspec-type))
   (assert (typep (elt declspecs 1) 'declspec-ftype))
@@ -617,7 +650,8 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
   (assert (typep (elt declspecs 3) 'declspec-ignore)))
 (multiple-value-bind (body declspecs)
     (parse-declaration-in-body '((declare (inline f1 f2)) (declare (notinline f1)))
-			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil)
+			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil
+			       :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
   (assert (equal body nil))
   (assert (let ((inl (elt declspecs 0)))
 	    (and (typep inl 'declspec-inline)
@@ -628,20 +662,21 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 		 (eq (nso-name (car (declspec-funs notinl))) 'f1)))))
 (multiple-value-bind (body declspecs)
     (parse-declaration-in-body '((declare (special a)))
-			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil)
+			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil
+			       :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
   (assert (equal body nil))
   (assert (let ((spec (elt declspecs 0)))
 	    (and (typep spec 'declspec-special)
 		 (eq (nso-name (car (declspec-vars spec))) 'a)))))
 
-(defun parse-declaration-and-documentation-in-body (body lexical-namespace free-namespace parent &key customparsedeclspecp-function customparsedeclspec-function)
+(defun parse-declaration-and-documentation-in-body (body lexical-namespace free-namespace parent &key declspec-reparse)
   "Parses declarations and documentation in the beginning of BODY.
 Returns three values: the rest of the BODY that does not start with a DECLARE-expression or a documentation string, and a list of DECLSPEC-objects, and a documentation string, or NIL if none is present in BODY.
 Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE."
   (let ((documentation nil)
 	(declspecs nil))
     (loop do
-	 (multiple-value-bind (body-rest declspecs1) (parse-declaration-in-body body lexical-namespace free-namespace parent :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+	 (multiple-value-bind (body-rest declspecs1) (parse-declaration-in-body body lexical-namespace free-namespace parent :declspec-reparse declspec-reparse)
 	   (setf declspecs (nconc declspecs declspecs1))
 	   (cond
 	     ((and (consp body) (stringp (car body-rest)))
@@ -654,7 +689,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs documentation) (parse-declaration-and-documentation-in-body '((declare (type number a)) "doc" (declare (type fixnum a)) 5) lexical-namespace free-namespace nil)
+  (multiple-value-bind (body declspecs documentation) (parse-declaration-and-documentation-in-body '((declare (type number a)) "doc" (declare (type fixnum a)) 5) lexical-namespace free-namespace nil :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type) (typep (cadr declspecs) 'declspec-type) (equal documentation "doc")))))
 
 (defmethod print-object ((object declspec-type) stream)
@@ -1205,16 +1240,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 ;;;; END OF FORMs
 
-(defun parse-and-set-functiondef (form parse-lambda-list-function lexical-namespace free-namespace current-functiondef &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+(defun parse-and-set-functiondef (form parse-lambda-list-function lexical-namespace free-namespace current-functiondef &key reparse declspec-reparse)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
 PARSE-LAMBDA-LIST-FUNCTION must be a function that accepts (LAMBDA-LIST LEXICAL-NAMESPACE FREE-NAMESPACE CURRENT-FUNCTIONDEF REPARSE-FUNCTION), parses the LAMBDA-LIST and returns two values: 1. the new LLIST, i.e. an instance of (a subclass of) class LLIST. 2. the lexical namespace augmented by the variables in LAMBDA-LIST.
 Side-effects: Creates yet unknown free variables and functions and add them to FREE-NAMESPACE."
   (flet ((reparse (form parent &key (lexical-namespace lexical-namespace))
-	   (parse form lexical-namespace free-namespace parent
-		  :customparsep-function customparsep-function
-		  :customparse-function customparse-function
-		  :customparsedeclspecp-function customparsedeclspecp-function
-		  :customparsedeclspec-function customparsedeclspec-function))
+	   (funcall reparse form lexical-namespace free-namespace parent :reparse reparse :declspec-reparse declspec-reparse))
 	 (split-lambda-list-and-body (form)
 	   (assert (and (consp form) (listp (car form))) () "Invalid lambda-list ~S" form)
 	   (let ((lambda-list (car form))
@@ -1226,7 +1257,7 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	  (funcall parse-lambda-list-function lambda-list lexical-namespace free-namespace current-functiondef #'reparse)
 	(setf (form-llist current-functiondef) new-llist)
 	(multiple-value-bind (body parsed-declspecs parsed-documentation)
-	    (parse-declaration-and-documentation-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+	    (parse-declaration-and-documentation-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :declspec-reparse declspec-reparse)
 	  (setf (form-declspecs current-functiondef) parsed-declspecs)
 	  (setf (form-documentation current-functiondef) parsed-documentation)
 	  (assert (proper-list-p body) () "Not a proper list: ~S" body)
@@ -1234,27 +1265,29 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	    (setf (form-body current-functiondef) parsed-body))))
       current-functiondef)))
 
+(defun parse-p (form lexical-namespace free-namespace parent)
+  (declare (ignore lexical-namespace free-namespace parent))
+  (or (or (eq form nil) (eq form t))
+      (symbolp form)
+      (atom form)
+      (consp form)))
+
 ;; TODO: maybe rename to PARSE-FORM.
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
 ;; TODO: FIXME: Must handle arbitrary nonsense input gracefully. (see comment near #'PROPER-LIST-P.)
-(defun parse (form lexical-namespace free-namespace parent &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function)
+(defun parse (form lexical-namespace free-namespace parent &key reparse declspec-reparse &allow-other-keys)
   "Recursively parse the Common Lisp FORM. During parsing, LEXICAL-NAMESPACE is augmented with the found namespace objects, but the originally passed LEXICAL-NAMESPACE instance is not modified. FREE-NAMESPACE is modified by adding namespace objects that are free in FORM. Use PARENT as the :PARENT slot in the returned abstract syntax tree (AST).
-If CUSTOMPARSEP-FUNCTION is NIL, then both custom parse functions are not called. Otherwise, CUSTOMPARSEP-FUNCTION and CUSTOMPARSE-FUNCTION must be functions with 4 parameters: the currently parsed form, the current lexical namespace, the free namespace, and the parent of the currently parsed form. If CUSTOMPARSEP-FUNCTION returns non-NIL, PARSE returns the values of calling CUSTOMPARSE-FUNCTION with above 4 parameters. Otherwise, PARSE parses the FORM and the elements in it recursively and constructs an AST, i.e. an instance of one of the -FORM classes.
-CUSTOMPARSEDECLSPECP-FUNCTION and CUSTOMPARSEDECLSPEC-FUNCTION are passed to the functions parsing declarations.
+PARSE parses the FORM and the elements in it recursively and constructs an AST, i.e. an instance of one of the -FORM classes.
+REPARSE is called for subforms of FORM to be parsed, with REPARSE and DECLSPEC-REPARSE passed to it.
+DECLSPEC-REPARSE is passed to the functions parsing declarations.
 Return the parsed abstract syntax tree (AST)."
   (declare (optimize (debug 3)))
   (labels ((reparse (form parent &key (lexical-namespace lexical-namespace))
-	     (parse form lexical-namespace free-namespace parent
-		    :customparsep-function customparsep-function
-		    :customparse-function customparse-function
-		    :customparsedeclspecp-function customparsedeclspecp-function
-		    :customparsedeclspec-function customparsedeclspec-function))
+	     (funcall reparse form lexical-namespace free-namespace parent :reparse reparse :declspec-reparse declspec-reparse))
 	   (parse-body (body current &key (lexical-namespace lexical-namespace))
 	     (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
 	     (loop for form in body collect (reparse form current :lexical-namespace lexical-namespace))))
     (cond
-      ((and (not (null customparsep-function)) (funcall customparsep-function form lexical-namespace free-namespace parent :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
-       (funcall customparse-function form lexical-namespace free-namespace parent :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function))
       ((or (eq form nil) (eq form t))
        (make-instance 'selfevalobject :object form))
       ((symbolp form)
@@ -1316,7 +1349,7 @@ Return the parsed abstract syntax tree (AST)."
 				  (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop))
 				  (lexical-namespace (ecase head ((flet macrolet) lexical-namespace) ((labels) (augment-lexical-namespace sym lexical-namespace))))) ;note that LEXICAL-NAMESPACE is not be returned, so the SYM binding is temporary like the BLO binding.
-			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :reparse reparse :declspec-reparse declspec-reparse)
 			     (setf (form-sym binding) sym)
 			     (setf (nso-definition blo) binding)
 			     binding))))
@@ -1339,7 +1372,7 @@ Return the parsed abstract syntax tree (AST)."
 			   (values parsed-bindings new-lexical-namespace)))
 			(t (error "unknown HEAD"))))
 		  (multiple-value-bind (body parsed-declspecs)
-		      (parse-declaration-in-body body new-lexical-namespace free-namespace current :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+		      (parse-declaration-in-body body new-lexical-namespace free-namespace current :declspec-reparse declspec-reparse)
 		    (setf (form-bindings current) parsed-bindings)
 		    (setf (form-declspecs current) parsed-declspecs)
 		    (setf (form-body current) (parse-body body current :lexical-namespace new-lexical-namespace))
@@ -1347,7 +1380,7 @@ Return the parsed abstract syntax tree (AST)."
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
 		   (current (make-instance 'lambda-form :parent parent)))
-	      (parse-and-set-functiondef lambda-list-and-body #'parse-ordinary-lambda-list lexical-namespace free-namespace current :customparsep-function customparsep-function :customparse-function customparse-function :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+	      (parse-and-set-functiondef lambda-list-and-body #'parse-ordinary-lambda-list lexical-namespace free-namespace current :reparse reparse :declspec-reparse declspec-reparse)
 	      current))
 	   ((eq head 'block)
 	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" form)
@@ -1375,7 +1408,7 @@ Return the parsed abstract syntax tree (AST)."
 	    (let ((body rest)
 		  (current (make-instance 'locally-form :parent parent)))
 	      (multiple-value-bind (body parsed-declspecs)
-		  (parse-declaration-in-body body lexical-namespace free-namespace current :customparsedeclspecp-function customparsedeclspecp-function :customparsedeclspec-function customparsedeclspec-function)
+		  (parse-declaration-in-body body lexical-namespace free-namespace current :declspec-reparse declspec-reparse)
 		(setf (form-declspecs current) parsed-declspecs)
 		(setf (form-body current) (parse-body body current)))
 	      current))
@@ -1537,15 +1570,11 @@ Return the parsed abstract syntax tree (AST)."
 	      (setf (form-arguments current) (nreverse parsed-arguments))
 	      current))))))))
 
-(defun parse-with-empty-namespaces (form &key customparsep-function customparse-function customparsedeclspecp-function customparsedeclspec-function free-common-lisp-namespace)
+(defun parse-with-empty-namespaces (form &key (reparse (make-custom-parser (list #'parse-p) (list #'parse))) (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))) free-common-lisp-namespace)
   "If FREE-COMMON-LISP-NAMESPACE is non-NIL, a free namespace created by #'MAKE-DEFAULT-FREE-COMMON-LISP-NAMESPACE is used."
   (let ((lexical-namespace (make-empty-lexical-namespace))
 	(free-namespace (if free-common-lisp-namespace (make-default-free-common-lisp-namespace) (make-empty-free-namespace))))
-    (parse form lexical-namespace free-namespace nil
-	   :customparsep-function customparsep-function
-	   :customparse-function customparse-function
-	   :customparsedeclspecp-function customparsedeclspecp-function
-	   :customparsedeclspec-function customparsedeclspec-function)))
+    (funcall reparse form lexical-namespace free-namespace nil :reparse reparse :declspec-reparse declspec-reparse)))
 
 ;; tests for PARSE
 (defun namespaces-at (form heresymbol &key free-common-lisp-namespace)
@@ -1554,13 +1583,17 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   (let* ((lexical-namespace-here-list nil)
 	 (free-namespace-here-list nil))
     (parse-with-empty-namespaces form
-				 :customparsep-function (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
-							  (declare (ignore lexical-namespace free-namespace parent))
-							  (eq form heresymbol))
-				 :customparse-function (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
-							 (declare (ignorable form parent))
-							 (push lexical-namespace lexical-namespace-here-list)
-							 (push free-namespace free-namespace-here-list))
+				 :reparse (make-custom-parser (list
+							       (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
+								 (declare (ignore lexical-namespace free-namespace parent))
+								 (eq form heresymbol))
+							       #'parse-p)
+							      (list
+							       (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
+								 (declare (ignorable form parent))
+								 (push lexical-namespace lexical-namespace-here-list)
+								 (push free-namespace free-namespace-here-list))
+							       #'parse))
 				 :free-common-lisp-namespace free-common-lisp-namespace)
     (values (nreverse lexical-namespace-here-list) (nreverse free-namespace-here-list))))
 
