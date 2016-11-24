@@ -78,10 +78,10 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :augment-lexical-namespace
    :augment-free-namespace
    :namespace-lookup/create
-   :default-namespace-lookup/create
    :make-empty-lexical-namespace
    :make-empty-free-namespace
-   :make-default-free-common-lisp-namespace
+   :+common-lisp-variables+ :+common-lisp-functions+ :+common-lisp-macros+
+   :make-free-namespace
    ;; DECLARATIONS
    :declspec :declspec-parent
    :declspec-type :declspec-vars
@@ -93,7 +93,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :declspec-notinline :declspec-funs
    :declspec-dynamic-extent :declspec-syms
    :declspec-special :declspec-vars
-   :make-custom-parser
+   :make-parser
    :parse-function-declaration
    :parse-p-declspec
    :parse-declspec
@@ -160,8 +160,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-and-set-functiondef
    :parse-p
    :parse
-   :parse-with-empty-namespaces
-   :namespaces-at
+   :parse-with-namespace
+   :namespace-at
    ;; DEPARSER
    :deparse-nso
    :deparse-declspec-type
@@ -404,18 +404,31 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (assert (null (namespace-var lex)))
   (assert (namespace-lookup 'var 'a fre)))
 
+
+;; the list of Common Lisp macros: (determined by looking at differences between SBCL and CLISP of global *LISP-MACROS* computed in file all-lisp-symbols.lisp)
+(unless (boundp '+common-lisp-macros+)
+  (defconstant +common-lisp-macros+ '(AND ASSERT CALL-METHOD CASE CCASE CHECK-TYPE COND CTYPECASE DECF DECLAIM DEFCLASS DEFCONSTANT DEFGENERIC DEFINE-COMPILER-MACRO DEFINE-CONDITION DEFINE-METHOD-COMBINATION DEFINE-MODIFY-MACRO DEFINE-SETF-EXPANDER DEFINE-SYMBOL-MACRO DEFMACRO DEFMETHOD DEFPACKAGE DEFPARAMETER DEFSETF DEFSTRUCT DEFTYPE DEFUN DEFVAR DESTRUCTURING-BIND DO DO* DO-ALL-SYMBOLS DO-EXTERNAL-SYMBOLS DO-SYMBOLS DOLIST DOTIMES ECASE ETYPECASE FORMATTER HANDLER-BIND HANDLER-CASE IGNORE-ERRORS IN-PACKAGE INCF LAMBDA LOOP LOOP-FINISH MULTIPLE-VALUE-BIND MULTIPLE-VALUE-LIST MULTIPLE-VALUE-SETQ NTH-VALUE OR POP PPRINT-LOGICAL-BLOCK PRINT-UNREADABLE-OBJECT PROG PROG* PROG1 PROG2 PSETF PSETQ PUSH PUSHNEW REMF RESTART-BIND RESTART-CASE RETURN ROTATEF SETF SHIFTF STEP TIME TRACE TYPECASE UNLESS UNTRACE WHEN WITH-ACCESSORS WITH-COMPILATION-UNIT WITH-CONDITION-RESTARTS WITH-HASH-TABLE-ITERATOR WITH-INPUT-FROM-STRING WITH-OPEN-FILE WITH-OPEN-STREAM WITH-OUTPUT-TO-STRING WITH-PACKAGE-ITERATOR WITH-SIMPLE-RESTART WITH-SLOTS WITH-STANDARD-IO-SYNTAX) "The list of macros defined in Common Lisp."))
+
+;; the list of Common Lisp functions: (determined by global *LISP-FUNCTIONS* computed in file all-lisp-symbols.lisp, which are equal between SBCL and CLISP)
+(unless (boundp '+common-lisp-functions+)
+  (defconstant +common-lisp-functions+ '(* + - / /= 1+ 1- < <= = > >= ABORT ABS ACONS ACOS ACOSH ADD-METHOD ADJOIN ADJUST-ARRAY ADJUSTABLE-ARRAY-P ALLOCATE-INSTANCE ALPHA-CHAR-P ALPHANUMERICP APPEND APPLY APROPOS APROPOS-LIST AREF ARITHMETIC-ERROR-OPERANDS ARITHMETIC-ERROR-OPERATION ARRAY-DIMENSION ARRAY-DIMENSIONS ARRAY-DISPLACEMENT ARRAY-ELEMENT-TYPE ARRAY-HAS-FILL-POINTER-P ARRAY-IN-BOUNDS-P ARRAY-RANK ARRAY-ROW-MAJOR-INDEX ARRAY-TOTAL-SIZE ARRAYP ASH ASIN ASINH ASSOC ASSOC-IF ASSOC-IF-NOT ATAN ATANH ATOM BIT BIT-AND BIT-ANDC1 BIT-ANDC2 BIT-EQV BIT-IOR BIT-NAND BIT-NOR BIT-NOT BIT-ORC1 BIT-ORC2 BIT-VECTOR-P BIT-XOR BOOLE BOTH-CASE-P BOUNDP BREAK BROADCAST-STREAM-STREAMS BUTLAST BYTE BYTE-POSITION BYTE-SIZE CAAAAR CAAADR CAAAR CAADAR CAADDR CAADR CAAR CADAAR CADADR CADAR CADDAR CADDDR CADDR CADR CAR CDAAAR CDAADR CDAAR CDADAR CDADDR CDADR CDAR CDDAAR CDDADR CDDAR CDDDAR CDDDDR CDDDR CDDR CDR CEILING CELL-ERROR-NAME CERROR CHANGE-CLASS CHAR CHAR-CODE CHAR-DOWNCASE CHAR-EQUAL CHAR-GREATERP CHAR-INT CHAR-LESSP CHAR-NAME CHAR-NOT-EQUAL CHAR-NOT-GREATERP CHAR-NOT-LESSP CHAR-UPCASE CHAR/= CHAR< CHAR<= CHAR= CHAR> CHAR>= CHARACTER CHARACTERP CIS CLASS-NAME CLASS-OF CLEAR-INPUT CLEAR-OUTPUT CLOSE CLRHASH CODE-CHAR COERCE COMPILE COMPILE-FILE COMPILE-FILE-PATHNAME COMPILED-FUNCTION-P COMPILER-MACRO-FUNCTION COMPLEMENT COMPLEX COMPLEXP COMPUTE-APPLICABLE-METHODS COMPUTE-RESTARTS CONCATENATE CONCATENATED-STREAM-STREAMS CONJUGATE CONS CONSP CONSTANTLY CONSTANTP CONTINUE COPY-ALIST COPY-LIST COPY-PPRINT-DISPATCH COPY-READTABLE COPY-SEQ COPY-STRUCTURE COPY-SYMBOL COPY-TREE COS COSH COUNT COUNT-IF COUNT-IF-NOT DECODE-FLOAT DECODE-UNIVERSAL-TIME DELETE DELETE-DUPLICATES DELETE-FILE DELETE-IF DELETE-IF-NOT DELETE-PACKAGE DENOMINATOR DEPOSIT-FIELD DESCRIBE DESCRIBE-OBJECT DIGIT-CHAR DIGIT-CHAR-P DIRECTORY DIRECTORY-NAMESTRING DISASSEMBLE DOCUMENTATION DPB DRIBBLE ECHO-STREAM-INPUT-STREAM ECHO-STREAM-OUTPUT-STREAM ED EIGHTH ELT ENCODE-UNIVERSAL-TIME ENDP ENOUGH-NAMESTRING ENSURE-DIRECTORIES-EXIST ENSURE-GENERIC-FUNCTION EQ EQL EQUAL EQUALP ERROR EVAL EVENP EVERY EXP EXPORT EXPT FBOUNDP FCEILING FDEFINITION FFLOOR FIFTH FILE-AUTHOR FILE-ERROR-PATHNAME FILE-LENGTH FILE-NAMESTRING FILE-POSITION FILE-STRING-LENGTH FILE-WRITE-DATE FILL FILL-POINTER FIND FIND-ALL-SYMBOLS FIND-CLASS FIND-IF FIND-IF-NOT FIND-METHOD FIND-PACKAGE FIND-RESTART FIND-SYMBOL FINISH-OUTPUT FIRST FLOAT FLOAT-DIGITS FLOAT-PRECISION FLOAT-RADIX FLOAT-SIGN FLOATP FLOOR FMAKUNBOUND FORCE-OUTPUT FORMAT FOURTH FRESH-LINE FROUND FTRUNCATE FUNCALL FUNCTION-KEYWORDS FUNCTION-LAMBDA-EXPRESSION FUNCTIONP GCD GENSYM GENTEMP GET GET-DECODED-TIME GET-DISPATCH-MACRO-CHARACTER GET-INTERNAL-REAL-TIME GET-INTERNAL-RUN-TIME GET-MACRO-CHARACTER GET-OUTPUT-STREAM-STRING GET-PROPERTIES GET-SETF-EXPANSION GET-UNIVERSAL-TIME GETF GETHASH GRAPHIC-CHAR-P HASH-TABLE-COUNT HASH-TABLE-P HASH-TABLE-REHASH-SIZE HASH-TABLE-REHASH-THRESHOLD HASH-TABLE-SIZE HASH-TABLE-TEST HOST-NAMESTRING IDENTITY IMAGPART IMPORT INITIALIZE-INSTANCE INPUT-STREAM-P INSPECT INTEGER-DECODE-FLOAT INTEGER-LENGTH INTEGERP INTERACTIVE-STREAM-P INTERN INTERSECTION INVALID-METHOD-ERROR INVOKE-DEBUGGER INVOKE-RESTART INVOKE-RESTART-INTERACTIVELY ISQRT KEYWORDP LAST LCM LDB LDB-TEST LDIFF LENGTH LISP-IMPLEMENTATION-TYPE LISP-IMPLEMENTATION-VERSION LIST LIST* LIST-ALL-PACKAGES LIST-LENGTH LISTEN LISTP LOAD LOAD-LOGICAL-PATHNAME-TRANSLATIONS LOG LOGAND LOGANDC1 LOGANDC2 LOGBITP LOGCOUNT LOGEQV LOGICAL-PATHNAME LOGICAL-PATHNAME-TRANSLATIONS LOGIOR LOGNAND LOGNOR LOGNOT LOGORC1 LOGORC2 LOGTEST LOGXOR LONG-SITE-NAME LOWER-CASE-P MACHINE-INSTANCE MACHINE-TYPE MACHINE-VERSION MACRO-FUNCTION MACROEXPAND MACROEXPAND-1 MAKE-ARRAY MAKE-BROADCAST-STREAM MAKE-CONCATENATED-STREAM MAKE-CONDITION MAKE-DISPATCH-MACRO-CHARACTER MAKE-ECHO-STREAM MAKE-HASH-TABLE MAKE-INSTANCE MAKE-INSTANCES-OBSOLETE MAKE-LIST MAKE-LOAD-FORM MAKE-LOAD-FORM-SAVING-SLOTS MAKE-PACKAGE MAKE-PATHNAME MAKE-RANDOM-STATE MAKE-SEQUENCE MAKE-STRING MAKE-STRING-INPUT-STREAM MAKE-STRING-OUTPUT-STREAM MAKE-SYMBOL MAKE-SYNONYM-STREAM MAKE-TWO-WAY-STREAM MAKUNBOUND MAP MAP-INTO MAPC MAPCAN MAPCAR MAPCON MAPHASH MAPL MAPLIST MASK-FIELD MAX MEMBER MEMBER-IF MEMBER-IF-NOT MERGE MERGE-PATHNAMES METHOD-COMBINATION-ERROR METHOD-QUALIFIERS MIN MINUSP MISMATCH MOD MUFFLE-WARNING NAME-CHAR NAMESTRING NBUTLAST NCONC NINTERSECTION NINTH NO-APPLICABLE-METHOD NO-NEXT-METHOD NOT NOTANY NOTEVERY NRECONC NREVERSE NSET-DIFFERENCE NSET-EXCLUSIVE-OR NSTRING-CAPITALIZE NSTRING-DOWNCASE NSTRING-UPCASE NSUBLIS NSUBST NSUBST-IF NSUBST-IF-NOT NSUBSTITUTE NSUBSTITUTE-IF NSUBSTITUTE-IF-NOT NTH NTHCDR NULL NUMBERP NUMERATOR NUNION ODDP OPEN OPEN-STREAM-P OUTPUT-STREAM-P PACKAGE-ERROR-PACKAGE PACKAGE-NAME PACKAGE-NICKNAMES PACKAGE-SHADOWING-SYMBOLS PACKAGE-USE-LIST PACKAGE-USED-BY-LIST PACKAGEP PAIRLIS PARSE-INTEGER PARSE-NAMESTRING PATHNAME PATHNAME-DEVICE PATHNAME-DIRECTORY PATHNAME-HOST PATHNAME-MATCH-P PATHNAME-NAME PATHNAME-TYPE PATHNAME-VERSION PATHNAMEP PEEK-CHAR PHASE PLUSP POSITION POSITION-IF POSITION-IF-NOT PPRINT PPRINT-DISPATCH PPRINT-FILL PPRINT-INDENT PPRINT-LINEAR PPRINT-NEWLINE PPRINT-TAB PPRINT-TABULAR PRIN1 PRIN1-TO-STRING PRINC PRINC-TO-STRING PRINT PRINT-NOT-READABLE-OBJECT PRINT-OBJECT PROBE-FILE PROCLAIM PROVIDE RANDOM RANDOM-STATE-P RASSOC RASSOC-IF RASSOC-IF-NOT RATIONAL RATIONALIZE RATIONALP READ READ-BYTE READ-CHAR READ-CHAR-NO-HANG READ-DELIMITED-LIST READ-FROM-STRING READ-LINE READ-PRESERVING-WHITESPACE READ-SEQUENCE READTABLE-CASE READTABLEP REALP REALPART REDUCE REINITIALIZE-INSTANCE REM REMHASH REMOVE REMOVE-DUPLICATES REMOVE-IF REMOVE-IF-NOT REMOVE-METHOD REMPROP RENAME-FILE RENAME-PACKAGE REPLACE REQUIRE REST RESTART-NAME REVAPPEND REVERSE ROOM ROUND ROW-MAJOR-AREF RPLACA RPLACD SBIT SCALE-FLOAT SCHAR SEARCH SECOND SET SET-DIFFERENCE SET-DISPATCH-MACRO-CHARACTER SET-EXCLUSIVE-OR SET-MACRO-CHARACTER SET-PPRINT-DISPATCH SET-SYNTAX-FROM-CHAR SEVENTH SHADOW SHADOWING-IMPORT SHARED-INITIALIZE SHORT-SITE-NAME SIGNAL SIGNUM SIMPLE-BIT-VECTOR-P SIMPLE-CONDITION-FORMAT-ARGUMENTS SIMPLE-CONDITION-FORMAT-CONTROL SIMPLE-STRING-P SIMPLE-VECTOR-P SIN SINH SIXTH SLEEP SLOT-BOUNDP SLOT-EXISTS-P SLOT-MAKUNBOUND SLOT-MISSING SLOT-UNBOUND SLOT-VALUE SOFTWARE-TYPE SOFTWARE-VERSION SOME SORT SPECIAL-OPERATOR-P SQRT STABLE-SORT STANDARD-CHAR-P STORE-VALUE STREAM-ELEMENT-TYPE STREAM-ERROR-STREAM STREAM-EXTERNAL-FORMAT STREAMP STRING STRING-CAPITALIZE STRING-DOWNCASE STRING-EQUAL STRING-GREATERP STRING-LEFT-TRIM STRING-LESSP STRING-NOT-EQUAL STRING-NOT-GREATERP STRING-NOT-LESSP STRING-RIGHT-TRIM STRING-TRIM STRING-UPCASE STRING/= STRING< STRING<= STRING= STRING> STRING>= STRINGP SUBLIS SUBSEQ SUBSETP SUBST SUBST-IF SUBST-IF-NOT SUBSTITUTE SUBSTITUTE-IF SUBSTITUTE-IF-NOT SUBTYPEP SVREF SXHASH SYMBOL-FUNCTION SYMBOL-NAME SYMBOL-PACKAGE SYMBOL-PLIST SYMBOL-VALUE SYMBOLP SYNONYM-STREAM-SYMBOL TAILP TAN TANH TENTH TERPRI THIRD TRANSLATE-LOGICAL-PATHNAME TRANSLATE-PATHNAME TREE-EQUAL TRUENAME TRUNCATE TWO-WAY-STREAM-INPUT-STREAM TWO-WAY-STREAM-OUTPUT-STREAM TYPE-ERROR-DATUM TYPE-ERROR-EXPECTED-TYPE TYPE-OF TYPEP UNBOUND-SLOT-INSTANCE UNEXPORT UNINTERN UNION UNREAD-CHAR UNUSE-PACKAGE UPDATE-INSTANCE-FOR-DIFFERENT-CLASS UPDATE-INSTANCE-FOR-REDEFINED-CLASS UPGRADED-ARRAY-ELEMENT-TYPE UPGRADED-COMPLEX-PART-TYPE UPPER-CASE-P USE-PACKAGE USE-VALUE USER-HOMEDIR-PATHNAME VALUES VALUES-LIST VECTOR VECTOR-POP VECTOR-PUSH VECTOR-PUSH-EXTEND VECTORP WARN WILD-PATHNAME-P WRITE WRITE-BYTE WRITE-CHAR WRITE-LINE WRITE-SEQUENCE WRITE-STRING WRITE-TO-STRING Y-OR-N-P YES-OR-NO-P ZEROP) "The list of functions defined in Common Lisp."))
+
+(unless (boundp '+common-lisp-variables+)
+  (defconstant +common-lisp-variables+ '(* ** *** *BREAK-ON-SIGNALS* *COMPILE-FILE-PATHNAME* *COMPILE-FILE-TRUENAME* *COMPILE-PRINT* *COMPILE-VERBOSE* *DEBUG-IO* *DEBUGGER-HOOK* *DEFAULT-PATHNAME-DEFAULTS* *ERROR-OUTPUT* *FEATURES* *GENSYM-COUNTER* *LOAD-PATHNAME* *LOAD-PRINT* *LOAD-TRUENAME* *LOAD-VERBOSE* *MACROEXPAND-HOOK* *MODULES* *PACKAGE* *PRINT-ARRAY* *PRINT-BASE* *PRINT-CASE* *PRINT-CIRCLE* *PRINT-ESCAPE* *PRINT-GENSYM* *PRINT-LENGTH* *PRINT-LEVEL* *PRINT-LINES* *PRINT-MISER-WIDTH* *PRINT-PPRINT-DISPATCH* *PRINT-PRETTY* *PRINT-RADIX* *PRINT-READABLY* *PRINT-RIGHT-MARGIN* *QUERY-IO* *RANDOM-STATE* *READ-BASE* *READ-DEFAULT-FLOAT-FORMAT* *READ-EVAL* *READ-SUPPRESS* *READTABLE* *STANDARD-INPUT* *STANDARD-OUTPUT* *TERMINAL-IO* *TRACE-OUTPUT* + ++ +++ - / // /// ARRAY-DIMENSION-LIMIT ARRAY-RANK-LIMIT ARRAY-TOTAL-SIZE-LIMIT BOOLE-1 BOOLE-2 BOOLE-AND BOOLE-ANDC1 BOOLE-ANDC2 BOOLE-C1 BOOLE-C2 BOOLE-CLR BOOLE-EQV BOOLE-IOR BOOLE-NAND BOOLE-NOR BOOLE-ORC1 BOOLE-ORC2 BOOLE-SET BOOLE-XOR CALL-ARGUMENTS-LIMIT CHAR-CODE-LIMIT DOUBLE-FLOAT-EPSILON DOUBLE-FLOAT-NEGATIVE-EPSILON INTERNAL-TIME-UNITS-PER-SECOND LAMBDA-LIST-KEYWORDS LAMBDA-PARAMETERS-LIMIT LEAST-NEGATIVE-DOUBLE-FLOAT LEAST-NEGATIVE-LONG-FLOAT LEAST-NEGATIVE-NORMALIZED-DOUBLE-FLOAT LEAST-NEGATIVE-NORMALIZED-LONG-FLOAT LEAST-NEGATIVE-NORMALIZED-SHORT-FLOAT LEAST-NEGATIVE-NORMALIZED-SINGLE-FLOAT LEAST-NEGATIVE-SHORT-FLOAT LEAST-NEGATIVE-SINGLE-FLOAT LEAST-POSITIVE-DOUBLE-FLOAT LEAST-POSITIVE-LONG-FLOAT LEAST-POSITIVE-NORMALIZED-DOUBLE-FLOAT LEAST-POSITIVE-NORMALIZED-LONG-FLOAT LEAST-POSITIVE-NORMALIZED-SHORT-FLOAT LEAST-POSITIVE-NORMALIZED-SINGLE-FLOAT LEAST-POSITIVE-SHORT-FLOAT LEAST-POSITIVE-SINGLE-FLOAT LONG-FLOAT-EPSILON LONG-FLOAT-NEGATIVE-EPSILON MOST-NEGATIVE-DOUBLE-FLOAT MOST-NEGATIVE-FIXNUM MOST-NEGATIVE-LONG-FLOAT MOST-NEGATIVE-SHORT-FLOAT MOST-NEGATIVE-SINGLE-FLOAT MOST-POSITIVE-DOUBLE-FLOAT MOST-POSITIVE-FIXNUM MOST-POSITIVE-LONG-FLOAT MOST-POSITIVE-SHORT-FLOAT MOST-POSITIVE-SINGLE-FLOAT MULTIPLE-VALUES-LIMIT NIL PI SHORT-FLOAT-EPSILON SHORT-FLOAT-NEGATIVE-EPSILON SINGLE-FLOAT-EPSILON SINGLE-FLOAT-NEGATIVE-EPSILON T) "The list of special variables defined in Common Lisp."))
+
 ;; TODO: add global variables defined by Common Lisp.
-(defun make-default-free-common-lisp-namespace ()
-  "Return a free namespace in which all [TODO: variables,] functions, and macros available by default in package COMMON-LISP are present. The FUN-objects in the return namespace must have their MACROP-slot bound appropriately, so that parsing '(DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL) doesn't fail anymore."
-  (let ((free-namespace (make-empty-free-namespace))
-	;; the list of Common Lisp macros: (determined by looking at differences between SBCL and CLISP of global *LISP-MACROS* computed in file all-lisp-symbols.lisp)
-	(common-lisp-macros '(AND ASSERT CALL-METHOD CASE CCASE CHECK-TYPE COND CTYPECASE DECF DECLAIM DEFCLASS DEFCONSTANT DEFGENERIC DEFINE-COMPILER-MACRO DEFINE-CONDITION DEFINE-METHOD-COMBINATION DEFINE-MODIFY-MACRO DEFINE-SETF-EXPANDER DEFINE-SYMBOL-MACRO DEFMACRO DEFMETHOD DEFPACKAGE DEFPARAMETER DEFSETF DEFSTRUCT DEFTYPE DEFUN DEFVAR DESTRUCTURING-BIND DO DO* DO-ALL-SYMBOLS DO-EXTERNAL-SYMBOLS DO-SYMBOLS DOLIST DOTIMES ECASE ETYPECASE FORMATTER HANDLER-BIND HANDLER-CASE IGNORE-ERRORS IN-PACKAGE INCF LAMBDA LOOP LOOP-FINISH MULTIPLE-VALUE-BIND MULTIPLE-VALUE-LIST MULTIPLE-VALUE-SETQ NTH-VALUE OR POP PPRINT-LOGICAL-BLOCK PRINT-UNREADABLE-OBJECT PROG PROG* PROG1 PROG2 PSETF PSETQ PUSH PUSHNEW REMF RESTART-BIND RESTART-CASE RETURN ROTATEF SETF SHIFTF STEP TIME TRACE TYPECASE UNLESS UNTRACE WHEN WITH-ACCESSORS WITH-COMPILATION-UNIT WITH-CONDITION-RESTARTS WITH-HASH-TABLE-ITERATOR WITH-INPUT-FROM-STRING WITH-OPEN-FILE WITH-OPEN-STREAM WITH-OUTPUT-TO-STRING WITH-PACKAGE-ITERATOR WITH-SIMPLE-RESTART WITH-SLOTS WITH-STANDARD-IO-SYNTAX))
-	;; the list of Common Lisp functions: (determined by global *LISP-FUNCTIONS* computed in file all-lisp-symbols.lisp, which are equal between SBCL and CLISP)
-	(common-lisp-functions '(* + - / /= 1+ 1- < <= = > >= ABORT ABS ACONS ACOS ACOSH ADD-METHOD ADJOIN ADJUST-ARRAY ADJUSTABLE-ARRAY-P ALLOCATE-INSTANCE ALPHA-CHAR-P ALPHANUMERICP APPEND APPLY APROPOS APROPOS-LIST AREF ARITHMETIC-ERROR-OPERANDS ARITHMETIC-ERROR-OPERATION ARRAY-DIMENSION ARRAY-DIMENSIONS ARRAY-DISPLACEMENT ARRAY-ELEMENT-TYPE ARRAY-HAS-FILL-POINTER-P ARRAY-IN-BOUNDS-P ARRAY-RANK ARRAY-ROW-MAJOR-INDEX ARRAY-TOTAL-SIZE ARRAYP ASH ASIN ASINH ASSOC ASSOC-IF ASSOC-IF-NOT ATAN ATANH ATOM BIT BIT-AND BIT-ANDC1 BIT-ANDC2 BIT-EQV BIT-IOR BIT-NAND BIT-NOR BIT-NOT BIT-ORC1 BIT-ORC2 BIT-VECTOR-P BIT-XOR BOOLE BOTH-CASE-P BOUNDP BREAK BROADCAST-STREAM-STREAMS BUTLAST BYTE BYTE-POSITION BYTE-SIZE CAAAAR CAAADR CAAAR CAADAR CAADDR CAADR CAAR CADAAR CADADR CADAR CADDAR CADDDR CADDR CADR CAR CDAAAR CDAADR CDAAR CDADAR CDADDR CDADR CDAR CDDAAR CDDADR CDDAR CDDDAR CDDDDR CDDDR CDDR CDR CEILING CELL-ERROR-NAME CERROR CHANGE-CLASS CHAR CHAR-CODE CHAR-DOWNCASE CHAR-EQUAL CHAR-GREATERP CHAR-INT CHAR-LESSP CHAR-NAME CHAR-NOT-EQUAL CHAR-NOT-GREATERP CHAR-NOT-LESSP CHAR-UPCASE CHAR/= CHAR< CHAR<= CHAR= CHAR> CHAR>= CHARACTER CHARACTERP CIS CLASS-NAME CLASS-OF CLEAR-INPUT CLEAR-OUTPUT CLOSE CLRHASH CODE-CHAR COERCE COMPILE COMPILE-FILE COMPILE-FILE-PATHNAME COMPILED-FUNCTION-P COMPILER-MACRO-FUNCTION COMPLEMENT COMPLEX COMPLEXP COMPUTE-APPLICABLE-METHODS COMPUTE-RESTARTS CONCATENATE CONCATENATED-STREAM-STREAMS CONJUGATE CONS CONSP CONSTANTLY CONSTANTP CONTINUE COPY-ALIST COPY-LIST COPY-PPRINT-DISPATCH COPY-READTABLE COPY-SEQ COPY-STRUCTURE COPY-SYMBOL COPY-TREE COS COSH COUNT COUNT-IF COUNT-IF-NOT DECODE-FLOAT DECODE-UNIVERSAL-TIME DELETE DELETE-DUPLICATES DELETE-FILE DELETE-IF DELETE-IF-NOT DELETE-PACKAGE DENOMINATOR DEPOSIT-FIELD DESCRIBE DESCRIBE-OBJECT DIGIT-CHAR DIGIT-CHAR-P DIRECTORY DIRECTORY-NAMESTRING DISASSEMBLE DOCUMENTATION DPB DRIBBLE ECHO-STREAM-INPUT-STREAM ECHO-STREAM-OUTPUT-STREAM ED EIGHTH ELT ENCODE-UNIVERSAL-TIME ENDP ENOUGH-NAMESTRING ENSURE-DIRECTORIES-EXIST ENSURE-GENERIC-FUNCTION EQ EQL EQUAL EQUALP ERROR EVAL EVENP EVERY EXP EXPORT EXPT FBOUNDP FCEILING FDEFINITION FFLOOR FIFTH FILE-AUTHOR FILE-ERROR-PATHNAME FILE-LENGTH FILE-NAMESTRING FILE-POSITION FILE-STRING-LENGTH FILE-WRITE-DATE FILL FILL-POINTER FIND FIND-ALL-SYMBOLS FIND-CLASS FIND-IF FIND-IF-NOT FIND-METHOD FIND-PACKAGE FIND-RESTART FIND-SYMBOL FINISH-OUTPUT FIRST FLOAT FLOAT-DIGITS FLOAT-PRECISION FLOAT-RADIX FLOAT-SIGN FLOATP FLOOR FMAKUNBOUND FORCE-OUTPUT FORMAT FOURTH FRESH-LINE FROUND FTRUNCATE FUNCALL FUNCTION-KEYWORDS FUNCTION-LAMBDA-EXPRESSION FUNCTIONP GCD GENSYM GENTEMP GET GET-DECODED-TIME GET-DISPATCH-MACRO-CHARACTER GET-INTERNAL-REAL-TIME GET-INTERNAL-RUN-TIME GET-MACRO-CHARACTER GET-OUTPUT-STREAM-STRING GET-PROPERTIES GET-SETF-EXPANSION GET-UNIVERSAL-TIME GETF GETHASH GRAPHIC-CHAR-P HASH-TABLE-COUNT HASH-TABLE-P HASH-TABLE-REHASH-SIZE HASH-TABLE-REHASH-THRESHOLD HASH-TABLE-SIZE HASH-TABLE-TEST HOST-NAMESTRING IDENTITY IMAGPART IMPORT INITIALIZE-INSTANCE INPUT-STREAM-P INSPECT INTEGER-DECODE-FLOAT INTEGER-LENGTH INTEGERP INTERACTIVE-STREAM-P INTERN INTERSECTION INVALID-METHOD-ERROR INVOKE-DEBUGGER INVOKE-RESTART INVOKE-RESTART-INTERACTIVELY ISQRT KEYWORDP LAST LCM LDB LDB-TEST LDIFF LENGTH LISP-IMPLEMENTATION-TYPE LISP-IMPLEMENTATION-VERSION LIST LIST* LIST-ALL-PACKAGES LIST-LENGTH LISTEN LISTP LOAD LOAD-LOGICAL-PATHNAME-TRANSLATIONS LOG LOGAND LOGANDC1 LOGANDC2 LOGBITP LOGCOUNT LOGEQV LOGICAL-PATHNAME LOGICAL-PATHNAME-TRANSLATIONS LOGIOR LOGNAND LOGNOR LOGNOT LOGORC1 LOGORC2 LOGTEST LOGXOR LONG-SITE-NAME LOWER-CASE-P MACHINE-INSTANCE MACHINE-TYPE MACHINE-VERSION MACRO-FUNCTION MACROEXPAND MACROEXPAND-1 MAKE-ARRAY MAKE-BROADCAST-STREAM MAKE-CONCATENATED-STREAM MAKE-CONDITION MAKE-DISPATCH-MACRO-CHARACTER MAKE-ECHO-STREAM MAKE-HASH-TABLE MAKE-INSTANCE MAKE-INSTANCES-OBSOLETE MAKE-LIST MAKE-LOAD-FORM MAKE-LOAD-FORM-SAVING-SLOTS MAKE-PACKAGE MAKE-PATHNAME MAKE-RANDOM-STATE MAKE-SEQUENCE MAKE-STRING MAKE-STRING-INPUT-STREAM MAKE-STRING-OUTPUT-STREAM MAKE-SYMBOL MAKE-SYNONYM-STREAM MAKE-TWO-WAY-STREAM MAKUNBOUND MAP MAP-INTO MAPC MAPCAN MAPCAR MAPCON MAPHASH MAPL MAPLIST MASK-FIELD MAX MEMBER MEMBER-IF MEMBER-IF-NOT MERGE MERGE-PATHNAMES METHOD-COMBINATION-ERROR METHOD-QUALIFIERS MIN MINUSP MISMATCH MOD MUFFLE-WARNING NAME-CHAR NAMESTRING NBUTLAST NCONC NINTERSECTION NINTH NO-APPLICABLE-METHOD NO-NEXT-METHOD NOT NOTANY NOTEVERY NRECONC NREVERSE NSET-DIFFERENCE NSET-EXCLUSIVE-OR NSTRING-CAPITALIZE NSTRING-DOWNCASE NSTRING-UPCASE NSUBLIS NSUBST NSUBST-IF NSUBST-IF-NOT NSUBSTITUTE NSUBSTITUTE-IF NSUBSTITUTE-IF-NOT NTH NTHCDR NULL NUMBERP NUMERATOR NUNION ODDP OPEN OPEN-STREAM-P OUTPUT-STREAM-P PACKAGE-ERROR-PACKAGE PACKAGE-NAME PACKAGE-NICKNAMES PACKAGE-SHADOWING-SYMBOLS PACKAGE-USE-LIST PACKAGE-USED-BY-LIST PACKAGEP PAIRLIS PARSE-INTEGER PARSE-NAMESTRING PATHNAME PATHNAME-DEVICE PATHNAME-DIRECTORY PATHNAME-HOST PATHNAME-MATCH-P PATHNAME-NAME PATHNAME-TYPE PATHNAME-VERSION PATHNAMEP PEEK-CHAR PHASE PLUSP POSITION POSITION-IF POSITION-IF-NOT PPRINT PPRINT-DISPATCH PPRINT-FILL PPRINT-INDENT PPRINT-LINEAR PPRINT-NEWLINE PPRINT-TAB PPRINT-TABULAR PRIN1 PRIN1-TO-STRING PRINC PRINC-TO-STRING PRINT PRINT-NOT-READABLE-OBJECT PRINT-OBJECT PROBE-FILE PROCLAIM PROVIDE RANDOM RANDOM-STATE-P RASSOC RASSOC-IF RASSOC-IF-NOT RATIONAL RATIONALIZE RATIONALP READ READ-BYTE READ-CHAR READ-CHAR-NO-HANG READ-DELIMITED-LIST READ-FROM-STRING READ-LINE READ-PRESERVING-WHITESPACE READ-SEQUENCE READTABLE-CASE READTABLEP REALP REALPART REDUCE REINITIALIZE-INSTANCE REM REMHASH REMOVE REMOVE-DUPLICATES REMOVE-IF REMOVE-IF-NOT REMOVE-METHOD REMPROP RENAME-FILE RENAME-PACKAGE REPLACE REQUIRE REST RESTART-NAME REVAPPEND REVERSE ROOM ROUND ROW-MAJOR-AREF RPLACA RPLACD SBIT SCALE-FLOAT SCHAR SEARCH SECOND SET SET-DIFFERENCE SET-DISPATCH-MACRO-CHARACTER SET-EXCLUSIVE-OR SET-MACRO-CHARACTER SET-PPRINT-DISPATCH SET-SYNTAX-FROM-CHAR SEVENTH SHADOW SHADOWING-IMPORT SHARED-INITIALIZE SHORT-SITE-NAME SIGNAL SIGNUM SIMPLE-BIT-VECTOR-P SIMPLE-CONDITION-FORMAT-ARGUMENTS SIMPLE-CONDITION-FORMAT-CONTROL SIMPLE-STRING-P SIMPLE-VECTOR-P SIN SINH SIXTH SLEEP SLOT-BOUNDP SLOT-EXISTS-P SLOT-MAKUNBOUND SLOT-MISSING SLOT-UNBOUND SLOT-VALUE SOFTWARE-TYPE SOFTWARE-VERSION SOME SORT SPECIAL-OPERATOR-P SQRT STABLE-SORT STANDARD-CHAR-P STORE-VALUE STREAM-ELEMENT-TYPE STREAM-ERROR-STREAM STREAM-EXTERNAL-FORMAT STREAMP STRING STRING-CAPITALIZE STRING-DOWNCASE STRING-EQUAL STRING-GREATERP STRING-LEFT-TRIM STRING-LESSP STRING-NOT-EQUAL STRING-NOT-GREATERP STRING-NOT-LESSP STRING-RIGHT-TRIM STRING-TRIM STRING-UPCASE STRING/= STRING< STRING<= STRING= STRING> STRING>= STRINGP SUBLIS SUBSEQ SUBSETP SUBST SUBST-IF SUBST-IF-NOT SUBSTITUTE SUBSTITUTE-IF SUBSTITUTE-IF-NOT SUBTYPEP SVREF SXHASH SYMBOL-FUNCTION SYMBOL-NAME SYMBOL-PACKAGE SYMBOL-PLIST SYMBOL-VALUE SYMBOLP SYNONYM-STREAM-SYMBOL TAILP TAN TANH TENTH TERPRI THIRD TRANSLATE-LOGICAL-PATHNAME TRANSLATE-PATHNAME TREE-EQUAL TRUENAME TRUNCATE TWO-WAY-STREAM-INPUT-STREAM TWO-WAY-STREAM-OUTPUT-STREAM TYPE-ERROR-DATUM TYPE-ERROR-EXPECTED-TYPE TYPE-OF TYPEP UNBOUND-SLOT-INSTANCE UNEXPORT UNINTERN UNION UNREAD-CHAR UNUSE-PACKAGE UPDATE-INSTANCE-FOR-DIFFERENT-CLASS UPDATE-INSTANCE-FOR-REDEFINED-CLASS UPGRADED-ARRAY-ELEMENT-TYPE UPGRADED-COMPLEX-PART-TYPE UPPER-CASE-P USE-PACKAGE USE-VALUE USER-HOMEDIR-PATHNAME VALUES VALUES-LIST VECTOR VECTOR-POP VECTOR-PUSH VECTOR-PUSH-EXTEND VECTORP WARN WILD-PATHNAME-P WRITE WRITE-BYTE WRITE-CHAR WRITE-LINE WRITE-SEQUENCE WRITE-STRING WRITE-TO-STRING Y-OR-N-P YES-OR-NO-P ZEROP)))
-    (loop for macro in common-lisp-macros do
-	 (augment-free-namespace (make-instance 'fun :name macro :freep t :declspecs nil :macrop t) free-namespace)) ;do not bind :DEFINITION
-    (loop for function in common-lisp-functions do
-	 (augment-free-namespace (make-instance 'fun :name function :freep t :declspecs nil :macrop nil) free-namespace)) ;do not bind :DEFINITION
+(defun make-free-namespace (&key (variables +common-lisp-variables+) (functions +common-lisp-functions+) (macros +common-lisp-macros+))
+  "Return a free namespace in which the list of VARIABLES, FUNCTIONS, and MACROS are defined.
+By default, variables, functions, and macros available in package COMMON-LISP are present."
+  ;; the FUN-objects in the returned namespace must have their MACROP-slot bound appropriately, so that parsing '(DEFMACRO BLA (A (IF S) &OPTIONAL C) (PRINT (LIST A IF S C)) NIL) doesn't fail anymore.
+  (let ((free-namespace (make-empty-free-namespace)))
+    ;; do not bind the :DEFINITION slots.
+    (loop for variable in variables do
+	 (augment-free-namespace (make-instance 'var :name variable :freep t :declspecs nil :macrop nil) free-namespace))
+    (loop for function in functions do
+	 (augment-free-namespace (make-instance 'fun :name function :freep t :declspecs nil :macrop nil) free-namespace))
+    (loop for macro in macros do
+	 (augment-free-namespace (make-instance 'fun :name macro :freep t :declspecs nil :macrop t) free-namespace))
     free-namespace))
 
 ;;;; DECLARATIONS
@@ -443,17 +456,20 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defclass declspec-special (declspec)
   ((vars :initarg :vars :accessor declspec-vars :type list)))
 
-(defun make-custom-parser (parserps parsers)
-  "PARSERPS must be a list of recognizer functions that return non-NIL when the passed form can be parsed by the corresponding function in list PARSERS.
-PARSERS must be a list with the same length as parserps, which parses the passed form.
-All PARSERS must have &ALLOW-OTHER-KEYS in their argument list."
+(defun make-parser (parsers)
+  "PARSERS must be a list of conses, each cons having as CAR a recognizer functions, and as CDR the parser function.
+The recognizer function must return non-NIL when the passed form can be parsed by the corresponding parser function in list PARSERS.
+The parser function must parse the form.
+All parsers must have &ALLOW-OTHER-KEYS in their argument list."
   (declare (optimize (debug 3)))
-  (flet ((reparse (form lexical-namespace free-namespace parent &key reparse declspec-reparse)
-	   (let ((parser (loop for parsep in parserps for parser in parsers do
-			      (when (funcall parsep form lexical-namespace free-namespace parent)
-				(return parser)))))
-	     (funcall parser form lexical-namespace free-namespace parent :reparse reparse :declspec-reparse declspec-reparse))))
-    #'reparse))
+  (flet ((parse (form lexical-namespace free-namespace parent &key parser declspec-parser)
+	   (let ((the-parser (loop for parsers in parsers do
+				  (let ((parsep (car parsers))
+					(parser (cdr parsers)))
+				    (when (funcall parsep form lexical-namespace free-namespace parent)
+				      (return parser))))))
+	     (funcall the-parser form lexical-namespace free-namespace parent :parser parser :declspec-parser declspec-parser))))
+    #'parse))
 
 (defun parse-function-declaration (decl)
   "Given a function declaration, return two values: 1. the alist of arguments, indexed by &REQUIRED, &OPTIONAL, &REST, and &KEY 2. the list of return value types.
@@ -496,8 +512,8 @@ Note that this function does not do recursive parsing when an argument or return
 		       inline notinline
 		       special))))
 
-(defun parse-declspec (expr lexical-namespace free-namespace parent &key declspec-reparse &allow-other-keys)
-  (declare (ignore declspec-reparse))
+(defun parse-declspec (expr lexical-namespace free-namespace parent &key declspec-parser &allow-other-keys)
+  (declare (ignore declspec-parser))
   (assert (consp expr) () "Malformed declaration specification ~S" expr)
   (let* ((identifier (car expr))
 	 (body (cdr expr)))
@@ -569,13 +585,13 @@ Note that this function does not do recursive parsing when an argument or return
 	   parsed-declspec)))
       (t (error "Unknown declaration specifier ~S" expr)))))
 
-(defun parse-declspecs (declspecs lexical-namespace free-namespace parent &key declspec-reparse)
+(defun parse-declspecs (declspecs lexical-namespace free-namespace parent &key declspec-parser)
   "Example: (PARSE-DECLSPECS '((TYPE FIXNUM A B C) (IGNORE A)) (MAKE-EMPTY-LEXICAL-NAMESPACE) (MAKE-EMPTY-FREE-NAMESPACE) NIL)"
   (assert (proper-list-p declspecs) () "Declaration specifications must be a proper list, but are ~S" declspecs)
   (loop for declspec in declspecs collect
-       (funcall declspec-reparse declspec lexical-namespace free-namespace parent :declspec-reparse declspec-reparse)))
+       (funcall declspec-parser declspec lexical-namespace free-namespace parent :declspec-parser declspec-parser)))
 
-(defun parse-declaration-in-body (body lexical-namespace free-namespace parent &key declspec-reparse)
+(defun parse-declaration-in-body (body lexical-namespace free-namespace parent &key declspec-parser)
   "Parses declarations in the beginning of BODY.
 Returns two values: the rest of the BODY that does not start with a DECLARE-expression, and a list of DECLSPEC-objects.
 Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE.
@@ -589,7 +605,7 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 		 ((and (listp head) (eq (car head) 'declare))
 		  (let* ((declspecs (cdr head)))
 		    (assert (proper-list-p declspecs) () "Not a proper list: ~S" declspecs)
-		    (let ((new-declspecs (parse-declspecs declspecs lexical-namespace free-namespace parent :declspec-reparse declspec-reparse)))
+		    (let ((new-declspecs (parse-declspecs declspecs lexical-namespace free-namespace parent :declspec-parser declspec-parser)))
 		      (parse-declare rest (nconc collected-declspecs new-declspecs)))))
 		 (t (values body collected-declspecs))))))
     (assert (proper-list-p body) () "Not a proper list: ~S" body)
@@ -597,44 +613,44 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace))
-      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
+      (declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec)))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '(declare (type fixnum)) lexical-namespace free-namespace nil :declspec-parser declspec-parser)
     (assert (and (equal body '(declare (type fixnum))) (null declspecs)))))
 ;;TODO: test that (parse-declaration-in-body '((declare ()) 5) nil nil nil) throws an error.
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace))
-      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (type fixnum a)) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
+      (declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec)))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (type fixnum a)) 5) lexical-namespace free-namespace nil :declspec-parser declspec-parser)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type)))
     (assert (nso-freep (car (declspec-vars (car declspecs)))))
     (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'var 'a free-namespace)))
     (assert (not (namespace-boundp 'fun 'a free-namespace)))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace))
-      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
+      (declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec)))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) a)) 5) lexical-namespace free-namespace nil :declspec-parser declspec-parser)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun 'a free-namespace)))
     (assert (not (namespace-boundp 'var 'a free-namespace)))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace))
-      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
+      (declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec)))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ftype (function () fixnum) (setf a))) 5) lexical-namespace free-namespace nil :declspec-parser declspec-parser)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun '(setf a) free-namespace)))
     (assert (not (namespace-boundp 'var '(setf a) free-namespace)))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace))
-      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (optimize (debug 3) speed)) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
+      (declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec)))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (optimize (debug 3) speed)) 5) lexical-namespace free-namespace nil :declspec-parser declspec-parser)
     (assert (equal body '(5)))
     (assert (let ((d (car declspecs))) (and (typep d 'declspec-optimize) (equal (declspec-qualities d) '((debug . 3) (speed . nil))))))))
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace))
-      (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))))
-  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ignore a (function b))) 5) lexical-namespace free-namespace nil :declspec-reparse declspec-reparse)
+      (declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec)))))
+  (multiple-value-bind (body declspecs) (parse-declaration-in-body '((declare (ignore a (function b))) 5) lexical-namespace free-namespace nil :declspec-parser declspec-parser)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ignore)))
     (assert (let ((syms (declspec-syms (car declspecs)))) (typep (car syms) 'var) (typep (cadr syms) 'fun)))
     (assert (eq (car (declspec-syms (car declspecs))) (namespace-lookup 'var 'a free-namespace)))
@@ -642,7 +658,7 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 (multiple-value-bind (body declspecs)
     (parse-declaration-in-body '((declare (type fixnum) (ftype (function () t))) (declare (optimize (speed 3)) (ignore)))
 			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil
-			       :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
+			       :declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec))))
   (assert (equal body nil))
   (assert (typep (elt declspecs 0) 'declspec-type))
   (assert (typep (elt declspecs 1) 'declspec-ftype))
@@ -651,7 +667,7 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 (multiple-value-bind (body declspecs)
     (parse-declaration-in-body '((declare (inline f1 f2)) (declare (notinline f1)))
 			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil
-			       :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
+			       :declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec))))
   (assert (equal body nil))
   (assert (let ((inl (elt declspecs 0)))
 	    (and (typep inl 'declspec-inline)
@@ -663,20 +679,20 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 (multiple-value-bind (body declspecs)
     (parse-declaration-in-body '((declare (special a)))
 			       (make-empty-lexical-namespace) (make-empty-free-namespace) nil
-			       :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
+			       :declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec))))
   (assert (equal body nil))
   (assert (let ((spec (elt declspecs 0)))
 	    (and (typep spec 'declspec-special)
 		 (eq (nso-name (car (declspec-vars spec))) 'a)))))
 
-(defun parse-declaration-and-documentation-in-body (body lexical-namespace free-namespace parent &key declspec-reparse)
+(defun parse-declaration-and-documentation-in-body (body lexical-namespace free-namespace parent &key declspec-parser)
   "Parses declarations and documentation in the beginning of BODY.
 Returns three values: the rest of the BODY that does not start with a DECLARE-expression or a documentation string, and a list of DECLSPEC-objects, and a documentation string, or NIL if none is present in BODY.
 Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-slots of variables or functions in LEXICAL-NAMESPACE and FREE-NAMESPACE. Creates yet unknown free variables and functions, adds references to the created DECLSPEC-objects, and adds the NSO-objects to FREE-NAMESPACE."
   (let ((documentation nil)
 	(declspecs nil))
     (loop do
-	 (multiple-value-bind (body-rest declspecs1) (parse-declaration-in-body body lexical-namespace free-namespace parent :declspec-reparse declspec-reparse)
+	 (multiple-value-bind (body-rest declspecs1) (parse-declaration-in-body body lexical-namespace free-namespace parent :declspec-parser declspec-parser)
 	   (setf declspecs (nconc declspecs declspecs1))
 	   (cond
 	     ((and (consp body) (stringp (car body-rest)))
@@ -689,7 +705,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 
 (let ((lexical-namespace (make-empty-lexical-namespace))
       (free-namespace (make-empty-free-namespace)))
-  (multiple-value-bind (body declspecs documentation) (parse-declaration-and-documentation-in-body '((declare (type number a)) "doc" (declare (type fixnum a)) 5) lexical-namespace free-namespace nil :declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec)))
+  (multiple-value-bind (body declspecs documentation) (parse-declaration-and-documentation-in-body '((declare (type number a)) "doc" (declare (type fixnum a)) 5) lexical-namespace free-namespace nil :declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec))))
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type) (typep (cadr declspecs) 'declspec-type) (equal documentation "doc")))))
 
 (defmethod print-object ((object declspec-type) stream)
@@ -815,8 +831,8 @@ Return seven values: indicator whether keyword name is present (NIL for &OPTIONA
 (assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((t a) 1 ap) '&key)) '(t t a t 1 t ap)))
 (assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((nil a) 1 ap) '&key)) '(t nil a t 1 t ap)))
 
-;;Note that passing BLOCKS is not necessary here because REPARSE-FUNCTION has captured BLOCKS, and BLOCKS is not modified in #'PARSE-LAMBDA-LIST: parsing e.g. "(BLOCK TEST (FLET ((F (&OPTIONAL (A (RETURN-FROM TEST 4))) A)) (F)))" works.
-(defun parse-lambda-list (lambda-list lexical-namespace free-namespace parent reparse-function &key (allow-macro-lambda-list nil))
+;;Note that passing BLOCKS is not necessary here because PARSER-FUNCTION has captured BLOCKS, and BLOCKS is not modified in #'PARSE-LAMBDA-LIST: parsing e.g. "(BLOCK TEST (FLET ((F (&OPTIONAL (A (RETURN-FROM TEST 4))) A)) (F)))" works.
+(defun parse-lambda-list (lambda-list lexical-namespace free-namespace parent parser &key (allow-macro-lambda-list nil))
   "Returns two values: an instance of type LLIST (representing the parsed LAMBDA-LIST) and the LEXICAL-NAMESPACE augmented by the variables created by the arguments in LAMBDA-LIST.
 Supported lambda list keywords:
 CLHS Figure 3-12. Standardized Operators that use Ordinary Lambda Lists: An ordinary lambda list can contain the lambda list keywords shown in the next figure. &allow-other-keys &key &rest &aux &optional
@@ -845,7 +861,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
-		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :lexical-namespace lexical-namespace) nil)))
+		 (let ((parsed-init-form (if init-form-p (funcall parser init-form new-argument :lexical-namespace lexical-namespace) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
 		   (let ((new-supplied-var (if suppliedp (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
@@ -859,7 +875,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
-		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :lexical-namespace lexical-namespace) nil)))
+		 (let ((parsed-init-form (if init-form-p (funcall parser init-form new-argument :lexical-namespace lexical-namespace) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
 		   (let ((new-supplied-var (if suppliedp (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
@@ -872,7 +888,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
-		 (let ((parsed-init-form (if init-form-p (funcall reparse-function init-form new-argument :lexical-namespace lexical-namespace) nil)))
+		 (let ((parsed-init-form (if init-form-p (funcall parser init-form new-argument :lexical-namespace lexical-namespace) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
 		   new-argument))))
       (let* ((remaining lambda-list)
@@ -903,7 +919,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			   (add-required-argument (parse-required-argument head)))
 			  ((and allow-macro-lambda-list (listp head))
 			   (multiple-value-bind (parsed-llist new-lexical-namespace)
-			       (parse-lambda-list head lexical-namespace free-namespace new-llist reparse-function :allow-macro-lambda-list allow-macro-lambda-list)
+			       (parse-lambda-list head lexical-namespace free-namespace new-llist parser :allow-macro-lambda-list allow-macro-lambda-list)
 			     (setf lexical-namespace new-lexical-namespace)
 			     parsed-llist))
 			  (t (error "Invalid required argument ~S in lambda list ~S" head lambda-list)))
@@ -954,11 +970,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	(setf (llist-aux new-llist) (nreverse aux))))
     (values new-llist lexical-namespace)))
 
-(defun parse-ordinary-lambda-list (lambda-list lexical-namespace free-namespace parent reparse-function)
-  (parse-lambda-list lambda-list lexical-namespace free-namespace parent reparse-function :allow-macro-lambda-list nil))
+(defun parse-ordinary-lambda-list (lambda-list lexical-namespace free-namespace parent parser)
+  (parse-lambda-list lambda-list lexical-namespace free-namespace parent parser :allow-macro-lambda-list nil))
 
-(defun parse-macro-lambda-list (lambda-list lexical-namespace free-namespace parent reparse-function)
-  (parse-lambda-list lambda-list lexical-namespace free-namespace parent reparse-function :allow-macro-lambda-list t))
+(defun parse-macro-lambda-list (lambda-list lexical-namespace free-namespace parent parser)
+  (parse-lambda-list lambda-list lexical-namespace free-namespace parent parser :allow-macro-lambda-list t))
 
 ;;TODO: add some test cases, e.g. (let ((lexical-namespace (make-empty-lexical-namespace)) (free-namespace (make-empty-free-namespace))) (parse-lambda-list '(a &optional (b 1 bp) &rest r &key ((:cdddd c) 1 cp) &aux d) lexical-namespace free-namespace nil (lambda (form &rest r) (declare (ignore r)) form) :allow-macro-lambda-list nil))
 
@@ -1240,12 +1256,13 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 ;;;; END OF FORMs
 
-(defun parse-and-set-functiondef (form parse-lambda-list-function lexical-namespace free-namespace current-functiondef &key reparse declspec-reparse)
+(defun parse-and-set-functiondef (form parse-lambda-list-function lexical-namespace free-namespace current-functiondef &key parser declspec-parser)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
-PARSE-LAMBDA-LIST-FUNCTION must be a function that accepts (LAMBDA-LIST LEXICAL-NAMESPACE FREE-NAMESPACE CURRENT-FUNCTIONDEF REPARSE-FUNCTION), parses the LAMBDA-LIST and returns two values: 1. the new LLIST, i.e. an instance of (a subclass of) class LLIST. 2. the lexical namespace augmented by the variables in LAMBDA-LIST.
+PARSE-LAMBDA-LIST-FUNCTION must be a function that accepts (LAMBDA-LIST LEXICAL-NAMESPACE FREE-NAMESPACE CURRENT-FUNCTIONDEF PARSER), parses the LAMBDA-LIST and returns two values: 1. the new LLIST, i.e. an instance of (a subclass of) class LLIST. 2. the lexical namespace augmented by the variables in LAMBDA-LIST.
 Side-effects: Creates yet unknown free variables and functions and add them to FREE-NAMESPACE."
-  (flet ((reparse (form parent &key (lexical-namespace lexical-namespace))
-	   (funcall reparse form lexical-namespace free-namespace parent :reparse reparse :declspec-reparse declspec-reparse))
+  (declare (optimize (debug 3)))
+  (flet ((parser (form parent &key (lexical-namespace lexical-namespace))
+	   (funcall parser form lexical-namespace free-namespace parent :parser parser :declspec-parser declspec-parser))
 	 (split-lambda-list-and-body (form)
 	   (assert (and (consp form) (listp (car form))) () "Invalid lambda-list ~S" form)
 	   (let ((lambda-list (car form))
@@ -1254,14 +1271,14 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	     (values lambda-list body))))
     (multiple-value-bind (lambda-list body) (split-lambda-list-and-body form)
       (multiple-value-bind (new-llist lexical-namespace-in-functiondef)
-	  (funcall parse-lambda-list-function lambda-list lexical-namespace free-namespace current-functiondef #'reparse)
+	  (funcall parse-lambda-list-function lambda-list lexical-namespace free-namespace current-functiondef #'parser)
 	(setf (form-llist current-functiondef) new-llist)
 	(multiple-value-bind (body parsed-declspecs parsed-documentation)
-	    (parse-declaration-and-documentation-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :declspec-reparse declspec-reparse)
+	    (parse-declaration-and-documentation-in-body body lexical-namespace-in-functiondef free-namespace current-functiondef :declspec-parser declspec-parser)
 	  (setf (form-declspecs current-functiondef) parsed-declspecs)
 	  (setf (form-documentation current-functiondef) parsed-documentation)
 	  (assert (proper-list-p body) () "Not a proper list: ~S" body)
-	  (let ((parsed-body (loop for form in body collect (reparse form current-functiondef :lexical-namespace lexical-namespace-in-functiondef))))
+	  (let ((parsed-body (loop for form in body collect (parser form current-functiondef :lexical-namespace lexical-namespace-in-functiondef))))
 	    (setf (form-body current-functiondef) parsed-body))))
       current-functiondef)))
 
@@ -1275,18 +1292,19 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 ;; TODO: maybe rename to PARSE-FORM.
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
 ;; TODO: FIXME: Must handle arbitrary nonsense input gracefully. (see comment near #'PROPER-LIST-P.)
-(defun parse (form lexical-namespace free-namespace parent &key reparse declspec-reparse &allow-other-keys)
+(defun parse (form lexical-namespace free-namespace parent &key parser declspec-parser &allow-other-keys)
   "Recursively parse the Common Lisp FORM. During parsing, LEXICAL-NAMESPACE is augmented with the found namespace objects, but the originally passed LEXICAL-NAMESPACE instance is not modified. FREE-NAMESPACE is modified by adding namespace objects that are free in FORM. Use PARENT as the :PARENT slot in the returned abstract syntax tree (AST).
 PARSE parses the FORM and the elements in it recursively and constructs an AST, i.e. an instance of one of the -FORM classes.
-REPARSE is called for subforms of FORM to be parsed, with REPARSE and DECLSPEC-REPARSE passed to it.
-DECLSPEC-REPARSE is passed to the functions parsing declarations.
+PARSER is called for subforms of FORM to be parsed, with PARSER and DECLSPEC-PARSER passed to it.
+DECLSPEC-PARSER is passed to the functions parsing declarations.
 Return the parsed abstract syntax tree (AST)."
   (declare (optimize (debug 3)))
-  (labels ((reparse (form parent &key (lexical-namespace lexical-namespace))
-	     (funcall reparse form lexical-namespace free-namespace parent :reparse reparse :declspec-reparse declspec-reparse))
+  (labels ((parser (form parent &key (lexical-namespace lexical-namespace))
+	     (funcall parser form lexical-namespace free-namespace parent :parser parser :declspec-parser declspec-parser))
 	   (parse-body (body current &key (lexical-namespace lexical-namespace))
 	     (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
-	     (loop for form in body collect (reparse form current :lexical-namespace lexical-namespace))))
+	     (loop for form in body collect (parser form current :lexical-namespace lexical-namespace))))
+    (declare (inline parser parse-body))
     (cond
       ((or (eq form nil) (eq form t))
        (make-instance 'selfevalobject :object form))
@@ -1306,7 +1324,7 @@ Return the parsed abstract syntax tree (AST)."
 				       ((valid-function-name-p name-form)
 					(namespace-lookup/create 'fun name-form lexical-namespace free-namespace))
 				       ((and (consp name-form) (eq (car name-form) 'lambda))
-					(reparse name-form parent))
+					(parser name-form parent))
 				       (t (error "Invalid FUNCTION-form ~S" form))))))
 	   ((eq head 'progn)
 	    (let* ((current (make-instance 'progn-form :parent parent :body nil))
@@ -1332,7 +1350,7 @@ Return the parsed abstract syntax tree (AST)."
 				(value-form-present-p (consp def))
 				(value-form (if (consp def) (cadr def) nil))
 				(binding (make-instance 'var-binding :parent current))
-				(parsed-value (ecase head ((let* let) (if value-form-present-p (reparse value-form binding :lexical-namespace lexical-namespace) nil)) ((symbol-macrolet) value-form)))
+				(parsed-value (ecase head ((let* let) (if value-form-present-p (parser value-form binding :lexical-namespace lexical-namespace) nil)) ((symbol-macrolet) value-form)))
 				(macrop (ecase head ((let* let) nil) ((symbol-macrolet) t)))
 				(sym (make-instance 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop)))
 			   (setf (form-sym binding) sym) (setf (form-value binding) parsed-value)
@@ -1349,7 +1367,7 @@ Return the parsed abstract syntax tree (AST)."
 				  (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop))
 				  (lexical-namespace (ecase head ((flet macrolet) lexical-namespace) ((labels) (augment-lexical-namespace sym lexical-namespace))))) ;note that LEXICAL-NAMESPACE is not be returned, so the SYM binding is temporary like the BLO binding.
-			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :reparse reparse :declspec-reparse declspec-reparse)
+			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :parser parser :declspec-parser declspec-parser)
 			     (setf (form-sym binding) sym)
 			     (setf (nso-definition blo) binding)
 			     binding))))
@@ -1372,7 +1390,7 @@ Return the parsed abstract syntax tree (AST)."
 			   (values parsed-bindings new-lexical-namespace)))
 			(t (error "unknown HEAD"))))
 		  (multiple-value-bind (body parsed-declspecs)
-		      (parse-declaration-in-body body new-lexical-namespace free-namespace current :declspec-reparse declspec-reparse)
+		      (parse-declaration-in-body body new-lexical-namespace free-namespace current :declspec-parser declspec-parser)
 		    (setf (form-bindings current) parsed-bindings)
 		    (setf (form-declspecs current) parsed-declspecs)
 		    (setf (form-body current) (parse-body body current :lexical-namespace new-lexical-namespace))
@@ -1380,7 +1398,7 @@ Return the parsed abstract syntax tree (AST)."
 	   ((eq head 'lambda)
 	    (let* ((lambda-list-and-body (cdr form))
 		   (current (make-instance 'lambda-form :parent parent)))
-	      (parse-and-set-functiondef lambda-list-and-body #'parse-ordinary-lambda-list lexical-namespace free-namespace current :reparse reparse :declspec-reparse declspec-reparse)
+	      (parse-and-set-functiondef lambda-list-and-body #'parse-ordinary-lambda-list lexical-namespace free-namespace current :parser parser :declspec-parser declspec-parser)
 	      current))
 	   ((eq head 'block)
 	    (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" form)
@@ -1399,7 +1417,7 @@ Return the parsed abstract syntax tree (AST)."
 		   (value-form (cadr rest))
 		   (blo (namespace-lookup/create 'blo name lexical-namespace free-namespace))
 		   (current (make-instance 'return-from-form :parent parent :blo blo))
-		   (parsed-value (if value-form-p (reparse value-form current) nil)))
+		   (parsed-value (if value-form-p (parser value-form current) nil)))
 	      (setf (form-value current) parsed-value)
 	      (push current (nso-jumpers blo))
 	      current))
@@ -1408,7 +1426,7 @@ Return the parsed abstract syntax tree (AST)."
 	    (let ((body rest)
 		  (current (make-instance 'locally-form :parent parent)))
 	      (multiple-value-bind (body parsed-declspecs)
-		  (parse-declaration-in-body body lexical-namespace free-namespace current :declspec-reparse declspec-reparse)
+		  (parse-declaration-in-body body lexical-namespace free-namespace current :declspec-parser declspec-parser)
 		(setf (form-declspecs current) parsed-declspecs)
 		(setf (form-body current) (parse-body body current)))
 	      current))
@@ -1417,7 +1435,7 @@ Return the parsed abstract syntax tree (AST)."
 	    (let* ((value-type-form (car rest))
 		   (value-form (cadr rest))
 		   (current (make-instance 'the-form :parent parent :type value-type-form))
-		   (parsed-value (reparse value-form current)))
+		   (parsed-value (parser value-form current)))
 	      (setf (form-value current) parsed-value)
 	      current))
 	   ((eq head 'if)
@@ -1427,9 +1445,9 @@ Return the parsed abstract syntax tree (AST)."
 		   (else-present (not (null (cddr rest))))
 		   (else-form (if else-present (caddr rest) nil))
 		   (current (make-instance 'if-form :parent parent))
-		   (parsed-test (reparse test-form current))
-		   (parsed-then (reparse then-form current))
-		   (parsed-else (if else-present (reparse else-form current) nil)))
+		   (parsed-test (parser test-form current))
+		   (parsed-then (parser then-form current))
+		   (parsed-else (if else-present (parser else-form current) nil)))
 	      (setf (form-test current) parsed-test (form-then current) parsed-then (form-else current) parsed-else)
 	      current))
 	   ((eq head 'setq)
@@ -1442,7 +1460,7 @@ Return the parsed abstract syntax tree (AST)."
 		   (let* ((name (car rest))
 			  (value-form (cadr rest))
 			  (var (namespace-lookup/create 'var name lexical-namespace free-namespace))
-			  (parsed-value (reparse value-form current)))
+			  (parsed-value (parser value-form current)))
 		     (push var vars) (push parsed-value values))
 		   (setf rest (cddr rest)))
 	      (setf (form-vars current) (nreverse vars))
@@ -1453,7 +1471,7 @@ Return the parsed abstract syntax tree (AST)."
 	    (let* ((tag (car rest))
 		   (body (cdr rest))
 		   (current (make-instance 'catch-form :parent parent))
-		   (parsed-tag (reparse tag current))
+		   (parsed-tag (parser tag current))
 		   (parsed-body (parse-body body current)))
 	      (setf (form-tag current) parsed-tag (form-body current) parsed-body)
 	      current))
@@ -1462,8 +1480,8 @@ Return the parsed abstract syntax tree (AST)."
 	    (let* ((tag (car rest))
 		   (result-form (cadr rest))
 		   (current (make-instance 'throw-form :parent parent))
-		   (parsed-tag (reparse tag current))
-		   (parsed-value (reparse result-form current)))
+		   (parsed-tag (parser tag current))
+		   (parsed-value (parser result-form current)))
 	      (setf (form-tag current) parsed-tag (form-value current) parsed-value)
 	      current))
 	   ((eq head 'eval-when)
@@ -1480,7 +1498,7 @@ Return the parsed abstract syntax tree (AST)."
 		   (readonly (cadr rest)))
 	      (assert (position (cadr rest) '(nil t)) () "READ-ONLY-P in LOAD-TIME-VALUE-form ~S must be either NIL or T, but is ~S" form readonly)
 	      (let* ((current (make-instance 'load-time-value-form :parent parent :readonly readonly))
-		     (parsed-value (reparse value-form current :lexical-namespace (make-empty-lexical-namespace)))) ;Note that dynamic variables must be parsed: in the form (LOAD-TIME-VALUE *A*), *A* must refer to the global *A*.
+		     (parsed-value (parser value-form current :lexical-namespace (make-empty-lexical-namespace)))) ;Note that dynamic variables must be parsed: in the form (LOAD-TIME-VALUE *A*), *A* must refer to the global *A*.
 		(setf (form-value current) parsed-value)
 		current)))
 	   ((eq head 'quote)
@@ -1492,7 +1510,7 @@ Return the parsed abstract syntax tree (AST)."
 	    (let* ((function-form (car rest))
 		   (body (cdr rest))
 		   (current (make-instance (ecase head ((multiple-value-call) 'multiple-value-call-form) ((multiple-value-prog1) 'multiple-value-prog1-form)) :parent parent))
-		   (parsed-function (reparse function-form current))
+		   (parsed-function (parser function-form current))
 		   (parsed-body (parse-body body current)))
 	      (setf (form-function current) parsed-function (form-body current) parsed-body)
 	      current))
@@ -1503,8 +1521,8 @@ Return the parsed abstract syntax tree (AST)."
 		   (values-form (cadr rest))
 		   (body (cddr rest))
 		   (current (make-instance 'progv-form :parent parent))
-		   (parsed-symbols (reparse symbols-form current))
-		   (parsed-values (reparse values-form current))
+		   (parsed-symbols (parser symbols-form current))
+		   (parsed-values (parser values-form current))
 		   (parsed-body (parse-body body current)))
 	      (setf (form-symbols current) parsed-symbols (form-values current) parsed-values (form-body current) parsed-body)
 	      current))
@@ -1513,7 +1531,7 @@ Return the parsed abstract syntax tree (AST)."
 	    (let* ((protected-form (car rest))
 		   (cleanup-body (cdr rest))
 		   (current (make-instance 'unwind-protect-form :parent parent))
-		   (parsed-protected (reparse protected-form current))
+		   (parsed-protected (parser protected-form current))
 		   (parsed-cleanup-body (parse-body cleanup-body current)))
 	      (setf (form-protected current) parsed-protected (form-body current) parsed-cleanup-body)
 	      current))
@@ -1535,7 +1553,7 @@ Return the parsed abstract syntax tree (AST)."
 					((atom form)
 					 (namespace-lookup 'tag form lexical-namespace))
 					(t
-					 (reparse form current :lexical-namespace lexical-namespace))))))
+					 (parser form current :lexical-namespace lexical-namespace))))))
 		(loop for parsed-form-rest on parsed-body do
 		     (let ((parsed-form (car parsed-form-rest)))
 		       (when (typep parsed-form 'tag)
@@ -1564,70 +1582,71 @@ Return the parsed abstract syntax tree (AST)."
 		   (when (null arg-forms) (return))
 		   (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function or macro application" arg-forms)
 		   (push (let ((arg-form (car arg-forms)))
-			   (if macrop arg-form (reparse arg-form current)))
+			   (if macrop arg-form (parser arg-form current)))
 			 parsed-arguments)
 		   (setf arg-forms (cdr arg-forms)))
 	      (setf (form-arguments current) (nreverse parsed-arguments))
 	      current))))))))
 
-(defun parse-with-empty-namespaces (form &key (reparse (make-custom-parser (list #'parse-p) (list #'parse))) (declspec-reparse (make-custom-parser (list #'parse-p-declspec) (list #'parse-declspec))) free-common-lisp-namespace)
-  "If FREE-COMMON-LISP-NAMESPACE is non-NIL, a free namespace created by #'MAKE-DEFAULT-FREE-COMMON-LISP-NAMESPACE is used."
+(defun parse-with-namespace (form &key (parser (make-parser (list (cons #'parse-p #'parse)))) (declspec-parser (make-parser (list (cons #'parse-p-declspec #'parse-declspec)))) (free-namespace (make-free-namespace :variables nil :functions nil :macros nil)))
+  "Parse FORM using the PARSER, and any occurring declarations using DECLSPEC-PARSER. Use FREE-NAMESPACE as the free namespace.
+If you want the default free Common Lisp namespace, pass ':FREE-NAMESPACE (MAKE-FREE-NAMESPACE)'."
   (let ((lexical-namespace (make-empty-lexical-namespace))
-	(free-namespace (if free-common-lisp-namespace (make-default-free-common-lisp-namespace) (make-empty-free-namespace))))
-    (funcall reparse form lexical-namespace free-namespace nil :reparse reparse :declspec-reparse declspec-reparse)))
+	(free-namespace free-namespace))
+    (funcall parser form lexical-namespace free-namespace nil :parser parser :declspec-parser declspec-parser)))
 
 ;; tests for PARSE
-(defun namespaces-at (form heresymbol &key free-common-lisp-namespace)
+(defun namespace-at (form heresymbol &key (free-namespace (make-free-namespace :variables nil :functions nil :macros nil)))
   "Parse FORM and collect the namespaces at the positions in FORM marked by the symbol HERESYMBOL.
 Returns two values: a list containing the lexical namespaces, and a list containing the free namespaces."
   (let* ((lexical-namespace-here-list nil)
-	 (free-namespace-here-list nil))
-    (parse-with-empty-namespaces form
-				 :reparse (make-custom-parser (list
-							       (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
-								 (declare (ignore lexical-namespace free-namespace parent))
-								 (eq form heresymbol))
-							       #'parse-p)
-							      (list
-							       (lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
-								 (declare (ignorable form parent))
-								 (push lexical-namespace lexical-namespace-here-list)
-								 (push free-namespace free-namespace-here-list))
-							       #'parse))
-				 :free-common-lisp-namespace free-common-lisp-namespace)
+	 (free-namespace-here-list nil)
+	 (parser (make-parser (list
+			       (cons 
+				(lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
+				  (declare (ignore lexical-namespace free-namespace parent))
+				  (eq form heresymbol))
+				(lambda (form lexical-namespace free-namespace parent &key &allow-other-keys)
+				  (declare (ignorable form parent))
+				  (push lexical-namespace lexical-namespace-here-list)
+				  (push free-namespace free-namespace-here-list)))
+			       (cons #'parse-p #'parse)))))
+    (parse-with-namespace form
+			  :parser parser
+			  :free-namespace free-namespace)
     (values (nreverse lexical-namespace-here-list) (nreverse free-namespace-here-list))))
 
 (defun test-parse-symbol-reference ()
   (declare (optimize (debug 3)))
-  (flet ((namespaces-at (form)
-	   (namespaces-at form '-here-)))
-    (assert (nso-freep (parse-with-empty-namespaces 'a)))
-    (assert (nso-freep (form-object (parse-with-empty-namespaces '(function a)))))
-    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let ((a 1)) a)))))))
-    (assert (not (nso-freep (car (form-body (parse-with-empty-namespaces '(let* ((a 1)) a)))))))
-    (assert (not (nso-freep (form-object (car (form-body (parse-with-empty-namespaces '(flet ((a ())) #'a))))))))
-    (assert (not (nso-freep (form-object (car (form-body (parse-with-empty-namespaces '(labels ((a ())) #'a))))))))
-    (assert (parse-with-empty-namespaces '(let ((a)) a)))
-    (assert (parse-with-empty-namespaces '(let (a) a)))
-    (assert (parse-with-empty-namespaces '(let* ((a)) a)))
-    (assert (parse-with-empty-namespaces '(let* (a) a)))
-    (assert (let* ((lexical-namespace (car (namespaces-at '(let ((b 5) (c b)) -here-))))
+  (flet ((namespace-at (form)
+	   (namespace-at form '-here-)))
+    (assert (nso-freep (parse-with-namespace 'a)))
+    (assert (nso-freep (form-object (parse-with-namespace '(function a)))))
+    (assert (not (nso-freep (car (form-body (parse-with-namespace '(let ((a 1)) a)))))))
+    (assert (not (nso-freep (car (form-body (parse-with-namespace '(let* ((a 1)) a)))))))
+    (assert (not (nso-freep (form-object (car (form-body (parse-with-namespace '(flet ((a ())) #'a))))))))
+    (assert (not (nso-freep (form-object (car (form-body (parse-with-namespace '(labels ((a ())) #'a))))))))
+    (assert (parse-with-namespace '(let ((a)) a)))
+    (assert (parse-with-namespace '(let (a) a)))
+    (assert (parse-with-namespace '(let* ((a)) a)))
+    (assert (parse-with-namespace '(let* (a) a)))
+    (assert (let* ((lexical-namespace (car (namespace-at '(let ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
 	      (not (eq b-sym (form-value (nso-definition c-sym))))))
-    (assert (let* ((lexical-namespace (car (namespaces-at '(flet ((b ()) (c () #'b)) -here-))))
+    (assert (let* ((lexical-namespace (car (namespace-at '(flet ((b ()) (c () #'b)) -here-))))
 		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
 	      (not (eq b-sym (form-object (car (form-body (nso-definition c-sym))))))))
-    (assert (let* ((lexical-namespace (car (namespaces-at '(let* ((b 5) (c b)) -here-))))
+    (assert (let* ((lexical-namespace (car (namespace-at '(let* ((b 5) (c b)) -here-))))
 		   (b-sym (namespace-lookup 'var 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'var 'c lexical-namespace)))
 	      (eq b-sym (form-value (nso-definition c-sym)))))
-    (assert (let* ((lexical-namespace (car (namespaces-at '(labels ((b ()) (c () #'b)) -here-))))
+    (assert (let* ((lexical-namespace (car (namespace-at '(labels ((b ()) (c () #'b)) -here-))))
 		   (b-sym (namespace-lookup 'fun 'b lexical-namespace))
 		   (c-sym (namespace-lookup 'fun 'c lexical-namespace)))
 	      (eq b-sym (form-object (car (form-body (nso-definition c-sym)))))))
-    (let* ((lexical-namespaces (namespaces-at '(let ((b 5)) -here- (let ((b b)) -here-))))
+    (let* ((lexical-namespaces (namespace-at '(let ((b 5)) -here- (let ((b b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
 	   (lexical-namespace-2 (cadr lexical-namespaces))
 	   (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
@@ -1635,7 +1654,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
       (assert (eq (selfevalobject-object (form-value (nso-definition b-1))) 5))
       (assert (eq b-1 (form-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
-    (let* ((lexical-namespaces (namespaces-at '(let* ((b 5)) -here- (let* ((b b)) -here-))))
+    (let* ((lexical-namespaces (namespace-at '(let* ((b 5)) -here- (let* ((b b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
 	   (lexical-namespace-2 (cadr lexical-namespaces))
 	   (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
@@ -1643,30 +1662,30 @@ Returns two values: a list containing the lexical namespaces, and a list contain
       (assert (eq (selfevalobject-object (form-value (nso-definition b-1))) 5))
       (assert (eq b-1 (form-value (nso-definition b-2))))
       (assert (not (eq b-1 b-2))))
-    (let* ((lexical-namespaces (namespaces-at '(flet ((b ())) -here- (flet ((b () #'b)) -here-))))
+    (let* ((lexical-namespaces (namespace-at '(flet ((b ())) -here- (flet ((b () #'b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
 	   (lexical-namespace-2 (cadr lexical-namespaces))
 	   (b-1 (namespace-lookup 'fun 'b lexical-namespace-1))
 	   (b-2 (namespace-lookup 'fun 'b lexical-namespace-2)))
       (assert (not (eq b-1 b-2)))
       (assert (eq b-1 (form-object (car (form-body (nso-definition b-2)))))))
-    (let* ((lexical-namespaces (namespaces-at '(labels ((b ())) -here- (labels ((b () #'b)) -here-))))
+    (let* ((lexical-namespaces (namespace-at '(labels ((b ())) -here- (labels ((b () #'b)) -here-))))
 	   (lexical-namespace-1 (car lexical-namespaces))
 	   (lexical-namespace-2 (cadr lexical-namespaces))
 	   (b-1 (namespace-lookup 'fun 'b lexical-namespace-1))
 	   (b-2 (namespace-lookup 'fun 'b lexical-namespace-2)))
       (assert (not (eq b-1 b-2)))
       (assert (eq b-2 (form-object (car (form-body (nso-definition b-2))))))))
-  (let* ((ast (parse-with-empty-namespaces '(test #'test 2 3)))
+  (let* ((ast (parse-with-namespace '(test #'test 2 3)))
 	 (call-fun (form-fun ast))
 	 (call-arguments (form-arguments ast)))
     (assert (eq call-fun (form-object (car call-arguments)))))
-  (let* ((ast (parse-with-empty-namespaces '(bla (aref a x) x)))
+  (let* ((ast (parse-with-namespace '(bla (aref a x) x)))
   	 (args (form-arguments ast))
   	 (aref-x (cadr (form-arguments (car args))))
   	 (arg-x (cadr args)))
     (assert (eq aref-x arg-x)))
-  (let* ((ast (parse-with-empty-namespaces '(labels ((b () #'b)) (b))))
+  (let* ((ast (parse-with-namespace '(labels ((b () #'b)) (b))))
 	 (b-fun (car (form-bindings ast)))
 	 (b0-sym (form-sym b-fun))
 	 (b1-sym (form-object (car (form-body b-fun))))
@@ -1680,14 +1699,14 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	       t
 	       (loop for o1 in (butlast rest 1) for o2 in (cdr rest) always (equal o1 o2)))))
     (let* ((form '(let ((a 1)) (declare (type fixnum a)) a))
-	   (ast (parse-with-empty-namespaces form))
+	   (ast (parse-with-namespace form))
 	   (declspec-type (car (form-declspecs ast))))
       (assert (all-equal (form-sym (car (form-bindings ast))) (car (declspec-vars declspec-type)) (car (form-body ast)))))
     (let* ((form '(flet ((a ())) (declare (ftype fixnum a)) #'a))
-	   (ast (parse-with-empty-namespaces form))
+	   (ast (parse-with-namespace form))
 	   (declspec-ftype (car (form-declspecs ast))))
       (assert (all-equal (form-sym (car (form-bindings ast))) (car (declspec-funs declspec-ftype)) (form-object (car (form-body ast))))))
-    (let* ((ast (parse-with-empty-namespaces '(locally (declare (type fixnum a)) a)))
+    (let* ((ast (parse-with-namespace '(locally (declare (type fixnum a)) a)))
 	   (declspec-type (car (form-declspecs ast)))
 	   (declspec-type-a (car (declspec-vars declspec-type)))
 	   (body-a (car (form-body ast))))
@@ -1697,9 +1716,9 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 
 (defun test-parse-lambda-list ()
   (declare (optimize (debug 3)))
-  (flet ((namespaces-at (form)
-	   (namespaces-at form '-here-)))
-    (let* ((lexical-namespaces (namespaces-at '(let ((a 1)) -here- (flet ((test (a &optional (b (progn -here- a))) -here-)) -here-))))
+  (flet ((namespace-at (form)
+	   (namespace-at form '-here-)))
+    (let* ((lexical-namespaces (namespace-at '(let ((a 1)) -here- (flet ((test (a &optional (b (progn -here- a))) -here-)) -here-))))
 	   (a1-sym (namespace-lookup 'var 'a (car lexical-namespaces)))
 	   (a2-sym (namespace-lookup 'var 'a (cadr lexical-namespaces)))
 	   (a3-sym (namespace-lookup 'var 'a (caddr lexical-namespaces)))
@@ -1707,7 +1726,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
       (assert (equal a1-sym a4-sym))
       (assert (equal a2-sym a3-sym))
       (assert (not (equal a1-sym a2-sym))))
-    (let* ((lexical-namespaces (namespaces-at '(let ((a 1)) -here- (macrolet ((test (a (&optional (c (progn -here- a)))) -here-)) -here-))))
+    (let* ((lexical-namespaces (namespace-at '(let ((a 1)) -here- (macrolet ((test (a (&optional (c (progn -here- a)))) -here-)) -here-))))
 	   (a1-sym (namespace-lookup 'var 'a (car lexical-namespaces)))
 	   (a2-sym (namespace-lookup 'var 'a (cadr lexical-namespaces)))
 	   (a3-sym (namespace-lookup 'var 'a (caddr lexical-namespaces)))
@@ -1715,7 +1734,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
       (assert (equal a1-sym a4-sym))
       (assert (equal a2-sym a3-sym))
       (assert (not (equal a1-sym a2-sym)))))
-  (let* ((ast (parse-with-empty-namespaces '(flet ((test (a &optional (b a)) b)) a b)))
+  (let* ((ast (parse-with-namespace '(flet ((test (a &optional (b a)) b)) a b)))
 	 (test (car (form-bindings ast)))
 	 (llist (form-llist test))
 	 (llist-a (argument-var (car (llist-required llist))))
@@ -1730,15 +1749,15 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 
 (defun test-parse-block-reference ()
   (declare (optimize (debug 3)))
-  (assert (nso-freep (form-blo (parse-with-empty-namespaces '(return-from undef 1)))))
-  (let* ((ast (parse-with-empty-namespaces '(block test (return-from test 1))))
+  (assert (nso-freep (form-blo (parse-with-namespace '(return-from undef 1)))))
+  (let* ((ast (parse-with-namespace '(block test (return-from test 1))))
 	 (block-blo (form-blo ast))
 	 (return-from-blo (form-blo (car (form-body ast)))))
     (assert (equal block-blo return-from-blo))
     (assert (eq (nso-name block-blo) 'test))
     (assert (not (nso-freep block-blo)))
     (assert (eq (nso-definition block-blo) ast)))
-  (let* ((ast (parse-with-empty-namespaces '(flet ((test () (return-from test 1))) (return-from test 2))))
+  (let* ((ast (parse-with-namespace '(flet ((test () (return-from test 1))) (return-from test 2))))
 	 (test-fun (car (form-bindings ast)))
 	 (test-fun-blo (form-blo test-fun))
 	 (return-from1-blo (form-blo (car (form-body test-fun))))
@@ -1749,7 +1768,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
     (assert (eq (nso-definition test-fun-blo) test-fun))
     (assert (not (eq test-fun-blo return-from2-blo)))
     (assert (nso-freep return-from2-blo)))
-  (let* ((ast (parse-with-empty-namespaces '(flet ((test () (if nil (return-from test 1) (if nil (return-from test 2) (return-from test 3))))) nil)))
+  (let* ((ast (parse-with-namespace '(flet ((test () (if nil (return-from test 1) (if nil (return-from test 2) (return-from test 3))))) nil)))
 	 (test-fun (car (form-bindings ast)))
 	 (test-fun-blo (form-blo test-fun)))
     (assert (= 3 (length (nso-jumpers test-fun-blo))))))
@@ -1758,7 +1777,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 (defun test-parent ()
   (declare (optimize (debug 3)))
   (let* ((form '(lambda () (funcall bla)))
-	 (ast (parse-with-empty-namespaces form))
+	 (ast (parse-with-namespace form))
 	 (body (form-body ast)))
     (assert (eq (form-parent (car body)) ast))))
 (test-parent)
@@ -1770,7 +1789,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 		 (let ((a 7))
 		   (bla a 8)
 		   (load-time-value a))))
-	 (ast (parse-with-empty-namespaces form))
+	 (ast (parse-with-namespace form))
 	 (progn-body (form-body ast))
 	 (a-bla1 (car (form-arguments (car progn-body))))
 	 (let-form (cadr progn-body))
@@ -1790,22 +1809,22 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 (defun test-quote-form ()
   (declare (optimize (debug 3)))
   (let* ((form '(quote a))
-	 (ast (parse-with-empty-namespaces form))
+	 (ast (parse-with-namespace form))
 	 (quote-a (form-object ast)))
     (assert (symbolp quote-a))
     (assert (eq quote-a 'a))))
 (test-quote-form)
 
 (defun test-macro-form ()
-  ;; Test that differentiating between function- and macro-applications works. Macro arguments must not be evaluated, but function arguments must. Otherwise, parsing a macro-call can fail with an incorrect error: (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((BLA (A (IF S)) (PRINT (LIST A IF S)) NIL))) :FREE-COMMON-LISP-NAMESPACE NIL), because (IF S) is parsed like an IF-form. Therefore a non-NIL flag MACROP in an instance of FUN, (or maybe a distinction between FUN and a new class MAC as subtypes of SYM), makes that if FUN-NAME is looked up as a macro, then the ARG-FORMS are not parsed at all.
-  (parse-with-empty-namespaces '(macrolet ((bla (a (if s)) (print (list a if s)) nil)))
-			       :free-common-lisp-namespace t)
+  ;; Test that differentiating between function- and macro-applications works. Macro arguments must not be evaluated, but function arguments must. Otherwise, parsing a macro-call can fail with an incorrect error: (PARSE-WITH-NAMESPACE '(MACROLET ((BLA (A (IF S)) (PRINT (LIST A IF S)) NIL))) :FREE-NAMESPACE NIL), because (IF S) is parsed like an IF-form. Therefore a non-NIL flag MACROP in an instance of FUN, (or maybe a distinction between FUN and a new class MAC as subtypes of SYM), makes that if FUN-NAME is looked up as a macro, then the ARG-FORMS are not parsed at all.
+  (parse-with-namespace '(macrolet ((bla (a (if s)) (print (list a if s)) nil)))
+			       :free-namespace (make-free-namespace))
   (let* ((form '(symbol-macrolet ((a 2)) a))
-	 (ast (parse-with-empty-namespaces form))
+	 (ast (parse-with-namespace form))
 	 (a-binding (form-sym (car (form-bindings ast))))
 	 (a-body (car (form-body ast))))
     (assert (eq a-binding a-body)))
-  ;; I should not add a check that (PARSE-WITH-EMPTY-NAMESPACES '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing since this would require evaluation of macro A, which should not be part of WALKER because it should contain as little semantics as possible. (If you want to add semantics somewhere else, you might consider passing to #'PARSE a form read using the package FARE-QUASIQUOTE since different Lisps read the backquote (`) differently.)
+  ;; I should not add a check that (PARSE-WITH-NAMESPACE '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing since this would require evaluation of macro A, which should not be part of WALKER because it should contain as little semantics as possible. (If you want to add semantics somewhere else, you might consider passing to #'PARSE a form read using the package FARE-QUASIQUOTE since different Lisps read the backquote (`) differently.)
   )
 (test-macro-form)
 
@@ -1823,7 +1842,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 ;; (let ((a 1))
 ;;   (tagbody
 ;;    a))
-;; Raises an error that A and B are nonexistant tags. Does not raise an error using #'PARSE-WITH-EMPTY-NAMESPACES and non-NIL key argument :FREE-COMMON-LISP-NAMESPACE, because ECASE is defined as a macro in Common Lisp and so the GO-forms in it are not expanded yet.
+;; Raises an error that A and B are nonexistant tags. Does not raise an error using #'PARSE-WITH-NAMESPACE and key argument :FREE-NAMESPACE (MAKE-FREE-NAMESPACE), because ECASE is defined as a macro in Common Lisp and so the GO-forms in it are not expanded yet.
 ;; (let ((branch :b)
 ;;       (a 1)
 ;;       (b 10))
@@ -1853,8 +1872,8 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 ;; (1 11)
 
 (defun test-symbol-macrolet ()
-  (flet ((namespaces-at (form)
-	   (namespaces-at form '-here-)))
+  (flet ((namespace-at (form)
+	   (namespace-at form '-here-)))
     (let* ((form '(let ((a 1) ;A-LET1
 			(b 2)) ;B-LET1
 		   -here-
@@ -1866,7 +1885,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 			(list a b))
 		      -here-
 		      (list a b))))) ;returns (VALUES (5 6) (2 2)).
-	   (lexnss (namespaces-at form))
+	   (lexnss (namespace-at form))
 	   (a1 (namespace-lookup 'var 'a (car lexnss)))
 	   (a2 (namespace-lookup 'var 'a (cadr lexnss)))
 	   (a3 (namespace-lookup 'var 'a (caddr lexnss))))
@@ -1880,7 +1899,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 		 (tagbody
 		  a
 		    (go a))))
-	 (tagbody1 (parse-with-empty-namespaces form))
+	 (tagbody1 (parse-with-namespace form))
 	 (go1-form (nth 0 (form-body tagbody1)))
 	 (a1-tag (nth 1 (form-body tagbody1)))
 	 (tagbody2 (nth 2 (form-body tagbody1)))
@@ -1899,7 +1918,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 		 (tagbody
 		  a
 		    (go b))))
-	 (ast (parse-with-empty-namespaces form))
+	 (ast (parse-with-namespace form))
 	 (tagbody1-body (form-body ast))
 	 (go1-tag-b (form-tag (car tagbody1-body)))
 	 (tagbody2-body (form-body (caddr tagbody1-body)))
@@ -1909,7 +1928,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 		 (tagbody
 		    (go a)
 		  a))) ;this A must be parsed as TAG, and the GO above must refer to a known tag. See CLHS for TAGBODY: "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element."
-	 (ast (parse-with-empty-namespaces form))
+	 (ast (parse-with-namespace form))
 	 (tagbody-form (form-body (car (form-body ast))))
 	 (go-tag-a (form-tag (car tagbody-form)))
 	 (tagbody-tag-a (cadr tagbody-form)))
