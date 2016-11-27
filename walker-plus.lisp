@@ -85,7 +85,7 @@
 	  (rest (cdr form)))
       (cond
 	((eq head 'multiple-value-bind)
-	 (assert (and (consp rest) (listp (car rest)) (listp (cadr rest))) () "Cannot parse MULTIPLE-VALUE-BIND-form ~S" form)
+	 (assert (and (consp rest) (listp (car rest))) () "Cannot parse MULTIPLE-VALUE-BIND-form ~S" form)
 	 (let* ((vars-form (let ((vars-form (car rest))) (loop for var in vars-form do (assert (symbolp var) () "VARs in MULTIPLE-VALUE-BIND-form must be symbols, not ~S" var)) vars-form))
 		(values-form (cadr rest))
 		(body (cddr rest))
