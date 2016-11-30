@@ -20,8 +20,7 @@
    :deparse-defun-form
    :deparse-declaim-form
    :deparse-funcall-form
-   :deparse-typecase
-   :deparse
+   :deparse-p
    ))
 
 (in-package :walker-plus)
@@ -70,9 +69,10 @@
 
 (defun parse-p (form lexical-namespace free-namespace parent)
   (declare (ignore lexical-namespace free-namespace parent))
-  (and (listp form)
-       (let ((head (car form)))
-	 (find head '(multiple-value-bind values nth-value defun declaim funcall)))))
+  (when (and (listp form)
+	     (let ((head (car form)))
+	       (find head '(multiple-value-bind values nth-value defun declaim funcall))))
+    #'parse))
 
 (defun parse (form lexical-namespace free-namespace parent &key parser declspec-parser &allow-other-keys)
   (declare (optimize (debug 3)))
@@ -150,37 +150,30 @@
 
 ;;;; DEPARSER
 
-(defun deparse-multiple-value-bind-form (ast parent recurse-function)
-  (declare (ignore parent))
+(defun deparse-multiple-value-bind-form (ast deparser)
   (list* 'multiple-value-bind
-	 (mapcar (lambda (var) (funcall recurse-function var ast)) (walker:form-vars ast))
-	 (funcall recurse-function (walker:form-values ast) ast)
-	 (walker:deparse-body ast recurse-function t nil)))
-(defun deparse-values-form (ast parent recurse-function)
-  (declare (ignore parent))
-  (list* 'values (walker:deparse-body ast recurse-function nil nil)))
-(defun deparse-nth-value-form (ast parent recurse-function)
-  (declare (ignore parent))
+	 (mapcar (lambda (var) (funcall deparser var deparser)) (walker:form-vars ast))
+	 (funcall deparser (walker:form-values ast) deparser)
+	 (walker:deparse-body ast deparser t nil)))
+(defun deparse-values-form (ast deparser)
+  (list* 'values (walker:deparse-body ast deparser nil nil)))
+(defun deparse-nth-value-form (ast deparser)
   (list* 'nth-value
-	 (funcall recurse-function (walker:form-value ast) ast)
-	 (funcall recurse-function (walker:form-values ast) ast)))
-(defun deparse-defun-form (ast parent recurse-function)
-  (declare (ignore parent))
+	 (funcall deparser (walker:form-value ast) deparser)
+	 (funcall deparser (walker:form-values ast) deparser)))
+(defun deparse-defun-form (ast deparser)
   (list* 'defun
-	 (funcall recurse-function (walker:form-sym ast) ast)
-	 (walker:deparse-body ast recurse-function t t)))
-(defun deparse-declaim-form (ast parent recurse-function)
-  (declare (ignore parent))
+	 (funcall deparser (walker:form-sym ast) deparser)
+	 (walker:deparse-body ast deparser t t)))
+(defun deparse-declaim-form (ast deparser)
   (list* 'declaim
-	 (funcall recurse-function (walker:form-declspecs ast) ast)))
-(defun deparse-funcall-form (ast parent recurse-function)
-  (declare (ignore parent))
+	 (funcall deparser (walker:form-declspecs deparser) ast)))
+(defun deparse-funcall-form (ast deparser)
   (list* 'funcall
-	 (funcall recurse-function (walker:form-var ast) ast)
-	 (mapcar (lambda (arg) (funcall recurse-function arg ast)) (walker:form-arguments ast))))
+	 (funcall deparser (walker:form-var ast) deparser)
+	 (mapcar (lambda (arg) (funcall deparser arg deparser)) (walker:form-arguments ast))))
 
-(defun deparse-typecase (ast parent &key &allow-other-keys)
-  (declare (ignore parent))
+(defun deparse-p (ast)
   (typecase ast
     (multiple-value-bind-form #'deparse-multiple-value-bind-form)
     (values-form #'deparse-values-form)
@@ -189,9 +182,3 @@
     (declaim-form #'deparse-declaim-form)
     (funcall-form #'deparse-funcall-form)
     (t nil)))
-
-(defun deparse (ast parent)
-  (declare (optimize (debug 3)))
-  (if (deparse-typecase ast parent)
-      (funcall (deparse-typecase ast parent) ast parent #'deparse)
-      (walker:deparse ast parent :customdeparsep-function #'deparse-typecase :customdeparse-function #'deparse)))
