@@ -10,6 +10,7 @@
    :defun-form
    :declaim-form
    :funcall-form
+   :assert-form
    ;; END OF FORMs
    :parse-p
    :parse
@@ -20,6 +21,7 @@
    :deparse-defun-form
    :deparse-declaim-form
    :deparse-funcall-form
+   :deparse-assert-form
    :deparse-p
    ))
 
@@ -43,6 +45,8 @@
 (defclass funcall-form (walker:form)
   ((var :initarg :sym :accessor walker:form-var :type walker:var)
    (arguments :initarg :arguments :accessor walker:form-arguments :type list :documentation "list of GENERALFORMs")))
+(defclass assert-form (walker:form)
+  ((test :initarg :test :accessor walker:form-test :type walker:generalform)))
 
 ;;;; END OF FORMS
 
@@ -66,12 +70,15 @@
     (format stream "~S" (walker:form-var object))
     (loop for arg in (walker:form-arguments object) do
 	 (format stream " ~S" arg))))
+(defmethod print-object ((object assert-form) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (walker:form-test object))))
 
 (defun parse-p (form lexical-namespace free-namespace parent)
   (declare (ignore lexical-namespace free-namespace parent))
   (when (and (listp form)
 	     (let ((head (car form)))
-	       (find head '(multiple-value-bind values nth-value defun declaim funcall))))
+	       (find head '(multiple-value-bind values nth-value defun declaim funcall assert))))
     #'parse))
 
 (defun parse (form lexical-namespace free-namespace parent &key parser declspec-parser &allow-other-keys)
@@ -146,6 +153,12 @@
 		(setf arg-forms (cdr arg-forms)))
 	   (setf (walker:form-arguments current) (nreverse parsed-arguments))
 	   current))
+	((eq head 'assert)
+	 (assert (consp rest) () "Cannot parse ASSERT-form ~S" form)
+	 (let* ((current (make-instance 'assert-form :parent parent))
+		(parsed-test (parser (car rest) current)))
+	   (setf (walker:form-test current) parsed-test)
+	   current))
 	))))
 
 ;;;; DEPARSER
@@ -172,6 +185,9 @@
   (list* 'funcall
 	 (funcall deparser (walker:form-var ast) deparser)
 	 (mapcar (lambda (arg) (funcall deparser arg deparser)) (walker:form-arguments ast))))
+(defun deparse-assert-form (ast deparser)
+  (list 'assert
+	(funcall deparser (walker:form-test ast) deparser)))
 
 (defun deparse-p (ast)
   (typecase ast
@@ -181,4 +197,5 @@
     (defun-form #'deparse-defun-form)
     (declaim-form #'deparse-declaim-form)
     (funcall-form #'deparse-funcall-form)
+    (assert-form #'deparse-assert-form)
     (t nil)))
