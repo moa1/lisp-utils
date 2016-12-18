@@ -1284,10 +1284,11 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
       current-functiondef)))
 
 (defun parse-p (form lexical-namespace free-namespace parent)
+  "This function always returns #'PARSE."
   (declare (ignore lexical-namespace free-namespace parent))
   (when (or (or (eq form nil) (eq form t))
 	    (symbolp form)
-	    (atom form)
+	    (atom form) ;the OR is always fulfilled, since (ATOM OBJECT) == (NOT (CONSP OBJECT))
 	    (consp form))
     #'parse))
 
@@ -2054,7 +2055,8 @@ Returns two values: a list containing the lexical namespaces, and a list contain
   (list 'function
 	(funcall deparser (form-object ast) deparser)))
 (defun deparse-progn-form (ast deparser)
-  (deparse-body ast deparser nil nil))
+  (list* 'progn
+	 (deparse-body ast deparser nil nil)))
 (defun deparse-var-binding (ast deparser)
   (if (or (form-value ast)
 	  (nso-macrop (form-sym ast))) ;(SYMBOL-MACROLET ((A NIL)) A) must not be converted to (SYMBOL-MACROLET ((A)) A)
