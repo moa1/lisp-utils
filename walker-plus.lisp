@@ -23,6 +23,7 @@
    :deparse-funcall-form
    :deparse-assert-form
    :deparse-p
+   :remove-dead-code!
    ))
 
 (in-package :walker-plus)
@@ -197,5 +198,227 @@
     (defun-form #'deparse-defun-form)
     (declaim-form #'deparse-declaim-form)
     (funcall-form #'deparse-funcall-form)
-    (assert-form #'deparse-assert-form)
-    (t nil)))
+    (assert-form #'deparse-assert-form)))
+
+;;;; DEAD CODE ANALYSIS
+
+(defun remove-dead-code! (ast &key (live-tags nil) (live-functions nil))
+  "Modifies AST by removing dead code. Return non-NIL if AST does not return, NIL if AST returns."
+  (declare (optimize (debug 3)))
+  (labels ((recurse! (ast)
+	     (remove-dead-code! ast :live-tags live-tags :live-functions live-functions))
+	   (remove-dead-body! (dead)
+	     (let ((body nil))
+	       (loop for form in (walker:form-body ast) do
+		    (unless (prog1 dead ;if DEAD is NIL, do not remove code yet
+			      (or dead (setf dead (recurse! form))))
+		      (push form body)))
+	       (setf (walker:form-body ast) (nreverse body))
+	       dead))
+	   (no-code ()
+	     (make-instance 'walker:selfevalobject :object nil))
+	   (remove-dead-let! ()
+	     (let ((dead nil)
+		   (bindings nil))
+	       (loop for binding in (walker:form-bindings ast) do
+		    (if (prog1 dead ;if DEAD is NIL, do not remove code yet
+			  (or dead (setf dead (recurse! (walker:form-value binding)))))
+			(return)
+			(push binding bindings)))
+	       (setf (walker:form-bindings ast) (nreverse bindings))
+	       (remove-dead-body! dead)))
+	   #|(remove-dead-flet! ()
+	     (loop for binding in (walker:form-bindings ast) do
+		  (recurse! binding))
+	     (remove-dead-body! nil))|#)
+    (etypecase ast
+      (walker:selfevalobject nil)
+      (walker:var nil)
+      (walker:fun nil)
+      (walker:progn-form
+       (remove-dead-body! nil))
+      (walker:var-binding nil)
+      (walker:let-form
+       (remove-dead-let!))
+      (walker:let*-form
+       (remove-dead-let!))
+      (walker:application-form
+       (let ((dead nil)
+	     (args nil))
+	 (loop for arg in (walker:form-arguments ast) do
+	      (when (prog1 dead ;if DEAD is NIL, do not remove code yet
+		      (or dead (setf dead (recurse! arg))))
+		(setf arg (no-code)))
+	      (push arg args))
+	 (setf (walker:form-arguments ast) (nreverse args))
+	 dead))
+      (walker:setq-form
+       (let ((dead nil)
+	     (values nil))
+	 (loop for value in (walker:form-values ast) do
+	      (when (prog1 dead ;if DEAD is NIL, do not remove code yet
+		      (or dead (setf dead (recurse! value))))
+		(return))
+	      (push value values))
+	 (setf (walker:form-vars ast) (subseq (walker:form-vars ast) 0 (length values)))
+	 (setf (walker:form-values ast) (nreverse values))
+	 dead))
+      (walker:if-form
+       (let ((test-dead (recurse! (walker:form-test ast))))
+	 (if test-dead
+	     ;; remove the IF-FORM, and replace it with (WALKER:FORM-TEST AST).
+	     (progn
+	       (cond
+		 ((typep (walker:form-test ast) 'walker:progn-form)
+		  (let* ((body (walker:form-body (walker:form-test ast))))
+		    (change-class ast 'walker:progn-form :body body :parent (walker:form-parent ast))))
+		 (t
+		  (change-class ast 'walker:progn-form :body (list (walker:form-test ast)) :parent (walker:form-parent ast))))
+	       test-dead)
+	     (let ((then-dead (recurse! (walker:form-then ast)))
+		   (else-dead (recurse! (walker:form-else ast))))
+	       (cond
+		 ((and (or (typep then-dead 'walker:block-form) (typep then-dead 'walker:tagbody-form))
+		       (or (typep else-dead 'walker:block-form) (typep else-dead 'walker:tagbody-form)))
+		  ;; find the innermost block-form and return it.
+		  (let ((ast ast))
+		    (loop do
+			 (setf ast (walker:form-parent ast))
+			 (when (eq ast then-dead)
+			   (return then-dead))
+			 (when (eq ast else-dead)
+			   (return else-dead))
+			 (assert (not (null ast))))))
+		 ((or (typep then-dead 'walker:block-form) (typep then-dead 'walker:tagbody-form))
+		  (and else-dead then-dead)) ;the order is important in the ANDs
+		 (t
+		  (and then-dead else-dead)))))))
+      (walker:tagbody-form
+       (let ((ht (make-hash-table)))
+	 (setf live-tags (acons ast ht live-tags))
+	 ;; repeat until no further live tags are found
+	 (let ((dead
+		(block liveness
+		  (let ((old-count -1))
+		    (loop until (= old-count (gethash :count ht 0)) do
+			 (setf old-count (gethash :count ht 0))
+			 (setf (gethash :count ht) 0)
+			 ;;(let ((l nil)) (loop for tag being the hash-key of ht do (push tag l)) (prind "live" l old-count))
+			 (let ((live t))
+			   ;; mark all tags after the first non-returning form as dead
+			   (loop for form in (walker:form-body ast) do
+				;;(prind form live)
+				(if live
+				    (let ((dead (recurse! form))) ;this only visits live forms
+				      (cond
+					((null dead)
+					 (setf live t))
+					((eq dead t)
+					 (setf live nil))
+					((eq dead ast)
+					 (setf live nil))
+					(t
+					 ;;(prind "aborting" (and dead t))
+					 (return-from liveness dead))))
+				    (when (typep form 'walker:tag) ;continue at live tags
+				      (setf live (gethash form ht nil))))
+				;;(prind live)
+				))
+			 ;;(let ((l nil)) (loop for tag being the hash-key of ht do (push tag l)) (prind "live2" l old-count))
+			 ))
+		  nil)))
+	   ;; collect a live tag up to non-live tag
+	   ;;(let ((l nil)) (loop for tag being the hash-key of ht do (push tag l)) (prind "after" l))
+	   (let ((live t))
+	     (let ((body nil))
+	       (loop for form in (walker:form-body ast) do
+		    (when (typep form 'walker:tag)
+		      (setf (walker:nso-jumpers form) ;remove dead GO-FORMs
+			    (remove-if (lambda (x) (gethash x ht t))
+				       (walker:nso-jumpers form)))
+		      (setf live (gethash form ht nil)))
+		    ;;(prind (walker:deparse form) live)
+		    (when live
+		      (push form body)
+		      (setf live (not (recurse! form)))))
+	       (setf (walker:form-body ast) (nreverse body))
+	       ))
+	   dead)))
+      (walker:tag
+       (let* ((tag ast)
+	      (tagbody-form (walker:nso-definition tag))
+	      (ht (cdr (assoc tagbody-form live-tags))))
+	 (assert (not (null ht)))
+	 (setf (gethash tag ht) t) ;mark TAG as live
+	 (incf (gethash :count ht))
+	 nil))
+      (walker:go-form
+       (let* ((tag (walker:form-tag ast))
+	      (tagbody-form (walker:nso-definition tag))
+	      (ht (cdr (assoc tagbody-form live-tags))))
+	 (assert (not (null ht)))
+	 (setf (gethash ast ht) nil) ;mark GO-FORM as live
+	 (setf (gethash tag ht) t) ;mark TAG as live
+	 (incf (gethash :count ht))
+	 tagbody-form))
+      (walker:block-form
+       (let ((dead (remove-dead-body! nil)))
+	 (cond
+	   ((typep dead 'walker:block-form)
+	    (unless (eq dead ast)
+	      dead))
+	   (t
+	    dead))))
+      (walker:return-from-form
+       (walker:nso-definition (walker:form-blo ast)))
+      (walker-plus:values-form
+       (remove-dead-body! nil))
+      (walker-plus:multiple-value-bind-form
+       (let ((dead (recurse! (walker:form-values ast))))
+	 (remove-dead-body! dead)))
+      #|(walker:fun-binding
+       (let* ((dead nil)
+	      (llist (walker:form-llist ast))
+	      (init-args (append (walker:llist-optional llist) (walker:llist-key llist) (walker:llist-aux llist))))
+	 (loop for arg in init-args do
+	      (when (prog1 dead ;if DEAD is NIL, do not remove code yet
+		      (or dead (setf dead (recurse! (walker:argument-init arg)))))
+		(setf (walker:argument-init arg) (no-code))))
+	 ;; after the LLIST, one can (RETURN-FROM ,())
+	 (remove-dead-body! dead)))
+      (walker:flet-form
+       (remove-dead-flet!))
+      (walker:labels-form
+       (remove-dead-flet!))|#
+      )))
+
+(defun test-remove-dead-code ()
+  (flet ((assert-result (form expected)
+	   (let ((ast (walker:parse-with-namespace form :parser (walker:make-parser (list #'walker-plus:parse-p #'walker:parse-p)))))
+	     (when (remove-dead-code! ast)
+	       (setf ast (make-instance 'walker:selfevalobject :object nil)))
+	     (let ((actual (walker:deparse ast :deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p)))))
+	       (assert (equal actual expected) () "Remove dead code in ~S~%gave ~S,~%but should have been ~S" form actual expected)))))
+    (assert-result '(block nil (+ 1 (return-from nil) 2)) '(block nil (+ 1 (return-from nil) nil)))
+    (assert-result '(block nil (progn 1 (return-from nil) 2) 3) '(block nil (progn 1 (return-from nil))))
+    (assert-result '(block nil (let ((a nil) (b (return-from nil)) c) 1)) '(block nil (let ((a nil) (b (return-from nil))))))
+    (assert-result '(block nil (setq a 1 x (return-from nil) b 1)) '(block nil (setq a 1 x (return-from nil))))
+    (assert-result '(let ((a nil) (b nil)) (block nil (setq a 0 x (return-from nil) b 1)) (values a b)) '(let ((a nil) (b nil)) (block nil (setq a 0 x (return-from nil))) (values a b)))
+    (assert-result '(let ((a t)) (block nil (let ((a (setq a 0)) (x (return-from nil)) (b (incf a))) 2)) a) '(let ((a t)) (block nil (let ((a (setq a 0)) (x (return-from nil))))) a))
+    (assert-result '(let ((a 1.0)) (block nil (if 1 (return) (setq a 1))) a) '(let ((a 1.0)) (block nil (if 1 (return) (setq a 1))) a))
+    (assert-result '(let ((a 1.0)) (block nil (if 1 (setq a 1) (return))) a) '(let ((a 1.0)) (block nil (if 1 (setq a 1) (return))) a))
+    (assert-result '(tagbody (go l) s (go e) a b (go d) l (go s) d (go a) e) '(tagbody (go l) s (go e) l (go s) e))
+    (assert-result '(tagbody e (go t) s (go u) t (tagbody (go l) (go e) a b (go d) l (go s) d (go a) e) u) '(tagbody e (go t) s (go u) t (tagbody (go l) l (go s)) u))
+    (assert-result '(tagbody e (go f) g (tagbody (go l) (go e) a b (go d) l (go s) d (go a) e) f (go g) s) '(tagbody e (go f) g (tagbody (go l) l (go s)) f (go g) s))
+    (assert-result '(tagbody s (block nil (if 1 (return-from nil) (go e)) 2) (go s) e) '(tagbody s (block nil (if 1 (return-from nil) (go e))) (go s) e))
+    (assert-result '(let ((a nil)) (block nil (if (progn (setq a t) (return-from nil) (setq a 1)) (setq a 1) (setq a 1)) (setq a 1)) a) '(let ((a nil)) (block nil (progn (setq a t) (return-from nil))) a))
+    (assert-result '(let ((a nil)) (block nil (if (let () (return-from nil) (setq a 1)) (setq a 1) (setq a 1)) (setq a 1)) a) '(let ((a nil)) (block nil (progn (let () (return-from nil)))) a))
+    (assert-result '(block nil (multiple-value-bind (a b) (return-from nil) 1)) '(block nil (multiple-value-bind (a b) (return-from nil))))
+    (assert-result '(block nil (multiple-value-bind (a b) (values 1 (return-from nil)) 1)) '(block nil (multiple-value-bind (a b) (values 1 (return-from nil)))))
+    (assert-result '(block nil (multiple-value-bind (a b) (values 1 2) (return-from nil) 3)) '(block nil (multiple-value-bind (a b) (values 1 2) (return-from nil))))
+    ;;(assert-result '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y (setq a 0))) 1)) (f1) (setq a 0))) a) '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y nil)))) (f1))) a))
+    ;; (LET ((A NIL)) (BLOCK NIL (FLET ((F1 (&OPTIONAL (X (RETURN)) (Y (SETQ A 0))))) (F1) (SETQ A 0))) A) should return 'NULL
+    ;; (LET ((A NIL)) (BLOCK NIL (FLET ((F1 (&KEY (X (RETURN)) (Y (SETQ A 0))))) (F1) (SETQ A 0))) A) should return 'NULL
+    ;; (LET ((A NIL)) (BLOCK NIL (FLET ((F1 (&AUX (X (RETURN)) (Y (SETQ A 0))))) (F1) (SETQ A 0))) A) should return 'NULL
+    ))
+(test-remove-dead-code)
