@@ -276,7 +276,7 @@
 		  (change-class ast 'walker:progn-form :body (list (walker:form-test ast)) :parent (walker:form-parent ast))))
 	       test-dead)
 	     (let ((then-dead (recurse! (walker:form-then ast)))
-		   (else-dead (recurse! (walker:form-else ast))))
+		   (else-dead (unless (null (walker:form-else ast)) (recurse! (walker:form-else ast)))))
 	       (cond
 		 ((and (or (typep then-dead 'walker:block-form) (typep then-dead 'walker:tagbody-form))
 		       (or (typep else-dead 'walker:block-form) (typep else-dead 'walker:tagbody-form)))
@@ -376,6 +376,9 @@
       (walker-plus:multiple-value-bind-form
        (let ((dead (recurse! (walker:form-values ast))))
 	 (remove-dead-body! dead)))
+      (walker:quote-form nil)
+      (walker-plus:assert-form
+       (recurse! (walker:form-test ast)))
       #|(walker:fun-binding
        (let* ((dead nil)
 	      (llist (walker:form-llist ast))
