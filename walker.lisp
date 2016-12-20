@@ -102,8 +102,12 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-declaration-and-documentation-in-body
    ;; LAMBDA LISTS
    :argument :argument-parent :argument-var
+   :whole-argument
+   :environment-argument
    :required-argument
    :optional-argument :argument-init :argument-suppliedp
+   :rest-argument
+   :body-argument
    :key-argument :argument-keywordp :argument-keyword
    :aux-argument :argument-init
    :llist :form-parent
@@ -472,7 +476,7 @@ All parsers must have &ALLOW-OTHER-KEYS in their argument list."
     #'parse))
 
 (defun parse-function-declaration (decl)
-  "Given a function declaration, return two values: 1. the alist of arguments, indexed by &REQUIRED, &OPTIONAL, &REST, and &KEY 2. the list of return value types.
+  "Given a function declaration, return two values: 1. the alist of arguments, indexed by T (for required), &OPTIONAL, &REST, and &KEY 2. the list of return value types.
 Note that this function does not do recursive parsing when an argument or return value type is a function type."
   (declare (optimize (debug 3)))
   (assert (or (eq decl 'function) (consp decl)) () "DECL must be 'FUNCTION or a list starting with 'FUNCTION, but is ~S" decl)
@@ -483,16 +487,16 @@ Note that this function does not do recursive parsing when an argument or return
      (assert (eq 'function (car decl)) () "DECL must start with 'FUNCTION, but is ~S" decl)
      (assert (listp (cadr decl)) () "DECL must look like (FUNCTION (ARGUMENTS ...) VALUES), but is ~S" decl)
      (let* ((args (cadr decl))
-	    (parsed (list (list '&required) (list '&optional) (list '&rest) (list '&key)))
-	    (current (assoc '&required parsed)))
+	    (parsed (list (list t) (list '&optional) (list '&rest) (list '&key))) ;T means "required"
+	    (current (assoc t parsed)))
        (do () ((null args))
 	 (let ((h (pop args)))
 	   (if (or (eq h '&optional) (eq h '&rest) (eq h '&key))
-	       (let ((order (member (car current) '(&required &optional &rest &key))))
+	       (let ((order (member (car current) '(t &optional &rest &key))))
 		 (assert (find h order) () "ARGUMENTS in function declaration must look like (REQUIRED-ARGS...~% [&OPTIONAL OPTIONAL-ARGS...] [&REST REST-ARG] [&KEY KEY-ARGS...]), but~%~A is in the wrong position in~% ~A" h (cadr decl))
 		 (setf current (assoc h parsed)))
 	       (setf (cdr current) (cons h (cdr current))))))
-       (let ((l (assoc '&required parsed))) (setf (cdr l) (nreverse (cdr l))))
+       (let ((l (assoc t parsed))) (setf (cdr l) (nreverse (cdr l))))
        (let ((l (assoc '&optional parsed))) (setf (cdr l) (nreverse (cdr l))))
        (let ((l (assoc '&key parsed))) (setf (cdr l) (nreverse (cdr l))))
        (assert (<= (length (assoc '&rest parsed)) 2) () "DECL may have only one &REST argument")
@@ -743,11 +747,19 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass argument ()
   ((parent :initarg :parent :accessor argument-parent :type functiondef)
    (var :initarg :var :accessor argument-var :type var)))
+(defclass whole-argument (argument)
+  ())
+(defclass environment-argument (argument)
+  ())
 (defclass required-argument (argument)
   ())
 (defclass optional-argument (argument)
   ((init :initarg :init :accessor argument-init :type (or null generalform) :documentation "NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)")
    (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var) :documentation "NIL means not present")))
+(defclass rest-argument (argument)
+  ())
+(defclass body-argument (argument)
+  ())
 (defclass key-argument (optional-argument)
   ((keywordp :initarg :keywordp :accessor argument-keywordp :type boolean :documentation "NIL means not present")
    (keyword :initarg :keyword :accessor argument-keyword :type symbol :documentation "has no meaning if KEYWORDP==NIL")))
@@ -758,17 +770,17 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass ordinary-llist (llist)
   ((required :initarg :required :accessor llist-required :type list :documentation "list, with each element of type REQUIRED-ARGUMENT")
    (optional :initarg :optional :accessor llist-optional :type list :documentation "list, with each element of type OPTIONAL-ARGUMENT")
-   (rest :initarg :rest :accessor llist-rest :type (or null argument))
+   (rest :initarg :rest :accessor llist-rest :type (or null rest-argument))
    (key :initarg :key :accessor llist-key :type list :documentation "list, with each element of type KEY-ARGUMENT")
    (allow-other-keys :initarg :allow-other-keys :accessor llist-allow-other-keys :type boolean)
    (aux :initarg :aux :accessor llist-aux :type list :documentation "list, with each element of type AUX-ARGUMENT")))
 (defclass macro-llist (llist)
-  ((whole :initarg :whole :accessor llist-whole :type (or null argument llist))
-   (environment :initarg :environment :accessor llist-environment :type (or null argument))
+  ((whole :initarg :whole :accessor llist-whole :type (or null whole-argument llist))
+   (environment :initarg :environment :accessor llist-environment :type (or null environment-argument))
    (required :initarg :required :accessor llist-required :type list :documentation "list, with each element of type ARGUMENT, or LLIST (for macro-lambda-lists)")
    (optional :initarg :optional :accessor llist-optional :type list :documentation "list, with each element of type OPTIONAL-ARGUMENT, or LLIST (for macro-lambda-lists)")
-   (rest :initarg :rest :accessor llist-rest :type (or null argument llist))
-   (body :initarg :body :accessor llist-body :type (or null argument llist))
+   (rest :initarg :rest :accessor llist-rest :type (or null rest-argument llist))
+   (body :initarg :body :accessor llist-body :type (or null body-argument llist))
    (key :initarg :key :accessor llist-key :type list :documentation "list, with each element of type KEY-ARGUMENT, or LLIST (for macro-lambda-lists)")
    (allow-other-keys :initarg :allow-other-keys :accessor llist-allow-other-keys :type boolean)
    (aux :initarg :aux :accessor llist-aux :type list :documentation "list, with each element of type AUX-ARGUMENT")))
@@ -843,8 +855,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ;; "CLHS 3.4.1 Ordinary Lambda Lists" says: "An init-form can be any form. Whenever any init-form is evaluated for any parameter specifier, that form may refer to any parameter variable to the left of the specifier in which the init-form appears, including any supplied-p-parameter variables, and may rely on the fact that no other parameter variable has yet been bound (including its own parameter variable)." But luckily the order of allowed keywords is fixed for both normal lambda-lists and macro lambda-lists, and a normal lambda-list allows a subset of macro lambda-lists. Maybe I'll have to rewrite this for other lambda-lists.
   (let* ((llist-type (if allow-macro-lambda-list 'macro-llist 'ordinary-llist)) ;TODO: when making this function modular: probably allow passing LLIST-TYPE.
 	 (new-llist (make-instance llist-type :parent parent)))
-    (labels ((add-argument (varname)
-	       (let* ((new-argument (make-instance 'argument :parent new-llist))
+    (labels ((add-argument (varname argument-type)
+	       (let* ((new-argument (make-instance argument-type :parent new-llist))
 		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf lexical-namespace (augment-lexical-namespace new-var lexical-namespace))
@@ -906,12 +918,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		  (assert allow-macro-lambda-list () "&WHOLE only allowed in macro lambda lists")
 		  (assert (null whole) () "Only one &WHOLE keyword allowed in lambda list ~S" lambda-list)
 		  (assert (and (null environment) (null required) (null optional) (null rest) (null body) (null key) (null aux)) () "&WHOLE keyword must be before &ENVIRONMENT, &OPTIONAL, &REST, &BODY, &KEY, &ALLOW-OTHER-KEYS, &AUX, and required arguments in lambda list ~S" lambda-list)
-		  (setf whole (add-argument (parse-required-argument head)))
+		  (setf whole (add-argument (parse-required-argument head) 'whole-argument))
 		  (setf current-keyword nil))
 		 ((eq current-keyword '&environment)
 		  (assert allow-macro-lambda-list () "&ENVIRONMENT only allowed in macro lambda lists")
 		  (assert (null environment) () "Only one &ENVIRONMENT keyword allowed in lambda list ~S" lambda-list)
-		  (setf environment (add-argument (parse-required-argument head)))
+		  (setf environment (add-argument (parse-required-argument head) 'environment-argument))
 		  (setf current-keyword nil))
 		 ((null current-keyword)
 		  (assert (and (null optional) (null rest) (null body) (null key) (null aux)) () "Required arguments must be before &OPTIONAL, &REST, &BODY, &KEY, &ALLOW-OTHER-KEYS, &AUX in lambda list ~S" lambda-list)
@@ -937,7 +949,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		  (when (eq current-keyword '&BODY) (assert allow-macro-lambda-list () "&BODY only allowed in macro lambda lists"))
 		  (assert (and (null rest) (null body)) () "Only either one &REST or one &BODY keyword allowed in lambda list ~S" lambda-list)
 		  (assert (and (null key) (null aux)) () "&REST or &BODY keyword must be before &KEY, &AUX in lambda list ~S" lambda-list)
-		  (let ((parsed-head (add-argument (parse-required-argument head))))
+		  (let ((parsed-head (add-argument (parse-required-argument head) (if (eq current-keyword '&rest) 'rest-argument 'body-argument))))
 		    (ecase current-keyword ((&rest) (setf rest parsed-head)) ((&body) (setf body parsed-head))))
 		  (setf current-keyword nil))
 		 ((eq current-keyword '&key) ;TODO: allow recursive lambda-list parsing, see CLHS 3.4.4.1.2 Lambda-list-directed Destructuring by Lambda Lists
