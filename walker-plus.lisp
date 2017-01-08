@@ -4,13 +4,13 @@
   (:export
    ;; for classes: export the class and _all_ accessors on one line so that deleting a class doesn't have to consider all exports of other classes
    ;; FORMS
-   :multiple-value-bind-form
+   :multiple-value-bind-form :vars :values :declspecs
    :values-form
-   :nth-value-form
+   :nth-value-form :value :values
    :defun-form
-   :declaim-form
-   :funcall-form
-   :assert-form
+   :declaim-form :declspecs
+   :funcall-form :var :arguments
+   :assert-form :test
    ;; END OF FORMs
    :parse-p
    :parse
@@ -227,10 +227,40 @@
 			(push binding bindings)))
 	       (setf (walker:form-bindings ast) (nreverse bindings))
 	       (remove-dead-body! dead)))
-	   #|(remove-dead-flet! ()
+	   (remove-dead-flet! ()
 	     (loop for binding in (walker:form-bindings ast) do
-		  (recurse! binding))
-	     (remove-dead-body! nil))|#)
+		  (let ((dead (recurse! binding)))
+		    (setf live-functions (acons (walker:form-sym binding) dead live-functions))))
+	     (remove-dead-body! nil))
+	   (find-innermost-form (dead1 dead2)
+	     (let ((ast ast))
+	       (loop do
+		    (setf ast (walker:form-parent ast))
+		    (when (eq ast dead1)
+		      (return dead1))
+		    (when (eq ast dead2)
+		      (return dead2))
+		    (assert (not (null ast))))))
+	   (find-abort-form (dead1 dead2 and-or)
+	     (cond
+	       ((and (or (typep dead1 'walker:block-naming-form) (typep dead1 'walker:tagbody-form))
+		     (or (typep dead2 'walker:block-naming-form) (typep dead2 'walker:tagbody-form)))
+		;; find the innermost form and return it.
+		(find-innermost-form dead1 dead2))
+	       ((or (typep dead1 'walker:block-naming-form) (typep dead1 'walker:tagbody-form))
+		(ecase and-or
+		  (:and (and dead2 dead1)) ;the order is important
+		  (:or (or dead1 dead2)))) ;the order is important
+	       (t
+		(ecase and-or
+		  (:and (and dead1 dead2)) ;the order is important
+		  (:or (or dead2 dead1)))))) ;the order is importantcc
+	   (find-abort-form-and (dead1 dead2)
+	     "Return the innermost abort-form if DEAD1 or DEAD2 are abort forms, or T if both forms are T, NIL otherwise"
+	     (find-abort-form dead1 dead2 :and))
+	   (find-abort-form-or (dead1 dead2)
+	     "Return the innermost abort-form if DEAD1 or DEAD2 are abort forms, or T if one form is T, NIL otherwise"
+	     (find-abort-form dead1 dead2 :or)))
     (etypecase ast
       (walker:selfevalobject nil)
       (walker:var nil)
@@ -251,7 +281,12 @@
 		(setf arg (no-code)))
 	      (push arg args))
 	 (setf (walker:form-arguments ast) (nreverse args))
-	 dead))
+	 (let ((acons (assoc (walker:form-fun ast) live-functions)))
+	   (unless (null acons)
+	     (let ((dead-args dead)
+		   (dead-fun (cdr acons)))
+	       ;;(format t "dead-args:~S dead-fun:~S innermost:~S~%" dead-args dead-fun (find-abort-form-or dead-args dead-fun))
+	       (find-abort-form-or dead-args dead-fun))))))
       (walker:setq-form
        (let ((dead nil)
 	     (values nil))
@@ -277,22 +312,7 @@
 	       test-dead)
 	     (let ((then-dead (recurse! (walker:form-then ast)))
 		   (else-dead (unless (null (walker:form-else ast)) (recurse! (walker:form-else ast)))))
-	       (cond
-		 ((and (or (typep then-dead 'walker:block-form) (typep then-dead 'walker:tagbody-form))
-		       (or (typep else-dead 'walker:block-form) (typep else-dead 'walker:tagbody-form)))
-		  ;; find the innermost block-form and return it.
-		  (let ((ast ast))
-		    (loop do
-			 (setf ast (walker:form-parent ast))
-			 (when (eq ast then-dead)
-			   (return then-dead))
-			 (when (eq ast else-dead)
-			   (return else-dead))
-			 (assert (not (null ast))))))
-		 ((or (typep then-dead 'walker:block-form) (typep then-dead 'walker:tagbody-form))
-		  (and else-dead then-dead)) ;the order is important in the ANDs
-		 (t
-		  (and then-dead else-dead)))))))
+	       (find-abort-form-and then-dead else-dead)))))
       (walker:tagbody-form
        (let ((ht (make-hash-table)))
 	 (setf live-tags (acons ast ht live-tags))
@@ -379,7 +399,7 @@
       (walker:quote-form nil)
       (walker-plus:assert-form
        (recurse! (walker:form-test ast)))
-      #|(walker:fun-binding
+      (walker:fun-binding
        (let* ((dead nil)
 	      (llist (walker:form-llist ast))
 	      (init-args (append (walker:llist-optional llist) (walker:llist-key llist) (walker:llist-aux llist))))
@@ -387,12 +407,18 @@
 	      (when (prog1 dead ;if DEAD is NIL, do not remove code yet
 		      (or dead (setf dead (recurse! (walker:argument-init arg)))))
 		(setf (walker:argument-init arg) (no-code))))
-	 ;; after the LLIST, one can (RETURN-FROM ,())
-	 (remove-dead-body! dead)))
+	 (let ((dead (remove-dead-body! dead)))
+	   ;; after the LLIST, one can (RETURN-FROM ,(WALKER:FORM-SYM AST))
+	   (cond
+	     ((typep dead 'walker:fun-binding)
+	      (unless (eq dead ast)
+		dead))
+	     (t
+	      dead)))))
       (walker:flet-form
-       (remove-dead-flet!))
+       (remove-dead-flet!)) ;TODO: remove unused function bindings
       (walker:labels-form
-       (remove-dead-flet!))|#
+       (remove-dead-flet!)) ;TODO: remove unused function bindings
       )))
 
 (defun test-remove-dead-code ()
@@ -419,9 +445,6 @@
     (assert-result '(block nil (multiple-value-bind (a b) (return-from nil) 1)) '(block nil (multiple-value-bind (a b) (return-from nil))))
     (assert-result '(block nil (multiple-value-bind (a b) (values 1 (return-from nil)) 1)) '(block nil (multiple-value-bind (a b) (values 1 (return-from nil)))))
     (assert-result '(block nil (multiple-value-bind (a b) (values 1 2) (return-from nil) 3)) '(block nil (multiple-value-bind (a b) (values 1 2) (return-from nil))))
-    ;;(assert-result '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y (setq a 0))) 1)) (f1) (setq a 0))) a) '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y nil)))) (f1))) a))
-    ;; (LET ((A NIL)) (BLOCK NIL (FLET ((F1 (&OPTIONAL (X (RETURN)) (Y (SETQ A 0))))) (F1) (SETQ A 0))) A) should return 'NULL
-    ;; (LET ((A NIL)) (BLOCK NIL (FLET ((F1 (&KEY (X (RETURN)) (Y (SETQ A 0))))) (F1) (SETQ A 0))) A) should return 'NULL
-    ;; (LET ((A NIL)) (BLOCK NIL (FLET ((F1 (&AUX (X (RETURN)) (Y (SETQ A 0))))) (F1) (SETQ A 0))) A) should return 'NULL
+    (assert-result '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y (setq a 0))) 1)) (f1) (setq a 0))) a) '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y nil)))) (f1))) a))
     ))
 (test-remove-dead-code)

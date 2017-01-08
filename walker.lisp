@@ -61,15 +61,15 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; for classes: export the class and _all_ accessors on one line so that deleting a class doesn't have to consider all exports of other classes
    :proper-list-p
    ;; NAMESPACES
-   :nso :nso-name :nso-freep
-   :sym :nso-definition :nso-declspecs
+   :nso :name :nso-name :freep :nso-freep
+   :sym :definition :nso-definition :declspecs :nso-declspecs :macrop :nso-macrop
    :var
    :fun :nso-macrop
-   :blo :nso-definition :nso-jumpers
-   :tag :nso-definition :nso-gopoint :nso-jumpers
+   :blo :definition :nso-definition :jumpers :nso-jumpers
+   :tag :definition :nso-definition :gopoint :nso-gopoint :jumpers :nso-jumpers
    :*print-detailed-walker-objects*
    :valid-function-name-p :fun :setf-fun
-   :namespace :namespace-var :namespace-fun :namespace-blo
+   :namespace :var :namespace-var :fun :namespace-fun :blo :namespace-blo :tag :namespace-tag
    :lexical-namespace
    :free-namespace
    :namespace-boundp
@@ -82,17 +82,19 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :make-empty-free-namespace
    :+common-lisp-variables+ :+common-lisp-functions+ :+common-lisp-macros+
    :make-free-namespace
+   ;; 
+   :parent :type :vars :body :declspecs :documentation
    ;; DECLARATIONS
-   :declspec :declspec-parent
-   :declspec-type :declspec-vars
-   :declspec-ftype :declspec-type :declspec-funs
-   :declspec-optimize :declspec-qualities
-   :declspec-ignore :declspec-syms
-   :declspec-ignorable :declspec-syms
-   :declspec-inline :declspec-funs
-   :declspec-notinline :declspec-funs
-   :declspec-dynamic-extent :declspec-syms
-   :declspec-special :declspec-vars
+   :declspec :parent :declspec-parent
+   :declspec-type :type :declspec-type :vars :declspec-vars
+   :declspec-ftype :type :declspec-type :funs :declspec-funs
+   :declspec-optimize :qualities :declspec-qualities
+   :declspec-ignore :syms :declspec-syms
+   :declspec-ignorable :syms :declspec-syms
+   :declspec-dynamic-extent :syms :declspec-syms
+   :declspec-inline :funs :declspec-funs
+   :declspec-notinline :funs :declspec-funs
+   :declspec-special :vars :declspec-vars
    :make-parser
    :parse-function-declaration
    :parse-p-declspec
@@ -101,18 +103,18 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-declaration-in-body
    :parse-declaration-and-documentation-in-body
    ;; LAMBDA LISTS
-   :argument :argument-parent :argument-var
+   :argument :parent :argument-parent :var :argument-var
    :whole-argument
    :environment-argument
    :required-argument
-   :optional-argument :argument-init :argument-suppliedp
+   :optional-argument :init :argument-init :suppliedp :argument-suppliedp
    :rest-argument
    :body-argument
-   :key-argument :argument-keywordp :argument-keyword
-   :aux-argument :argument-init
-   :llist :form-parent
-   :ordinary-llist :llist-required :llist-optional :llist-rest :llist-key :llist-allow-other-keys :llist-aux
-   :macro-llist :llist-whole :llist-environment :llist-required :llist-optional :llist-rest :llist-body :llist-key :llist-allow-other-keys :llist-aux
+   :key-argument :keywordp :argument-keywordp :keyword :argument-keyword
+   :aux-argument :init :argument-init
+   :llist :parent :form-parent
+   :ordinary-llist :required :llist-required :optional :llist-optional :rest :llist-rest :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
+   :macro-llist :whole :llist-whole :environment :llist-environment :required :llist-required :optional :llist-optional :rest :llist-rest :body :llist-body :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
    :parse-required-argument
    :parse-optional-or-key-or-aux-argument
    ;;:parse-lambda-list ;do not export this as it should be split into several smaller functions.
@@ -121,44 +123,44 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form-var ;for future extensions
    ;; FORMS
    :generalform
-   :selfevalobject :selfevalobject-object
-   :form :form-parent
-   :body-form :form-body
+   :selfevalobject :object :selfevalobject-object
+   :form :parent :form-parent
+   :body-form :body :form-body
    :special-form
-   :function-form :form-object
+   :function-form :object :form-object
    :progn-form
-   :binding :form-parent :form-sym
-   :var-binding :form-value
-   :bindings-form :form-bindings :form-declspecs
+   :binding :parent :form-parent :sym :form-sym
+   :var-binding :value :form-value
+   :bindings-form :bindings :form-bindings :declspecs :form-declspecs
    :let-form
    :let*-form
-   :functiondef :form-parent :form-llist :form-declspecs :form-documentation
-   :block-naming-form :form-blo
+   :functiondef :parent :form-parent :llist :form-llist :declspecs :form-declspecs :documentation :form-documentation
+   :block-naming-form :blo :form-blo
    :block-form
    :fun-binding
    :flet-form
    :labels-form
    :lambda-form
-   :return-from-form :form-blo :form-value
-   :locally-form :form-declspecs
-   :the-form :form-type :form-value
-   :if-form :form-test :form-then :form-else
-   :setq-form :form-vars :form-values
-   :catch-form :form-tag
-   :throw-form :form-tag :form-value
-   :eval-when-form :form-situations
-   :load-time-value-form :form-value :form-readonly
-   :quote-form :form-object
-   :multiple-value-call-form :form-function
-   :multiple-value-prog1-form :form-function
-   :progv-form :form-symbols :form-values
-   :unwind-protect-form :form-protected
-   :application-form :form-fun :form-arguments
-   :macroapplication-form :form-lexicalnamespace :form-freenamespace
+   :return-from-form :blo :form-blo :value :form-value
+   :locally-form :declspecs :form-declspecs
+   :the-form :type :form-type :value :form-value
+   :if-form :test :form-test :then :form-then :else :form-else
+   :setq-form :vars :form-vars :values :form-values
+   :catch-form :tag :form-tag
+   :throw-form :tag :form-tag :value :form-value
+   :eval-when-form :situations :form-situations
+   :load-time-value-form :value :form-value :readonly :form-readonly
+   :quote-form :object :form-object
+   :multiple-value-call-form :function :form-function
+   :multiple-value-prog1-form :function :form-function
+   :progv-form :symbols :form-symbols :values :form-values
+   :unwind-protect-form :protected :form-protected
+   :application-form :fun :form-fun :arguments :form-arguments
+   :macroapplication-form :lexicalnamespace :form-lexicalnamespace :freenamespace :form-freenamespace
    :symbol-macrolet-form
    :macrolet-form
-   :tagbody-form :form-body
-   :go-form
+   :tagbody-form :body :form-body
+   :go-form :tag :form-tag
    ;; END OF FORMs
    :format-body
    :parse-and-set-functiondef
@@ -1192,7 +1194,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object fun-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
-      (format stream "~S ~S ~A" (form-sym object) (form-llist object) (format-body object t t)))))
+      (format stream "~S ~S ~A" (form-sym object) (if (slot-boundp object 'llist) (form-llist object) 'llist-unbound) (if (slot-boundp object 'body) (format-body object t t) 'body-unbound)))))
 (defmethod print-object ((object lambda-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~A" (form-llist object) (format-body object t t))))
