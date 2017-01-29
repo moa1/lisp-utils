@@ -155,7 +155,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :multiple-value-prog1-form :function :form-function
    :progv-form :symbols :form-symbols :values :form-values
    :unwind-protect-form :protected :form-protected
-   :application-form :fun :form-fun :arguments :form-arguments
+   :application-form :fun :form-fun :arguments :form-arguments :recursivep :form-recursivep
    :macroapplication-form :lexicalnamespace :form-lexicalnamespace :freenamespace :form-freenamespace
    :symbol-macrolet-form
    :macrolet-form
@@ -164,6 +164,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; END OF FORMs
    :format-body
    :parse-and-set-functiondef
+   :is-recursive
    :parse-p
    :parse
    :parse-with-namespace
@@ -1144,7 +1145,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((protected :initarg :protected :accessor form-protected :type generalform)))
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
-   (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of GENERALFORMs")))
+   (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of GENERALFORMs")
+   (recursivep :initarg :recursivep :accessor form-recursivep :type boolean :documentation "T if the call is inside the function called, NIL otherwise.")))
 ;; Probably FREENAMESPACE should not be a slot in MACROAPPLICATION-FORM, since CLHS says that the lexical environment is saved, but says nothing about the free environment: CLHS Glossary "environment parameter n. A parameter in a defining form f for which there is no corresponding argument; instead, this parameter receives as its value an environment object which corresponds to the lexical environment in which the defining form f appeared."
 (defclass macroapplication-form (application-form)
   ((lexicalnamespace :initarg :lexicalnamespace :accessor form-lexicalnamespace :type lexicalnamespace :documentation "The lexical namespace at the macro application form")
@@ -1297,6 +1299,16 @@ Side-effects: Creates yet unknown free variables and functions and add them to F
 	    (setf (form-body current-functiondef) parsed-body))))
       current-functiondef)))
 
+(defun is-recursive (fun parent)
+  "Checks if PARENT is a FUNCTIONDEF defining FUN or walks up the parent path of PARENT otherwise."
+  (cond
+    ((null parent)
+     nil)
+    (t
+     (if (and (typep parent 'fun-binding) (eq (form-sym parent) fun))
+	 t
+	 (is-recursive fun (form-parent parent))))))
+
 (defun parse-p (form lexical-namespace free-namespace parent)
   "This function always returns #'PARSE."
   (declare (ignore lexical-namespace free-namespace parent))
@@ -1383,10 +1395,10 @@ Return the parsed abstract syntax tree (AST)."
 				  (macrop (ecase head ((flet labels) nil) ((macrolet) t)))
 				  (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 				  (sym (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop))
-				  (lexical-namespace (ecase head ((flet macrolet) lexical-namespace) ((labels) (augment-lexical-namespace sym lexical-namespace))))) ;note that LEXICAL-NAMESPACE is not be returned, so the SYM binding is temporary like the BLO binding.
-			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :parser parser :declspec-parser declspec-parser)
+				  (lexical-namespace (ecase head ((flet macrolet) lexical-namespace) ((labels) (augment-lexical-namespace sym lexical-namespace))))) ;note that LEXICAL-NAMESPACE is not returned, so the SYM binding is temporary like the BLO binding.
 			     (setf (form-sym binding) sym)
 			     (setf (nso-definition blo) binding)
+			     (parse-and-set-functiondef body-form parse-lambda-list-function (augment-lexical-namespace blo lexical-namespace) free-namespace binding :parser parser :declspec-parser declspec-parser)
 			     binding))))
 		(multiple-value-bind (parsed-bindings new-lexical-namespace)
 		    (let ((parse-value-function (ecase head ((let let* symbol-macrolet) #'make-var-binding) ((flet labels macrolet) #'make-fun-binding))))
@@ -1592,8 +1604,8 @@ Return the parsed abstract syntax tree (AST)."
 		   (fun (namespace-lookup/create 'fun fun-name lexical-namespace free-namespace))
 		   (macrop (nso-macrop fun))
 		   (current (if macrop
-				(make-instance 'macroapplication-form :parent parent :fun fun :lexicalnamespace lexical-namespace :freenamespace free-namespace)
-				(make-instance 'application-form :parent parent :fun fun)))
+				(make-instance 'macroapplication-form :parent parent :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace lexical-namespace :freenamespace free-namespace)
+				(make-instance 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent))))
 		   (parsed-arguments nil))
 	      (loop do
 		   (when (null arg-forms) (return))
