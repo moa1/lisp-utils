@@ -2267,13 +2267,14 @@ This works by recursively calling the DEPARSE-* function matching the current su
 Before a DEPARSE-* function is called, and if CUSTOMPARSEP-FUNCTION is non-NIL, it is called with the current AST and its parent, and if it returns non-NIL, then instead of calling a DEPARSE-* function on the current AST, CUSTOMPARSE-FUNCTION is called with two parameters: the current AST and its parent. This allows handling some sub-forms of the AST differently, for example not to recurse into some of them."
   (funcall deparser ast deparser))
 
-(defun map-ast (function ast &key parent (deparser (make-deparser (list #'deparse-p))))
+(defun map-ast (function ast &key (deparser (make-deparser (list #'deparse-p))))
   "Recursively call FUNCTION with all objects occurring in the AST in the order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
-FUNCTION is called with two parameters: the current AST and its parent.
+FUNCTION is called with one parameter: the current AST.
 Return NIL."
+  (declare (optimize (debug 3)))
   ;;TODO: FIXME: the DEPARSE-* functions above do not call RECURSE-FUNCTION for some slots (those which are not parsed by #'PARSE). Come up with a scheme that allows an adapted RECURSE-FUNCTION to know what type those unparsed slots are (e.g. type specifiers). The slots to which this applies is marked above with "TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)".
-  (labels ((helper (ast parent &optional (deparser deparser))
-	     (funcall function ast parent)
-	     (funcall deparser ast parent deparser)
+  (labels ((helper (ast deparser1) ;parameter DEPARSER1 is required by DEPARSER
+	     (funcall function ast)
+	     (funcall deparser ast deparser1)
 	     nil))
-    (helper ast parent)))
+    (helper ast #'helper)))
