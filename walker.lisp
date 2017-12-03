@@ -182,7 +182,10 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :deparse-declspec-special
    :deparse-required-argument
    :deparse-optional-argument
+   :deparse-rest-argument
+   :deparse-body-argument
    :deparse-key-argument
+   :deparse-aux-argument
    :deparse-ordinary-llist
    :deparse-macro-llist
    :deparse-selfevalobject
@@ -1009,20 +1012,16 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     ))
 (defmethod print-object ((object key-argument) stream)
   (print-unreadable-object (object stream :type t :identity t)
+    (format stream "(")
+    (if (argument-keywordp object)
+	(format stream "(~S ~S) " (argument-keyword object) (argument-var object))
+	(format stream "~S " (argument-var object)))
     (cond
-      ((and (null (argument-init object)) (null (argument-suppliedp object)))
-       (format stream "~S" (argument-var object)))
+      ((null (argument-suppliedp object))
+       (format stream "~S" (argument-init object)))
       (t
-       (format stream "(")
-       (if (argument-keywordp object)
-	   (format stream "(~S ~S) " (argument-keyword object) (argument-var object))
-	   (format stream "~S " (argument-var object)))
-       (cond
-	 ((null (argument-suppliedp object))
-	  (format stream "~S" (argument-init object)))
-	 (t
-	  (format stream "~S ~S" (argument-init object) (argument-suppliedp object))))
-       (format stream ")")))))
+       (format stream "~S ~S" (argument-init object) (argument-suppliedp object))))
+    (format stream ")")))
 (defmethod print-object ((object ordinary-llist) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
@@ -2042,22 +2041,27 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	(when (argument-init argument)
 	  (cons (funcall deparser (argument-init argument) deparser)
 		(when (argument-suppliedp argument)
+		  (list (funcall deparser (argument-suppliedp argument) deparser)))))))
+(defun deparse-rest-argument (argument deparser)
+  (funcall deparser (argument-var argument) deparser))
+(defun deparse-body-argument (argument deparser)
+  (funcall deparser (argument-var argument) deparser))
+(defun deparse-key-argument (argument deparser)
+  (declare (optimize (debug 3)))
+  (format t "~S ~S~%" argument (argument-keywordp argument))
+  (cons (if (argument-keywordp argument)
+	    (list (argument-keyword argument)
+		  (funcall deparser (argument-var argument) deparser))
+	    (funcall deparser (argument-var argument) deparser))
+	(when (argument-init argument)
+	  (cons (funcall deparser (argument-init argument) deparser)
+		(when (argument-suppliedp argument)
 		  (cons (funcall deparser (argument-suppliedp argument) deparser)
 			nil))))))
-(defun deparse-key-argument (argument deparser)
-  (cond
-    ((and (null (argument-init argument)) (null (argument-suppliedp argument)))
-     (funcall deparser (argument-var argument) deparser))
-    (t
-     (cons (if (argument-keywordp argument)
-	       (list (funcall deparser (argument-keyword argument) deparser)
-		     (funcall deparser (argument-var argument) deparser))
-	       (funcall deparser (argument-var argument) deparser))
-	   (when (argument-init argument)
-	     (cons (funcall deparser (argument-init argument) deparser)
-		   (when (argument-suppliedp argument)
-		     (cons (funcall deparser (argument-suppliedp argument) deparser)
-			   nil))))))))
+(defun deparse-aux-argument (argument deparser)
+  (cons (funcall deparser (argument-var argument) deparser)
+	(when (argument-init argument)
+	  (funcall deparser (argument-init argument) deparser))))
 (defun deparse-ordinary-llist (llist deparser)
   (flet ((deparser (argument)
 	   (funcall deparser argument deparser)))
@@ -2083,6 +2087,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
      (let ((it (llist-aux llist))) (when it (cons '&aux (mapcar #'deparser it)))))))
 
 (defun deparse-selfevalobject (selfevalobject deparser)
+  (declare (ignore deparser))
   (selfevalobject-object selfevalobject)) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
 (defun deparse-body (ast deparser declspecsp documentationp)
   (labels ((deparser (form)
@@ -2182,6 +2187,7 @@ Returns two values: a list containing the lexical namespaces, and a list contain
 	(funcall deparser (form-value ast) deparser)
 	(form-readonly ast))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
 (defun deparse-quote-form (ast deparser)
+  (declare (ignore deparser))
   (list 'quote
 	(form-object ast))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
 (defun deparse-multiple-value-call-form (ast deparser)
@@ -2248,8 +2254,11 @@ The deparser function must accept an AST, a PARENT, and optionally a DEPARSER fu
     (declspec-notinline #'deparse-declspec-notinline)
     (declspec-special #'deparse-declspec-special)
     (required-argument #'deparse-required-argument)
+    (key-argument #'deparse-key-argument) ;KEY-ARGUMENT must be before OPTIONAL-ARGUMENT because it's a subtype
     (optional-argument #'deparse-optional-argument)
-    (key-argument #'deparse-key-argument)
+    (rest-argument #'deparse-rest-argument)
+    (body-argument #'deparse-body-argument)
+    (aux-argument #'deparse-aux-argument)
     (ordinary-llist #'deparse-ordinary-llist)
     (macro-llist #'deparse-macro-llist)
     (selfevalobject #'deparse-selfevalobject)

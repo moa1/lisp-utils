@@ -23,7 +23,12 @@
    :deparse-funcall-form
    :deparse-assert-form
    :deparse-p
+   ;; DEAD CODE ANALYSIS
    :remove-dead-code!
+   ;; FREE VARIABLE ANALYSIS
+   :nso-free-in-ast?
+   :nsos-accessed
+   :free-nsos-accessed
    ))
 
 (in-package :walker-plus)
@@ -456,59 +461,117 @@
   (declare (type (or walker:sym walker:blo walker:tag) nso)
 	   (type walker:generalform ast))
   (or (walker:nso-freep nso)
-      (let ((definition (walker:nso-definition nso)))
-	(labels ((rec (ast)
-		   (if (null ast)
-		       nil
-		       (or (eq ast definition)
-			   (rec (walker:form-parent ast))))))
-	  (rec ast)))))
+      (let ((definition (walker:nso-definition nso))) ;the AST that the NSO is defined in
+	(block search-definition
+	  (walker:map-ast (lambda (ast)
+			    (when (eq definition ast)
+			      (return-from search-definition nil)))
+			  ast)
+	  t))))
 
-(defun variables-accessed (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
-  "Return two values: the list of variables that are read within AST and the list of variables that are written within AST."
-  (let ((read (make-hash-table))
-	(written (make-hash-table)))
+(defun nsos-accessed (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+  "Return two values: the list of NSOs that are read within AST and the list of NSOs that are written within AST."
+  (let ((accessed (make-hash-table))
+	(written (make-hash-table))
+	(defined (make-hash-table)))
     (walker:map-ast (lambda (ast)
 		      (cond
 			((typep ast 'walker:setq-form)
 			 (loop for var in (walker:form-vars ast) do
 			      (incf (gethash var written 0))))
+			((typep ast 'walker:nso)
+			 (incf (gethash ast accessed 0)))
 			((or (typep ast 'walker:let-form) (typep ast 'walker:let*-form) (typep ast 'walker:flet-form) (typep ast 'walker:labels-form))
 			 (loop for binding in (walker:form-bindings ast) do
-			      (incf (gethash (walker:form-sym binding) written 0))))
-			((typep ast 'walker:nso)
-			 (incf (gethash ast read 0)))))
+			      (incf (gethash (walker:form-sym binding) defined 0))))
+			((typep ast 'walker:argument)
+			 (incf (gethash (walker:argument-var ast) defined 0)))))
 		    ast
 		    :deparser deparser)
-    (let ((vars-read nil)
-	  (vars-written nil))
-      (loop for var being the hash-key of read using (hash-value nread) do
-	   (let ((nwritten (gethash var written 0)))
-	     (when (> (- nread nwritten) 0)
-	       (push var vars-read))))
-      (loop for var being the hash-key of written do
-	   (push var vars-written))
-      (values vars-read vars-written))))
+    (let ((nsos-read nil)
+	  (nsos-written nil))
+      (loop for nso being the hash-key of accessed using (hash-value naccessed) do
+	   (let ((nwritten (gethash nso written 0))
+		 (ndefined (gethash nso defined 0)))
+	     (when (> (- naccessed nwritten ndefined) 0)
+	       (push nso nsos-read))))
+      (loop for nso being the hash-key of written do
+	   (push nso nsos-written))
+      (values nsos-read nsos-written))))
 
-#|
-(defun functiondef-free-accessed-variables (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
-  "Return the list of variables that are either read or written within the function definition AST, and which are not defined within AST, but outside of AST."
-  (append (functiondef-free-write-variables ast) (functiondef-free-read-variables ast)))
+(defun free-nsos-accessed (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+  "Return two values: the list of NSOs that are read within AST, and free in AST, and the list of NSOs that are written within AST, and free in AST."
+  (multiple-value-bind (nsos-read nsos-written) (nsos-accessed ast :deparser deparser)
+    (values (remove-if (lambda (nso) (not (nso-free-in-ast? nso ast))) nsos-read)
+	    (remove-if (lambda (nso) (not (nso-free-in-ast? nso ast))) nsos-written))))
 
-(defun functiondef-free-write-variables (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
-  "Return the list of variables that are written within the function definition AST, and which are not defined within AST, but outside of AST."
-  (let ((vars nil))
-    (walker:map-ast (lambda (ast)
-		      (cond
-			((typep ast 'walker:setq-form)
-			 (setf vars (nconc (walker:form-vars ast) vars)))))
-		    ast
-		    :deparser deparser)
-    vars))
-
-(defun functiondef-free-read-variables (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
-  "Return the list of variables that are read within the function definition AST, and which are not defined within AST, but outside of AST."
-  (walker:map-ast (lambda (ast)
-		    (cond
-		      ((typep ast walker:setq-form)
-|#
+(let* ((form '(let ((y 0) (z 0))
+	       (flet ((+ (&rest numbers) nil))
+		 (let ((x 1)) (setq y (+ x z) x z)))))
+       (ast (walker:parse-with-namespace form))
+       (ast1 (car (walker:form-body ast)))
+       (ast2 (car (walker:form-body ast1)))
+       (nso-y (walker:form-sym (car (walker:form-bindings ast))))
+       (nso-z (walker:form-sym (cadr (walker:form-bindings ast))))
+       (nso-numbers (walker:argument-var (walker:llist-rest (walker:form-llist (car (walker:form-bindings ast1))))))
+       (nso-+ (walker:form-sym (car (walker:form-bindings ast1))))
+       (nso-x (walker:form-sym (car (walker:form-bindings ast2)))))
+  (declare (ignore nso-numbers))
+  (assert (not (nso-free-in-ast? nso-y ast)))
+  (assert (not (nso-free-in-ast? nso-z ast)))
+  (assert (not (nso-free-in-ast? nso-+ ast)))
+  (assert (not (nso-free-in-ast? nso-x ast)))
+  (assert (nso-free-in-ast? nso-y ast1))
+  (assert (nso-free-in-ast? nso-z ast1))
+  (assert (not (nso-free-in-ast? nso-+ ast1)))
+  (assert (not (nso-free-in-ast? nso-x ast1)))
+  (assert (nso-free-in-ast? nso-y ast2))
+  (assert (nso-free-in-ast? nso-z ast2))
+  (assert (nso-free-in-ast? nso-+ ast2))
+  (assert (not (nso-free-in-ast? nso-x ast2)))
+  (flet ((set-equal (list1 list2)
+	   (and (null (set-difference list1 list2))
+		(null (set-difference list2 list1)))))
+    (multiple-value-bind (nsosr nsosw) (nsos-accessed ast)
+      (assert (set-equal nsosr (list nso-+ nso-x nso-z)))
+      (assert (set-equal nsosw (list nso-x nso-y))))
+    (multiple-value-bind (fnsosr fnsosw) (free-nsos-accessed ast)
+      (assert (set-equal fnsosr nil))
+      (assert (set-equal fnsosw nil)))
+    (multiple-value-bind (nsosr nsosw) (nsos-accessed ast1)
+      (assert (set-equal nsosr (list nso-+ nso-x nso-z)))
+      (assert (set-equal nsosw (list nso-x nso-y))))
+    (multiple-value-bind (fnsosr fnsosw) (free-nsos-accessed ast1)
+      (assert (set-equal fnsosr (list nso-z)))
+      (assert (set-equal fnsosw (list nso-y))))
+    (multiple-value-bind (nsosr nsosw) (nsos-accessed ast2)
+      (assert (set-equal nsosr (list nso-+ nso-x nso-z)))
+      (assert (set-equal nsosw (list nso-x nso-y))))
+    (multiple-value-bind (fnsosr fnsosw) (free-nsos-accessed ast2)
+      (assert (set-equal fnsosr (list nso-z nso-+)))
+      (assert (set-equal fnsosw (list nso-y))))))
+;;Test that the list of variables that are read within the function definition #'BLA, and which are not defined within #'BLA, but outside of #'BLA, are computed correctly.
+(let* ((form '(let ((y 0) (z 0))
+	       (flet ((bla (&rest numbers) (+ numbers y z))))))
+       (ast (walker:parse-with-namespace form))
+       (ast1 (car (walker:form-body ast)))
+       (ast2 (car (walker:form-body (car (walker:form-bindings ast1)))))
+       (nso-y (walker:form-sym (car (walker:form-bindings ast))))
+       (nso-z (walker:form-sym (cadr (walker:form-bindings ast))))
+       (nso-numbers (walker:argument-var (walker:llist-rest (walker:form-llist (car (walker:form-bindings ast1))))))
+       (nso-+ (walker:form-fun ast2)))
+  (flet ((set-equal (list1 list2)
+	   (and (null (set-difference list1 list2))
+		(null (set-difference list2 list1)))))
+    (multiple-value-bind (nsosr nsosw) (free-nsos-accessed ast1)
+      (assert (set-equal nsosr (list nso-+ nso-y nso-z)))
+      (assert (set-equal nsosw nil)))
+    (multiple-value-bind (nsosr nsosw) (free-nsos-accessed ast2)
+      (assert (set-equal nsosr (list nso-+ nso-numbers nso-y nso-z)))
+      (assert (set-equal nsosw nil)))
+    (multiple-value-bind (nsosr nsosw) (nsos-accessed ast1)
+      (assert (set-equal nsosr (list nso-+ nso-numbers nso-y nso-z)))
+      (assert (set-equal nsosw nil)))
+    (multiple-value-bind (nsosr nsosw) (nsos-accessed ast2)
+      (assert (set-equal nsosr (list nso-+ nso-numbers nso-y nso-z)))
+      (assert (set-equal nsosw nil)))))
