@@ -1287,17 +1287,18 @@ Returns the modified decision tree."
 	(setf m number)))
     m))
 
-(defconstant +timeitf-compile-batch+ 128 "timeitf's number of calls without a loop which are compiled.")
+(defvar *timeitf-compile-batch* 128 "timeitf's number of calls without a loop which are compiled.")
 
-(defun timeitf (function repeats &optional (compile-batch +timeitf-compile-batch+))
+(defun timeitf (function repeats &optional (compile-batch *timeitf-compile-batch*))
   "Return the number of seconds needed to execute FUNCTION REPEATS times.
 Do this by compiling a function which calls up to COMPILE-BATCH times in a row without a loop."
-  (let* ((calls-batch (floor repeats compile-batch))
-	 (calls-remain (- repeats (* calls-batch compile-batch)))
-	 (p (if (< repeats compile-batch)
+  (declare (optimize (debug 3)))
+  (let* ((p (if (< repeats compile-batch)
 		`(lambda () ,@(loop for i below repeats collect `(funcall ,function)))
-		(let ((p-batch (loop for i below compile-batch collect `(funcall ,function)))
-		      (p-remain (loop for i below calls-remain collect `(funcall ,function))))
+		(let* ((p-batch (loop for i below compile-batch collect `(funcall ,function)))
+		       (calls-batch (floor repeats compile-batch))
+		       (calls-remain (- repeats (* calls-batch compile-batch)))
+		       (p-remain (loop for i below calls-remain collect `(funcall ,function))))
 		  `(lambda ()
 		     (loop for i below ,calls-batch do ,@p-batch)
 		     ,@p-remain)))))
@@ -1310,14 +1311,14 @@ Do this by compiling a function which calls up to COMPILE-BATCH times in a row w
 	(let ((stop (get-internal-real-time)))
 	  (/ (- stop start) internal-time-units-per-second))))))
 
-(defun time-min-repeats-measurable (function min-seconds number-measurable compile-batch)
+(defun time-min-repeats-measurable (function min-seconds number-measurable &optional (compile-batch *timeitf-compile-batch*))
   "Exponentially increase number of repeats until calling FUNCTION this often takes at least MIN-SECONDS seconds in all of NUMBER-MEASURABLE tries."
   (do* ((rep 1 (* rep 2))) (nil nil)
     (when (loop for j below number-measurable always (let ((sec (timeitf function rep compile-batch)))
 						       (>= sec min-seconds)))
       (return-from time-min-repeats-measurable rep))))
 
-(defun timesec (function &key (min-out-of 18) (measurable-seconds 0.05) (measurable-repeats 5) (compile-batch +timeitf-compile-batch+))
+(defun timesec (function &key (min-out-of 18) (measurable-seconds 0.05) (measurable-repeats 5) (compile-batch *timeitf-compile-batch*))
   ;; min-out-of is 18, so that a measurement with measurable-seconds=0.05 takes about 2 seconds. This is because function min-repeats-measurable takes about 0.05sec * 2.
   ;; TODO: maybe use SBCL's SB-VM::with-cycle-counter to measure the number of elapsed cpu cycles. Example: (sb-vm::with-cycle-counter (+ 1 100)). The first value is the first value of the body, the second value the number of elapsed cpu cycles when evaluating the body.
   "Measure how long a function takes at least to execute, out of MIN-OUT-OF times.

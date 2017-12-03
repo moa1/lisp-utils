@@ -448,3 +448,67 @@
     (assert-result '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y (setq a 0))) 1)) (f1) (setq a 0))) a) '(let ((a nil)) (block b (flet ((f1 (&optional (x (return-from b)) (y nil)))) (f1))) a))
     ))
 (test-remove-dead-code)
+
+;;;; FREE VARIABLE ANALYSIS
+
+(defun nso-free-in-ast? (nso ast)
+  "Return T if the name-space-object NSO is not defined within AST, NIL otherwise."
+  (declare (type (or walker:sym walker:blo walker:tag) nso)
+	   (type walker:generalform ast))
+  (or (walker:nso-freep nso)
+      (let ((definition (walker:nso-definition nso)))
+	(labels ((rec (ast)
+		   (if (null ast)
+		       nil
+		       (or (eq ast definition)
+			   (rec (walker:form-parent ast))))))
+	  (rec ast)))))
+
+(defun variables-accessed (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+  "Return two values: the list of variables that are read within AST and the list of variables that are written within AST."
+  (let ((read (make-hash-table))
+	(written (make-hash-table)))
+    (walker:map-ast (lambda (ast)
+		      (cond
+			((typep ast 'walker:setq-form)
+			 (loop for var in (walker:form-vars ast) do
+			      (incf (gethash var written 0))))
+			((or (typep ast 'walker:let-form) (typep ast 'walker:let*-form) (typep ast 'walker:flet-form) (typep ast 'walker:labels-form))
+			 (loop for binding in (walker:form-bindings ast) do
+			      (incf (gethash (walker:form-sym binding) written 0))))
+			((typep ast 'walker:nso)
+			 (incf (gethash ast read 0)))))
+		    ast
+		    :deparser deparser)
+    (let ((vars-read nil)
+	  (vars-written nil))
+      (loop for var being the hash-key of read using (hash-value nread) do
+	   (let ((nwritten (gethash var written 0)))
+	     (when (> (- nread nwritten) 0)
+	       (push var vars-read))))
+      (loop for var being the hash-key of written do
+	   (push var vars-written))
+      (values vars-read vars-written))))
+
+#|
+(defun functiondef-free-accessed-variables (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+  "Return the list of variables that are either read or written within the function definition AST, and which are not defined within AST, but outside of AST."
+  (append (functiondef-free-write-variables ast) (functiondef-free-read-variables ast)))
+
+(defun functiondef-free-write-variables (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+  "Return the list of variables that are written within the function definition AST, and which are not defined within AST, but outside of AST."
+  (let ((vars nil))
+    (walker:map-ast (lambda (ast)
+		      (cond
+			((typep ast 'walker:setq-form)
+			 (setf vars (nconc (walker:form-vars ast) vars)))))
+		    ast
+		    :deparser deparser)
+    vars))
+
+(defun functiondef-free-read-variables (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+  "Return the list of variables that are read within the function definition AST, and which are not defined within AST, but outside of AST."
+  (walker:map-ast (lambda (ast)
+		    (cond
+		      ((typep ast walker:setq-form)
+|#
