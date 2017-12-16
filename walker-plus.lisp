@@ -132,7 +132,7 @@
 	 (multiple-value-bind (fun-type name) (walker:valid-function-name-p (car rest))
 	   (let* ((lambda-list-and-body (cdr rest))
 		  (block-name (ecase fun-type ((walker:fun) name) ((walker:setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-		  (blo (make-instance 'walker:blo :name block-name :freep nil :jumpers nil))
+		  (blo (make-instance 'walker:blo :name block-name :freep nil :sites nil))
 		  (current (make-instance 'defun-form :parent parent :blo blo))
 		  (sym (walker:namespace-lookup/create 'walker:fun name lexical-namespace free-namespace)))
 	     (walker:parse-and-set-functiondef lambda-list-and-body #'walker:parse-ordinary-lambda-list (walker:augment-lexical-namespace blo lexical-namespace) free-namespace current :parser parser :declspec-parser declspec-parser)
@@ -358,9 +358,9 @@
 	     (let ((body nil))
 	       (loop for form in (walker:form-body ast) do
 		    (when (typep form 'walker:tag)
-		      (setf (walker:nso-jumpers form) ;remove dead GO-FORMs
+		      (setf (walker:nso-sites form) ;remove dead GO-FORMs
 			    (remove-if (lambda (x) (gethash x ht t))
-				       (walker:nso-jumpers form)))
+				       (walker:nso-sites form)))
 		      (setf live (gethash form ht nil)))
 		    ;;(prind (walker:deparse form) live)
 		    (when live
