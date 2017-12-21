@@ -61,7 +61,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; for classes: export the class and _all_ accessors on one line so that deleting a class doesn't have to consider all exports of other classes
    :proper-list-p
    ;; NAMESPACES
-   :nso :name :nso-name :freep :nso-freep :sites :nso-sites
+   :nso :name :nso-name :freep :nso-freep :sites :nso-sites :user
    :sym :definition :nso-definition :declspecs :nso-declspecs :macrop :nso-macrop
    :var
    :fun :nso-macrop
@@ -69,7 +69,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :tag :definition :nso-definition :gopoint :nso-gopoint
    :*print-detailed-walker-objects*
    :valid-function-name-p :fun :setf-fun
-   :namespace :var :namespace-var :fun :namespace-fun :blo :namespace-blo :tag :namespace-tag
+   :namespace :var :namespace-var :fun :namespace-fun :blo :namespace-blo :tag :namespace-tag :user
    :lexical-namespace
    :free-namespace
    :namespace-boundp
@@ -82,10 +82,10 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :make-empty-free-namespace
    :+common-lisp-variables+ :+common-lisp-functions+ :+common-lisp-macros+
    :make-free-namespace
-   ;; 
+   ;; TODO: what is this? why are these symbols exported?
    :parent :type :vars :body :declspecs :documentation
    ;; DECLARATIONS
-   :declspec :parent :declspec-parent
+   :declspec :parent :declspec-parent :user
    :declspec-type :type :declspec-type :vars :declspec-vars
    :declspec-ftype :type :declspec-type :funs :declspec-funs
    :declspec-optimize :qualities :declspec-qualities
@@ -103,7 +103,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-declaration-in-body
    :parse-declaration-and-documentation-in-body
    ;; LAMBDA LISTS
-   :argument :parent :argument-parent :var :argument-var
+   :argument :parent :argument-parent :var :argument-var :user
    :whole-argument
    :environment-argument
    :required-argument
@@ -112,7 +112,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :body-argument
    :key-argument :keywordp :argument-keywordp :keyword :argument-keyword
    :aux-argument :init :argument-init
-   :llist :parent :form-parent
+   :llist :parent :form-parent :user
    :ordinary-llist :required :llist-required :optional :llist-optional :rest :llist-rest :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
    :macro-llist :whole :llist-whole :environment :llist-environment :required :llist-required :optional :llist-optional :rest :llist-rest :body :llist-body :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
    :parse-required-argument
@@ -123,8 +123,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form-var ;for future extensions
    ;; FORMS
    :generalform
-   :selfevalobject :object :selfevalobject-object
-   :form :parent :form-parent
+   :selfevalobject :object :selfevalobject-object :user
+   :form :parent :form-parent :user
    :body-form :body :form-body
    :special-form
    :function-form :object :form-object
@@ -246,12 +246,14 @@ Type declarations are parsed, but the contained types are neither parsed nor int
 	  :documentation "T if it is a free variable/function, or NIL if bound. Note that this is specific to a namespace, i.e. there may be multiple NSO-instances with the same name and FREEP=T.
 For example, in (LET ((X 1)) (DECLARE (SPECIAL X)) (LET ((X 2)) (LET ((OLD-X X) (X 3)) (DECLARE (SPECIAL X)) (LIST OLD-X X)))), there are two VAR-instances with name 'X and :FREEP==T.")
    (definition :initarg :definition :accessor nso-definition :type (or binding llist)
-	       :documentation "the parsed object it is defined in, NIL if not known.
+	       :documentation "The parsed object it is defined in, NIL if not known.
 For VARs and FUNs it is of type (OR BINDING LLIST)),
 for BLOs it is an instance of a subclass of BLOCK-NAMING-FORM),
 for TAGs it is an instance of class TAGBODY-FORM (or a subclass of that).")
    (sites :initform nil :initarg :sites :accessor nso-sites :type list
-	  :documentation "List of forms where this NSO is used, excluding the definition."))
+	  :documentation "List of forms where this NSO is used, excluding the definition.")
+   (user :initform nil :initarg :user :accessor user
+	 :documentation "Arbitrary user-definable slot."))
   (:documentation "a namespace-object (NSO) containing a name and information whether it is free or bound"))
 (defclass sym (nso)
   ((declspecs :initarg :declspecs :accessor nso-declspecs :type list
@@ -320,9 +322,9 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
    (fun :initform nil :initarg :fun :accessor namespace-fun)
    (blo :initform nil :initarg :blo :accessor namespace-blo)
    (tag :initform nil :initarg :tag :accessor namespace-tag)
-   ;; types ;i.e. class- or structure-names
-   )
-  (:documentation "A namespace"))
+   (user :initform nil :initarg :user :accessor user
+	 :documentation "Arbitrary user-definable slot of the namespace, e.g. class- or structure-names."))
+  (:documentation "A namespace."))
 ;; TODO: CLHS Glossary says on "lexical environment": "A lexical environment contains [...] local declarations (see declare)." So I should think about storing DECLSPECs not in VAR, but in NAMESPACE. On the other hand, VARs are stored in NAMESPACE, so the DECLSPECs are already stored in NAMESPACE indirectly.
 (defclass lexical-namespace (namespace)
   ()
@@ -447,7 +449,9 @@ By default, variables, functions, and macros available in package COMMON-LISP ar
 ;;;; DECLARATIONS
 
 (defclass declspec ()
-  ((parent :initarg :parent :accessor declspec-parent)))
+  ((parent :initarg :parent :accessor declspec-parent)
+   (user :initarg :user :accessor user
+	 :documentation "Arbitrary user-definable slot.")))
 (defclass declspec-type (declspec)
   ((type :initarg :type :accessor declspec-type)
    (vars :initarg :vars :accessor declspec-vars :type list)))
@@ -754,7 +758,9 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 
 (defclass argument ()
   ((parent :initarg :parent :accessor argument-parent :type functiondef)
-   (var :initarg :var :accessor argument-var :type var)))
+   (var :initarg :var :accessor argument-var :type var)
+   (user :initform nil :initarg :user :accessor user
+	 :documentation "Arbitrary user-definable slot.")))
 (defclass whole-argument (argument)
   ())
 (defclass environment-argument (argument)
@@ -774,7 +780,9 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 (defclass aux-argument (argument)
   ((init :initarg :init :accessor argument-init :type (or null generalform))))
 (defclass llist ()
-  ((parent :initarg :parent :accessor form-parent)))
+  ((parent :initarg :parent :accessor form-parent)
+   (user :initform nil :initarg :user :accessor user
+	 :documentation "Arbitrary user-definable slot.")))
 (defclass ordinary-llist (llist)
   ((required :initarg :required :accessor llist-required :type list :documentation "list, with each element of type REQUIRED-ARGUMENT")
    (optional :initarg :optional :accessor llist-optional :type list :documentation "list, with each element of type OPTIONAL-ARGUMENT")
@@ -1058,14 +1066,17 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
        ))
 
 (defclass selfevalobject ()
-  ((object :initarg :object :accessor selfevalobject-object)) ;TODO: add something like ":type (or number string vector pathname ...)" when I know what types of objects are self-evaluating objects. CLHS 3.1.2.1.3 doesn't seem to have a complete list.
+  ((object :initarg :object :accessor selfevalobject-object) ;TODO: add something like ":type (or number string vector pathname ...)" when I know what types of objects are self-evaluating objects. CLHS 3.1.2.1.3 doesn't seem to have a complete list.
+   (user :initform nil :initarg :user :accessor user
+	 :documentation "Arbitrary user-definable slot."))
   (:documentation "A self-evaluating object as described in 'CLHS 3.1.2.1.3 Self-Evaluating Objects'"))
 (defmethod print-object ((object selfevalobject) stream)
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (selfevalobject-object object))))
 
 (defclass form ()
-  ((parent :initarg :parent :accessor form-parent))
+  ((parent :initarg :parent :accessor form-parent)
+   (user :initform nil :initarg :user :accessor user))
   (:documentation "A cons form as described in 'CLHS 3.1.2.1.2 Conses as Forms'"))
 (defclass body-form ()
   ((body :initarg :body :accessor form-body :type list :documentation "list of GENERALFORMs"))
