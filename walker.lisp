@@ -159,7 +159,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :macroapplication-form :lexicalnamespace :form-lexicalnamespace :freenamespace :form-freenamespace
    :symbol-macrolet-form
    :macrolet-form
-   :tagbody-form :body :form-body
+   :tagbody-form :body :form-body :tags :form-tags
    :go-form :tag :form-tag
    :form-body-1 :form-body-2 :form-body-3 :form-body-4 :form-body-5 :form-body-6 :form-body-7
    :form-binding-1 :form-binding-2 :form-binding-3 :form-binding-4 :form-binding-5 :form-binding-6 :form-binding-7
@@ -1168,7 +1168,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass macrolet-form (special-form body-form bindings-form)
   ())
 (defclass tagbody-form (special-form body-form)
-  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR GENERALFORM TAG)"))) ;redefine BODY here to allow deviating documentation from BODY-FORM.
+  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR GENERALFORM TAG)")
+   (tags :initarg :tags :accessor form-tags :type list :documentation "The list of all tags defined in the TAGBODY."))) ;redefine BODY here to allow deviating documentation from BODY-FORM.
 (defclass go-form (special-form)
   ((tag :initarg :tag :accessor form-tag :type tag)))
 
@@ -1629,7 +1630,8 @@ Return the parsed abstract syntax tree (AST)."
 	   ((eq head 'tagbody)
 	    (let ((body rest)
 		  (current (make-instance 'tagbody-form :parent parent))
-		  (lexical-namespace lexical-namespace))
+		  (lexical-namespace lexical-namespace)
+		  (tags nil))
 	      (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
 	      ;; pass over BODY thrice: in the first pass, establish lexical TAGs, because a GO-form referencing a tag defined after the GO would not know about the tag; in the second, create the parsed body (containing GO-FORMs); in the third, set slot :GOPOINT of the TAGs to the correct position in the parsed body list.
 	      (loop for form in body do
@@ -1638,7 +1640,8 @@ Return the parsed abstract syntax tree (AST)."
 		     ((atom form)
 		      (assert (symbolp form) () "Cannot parse TAGBODY-form: it must only contain tags (which must be symbols) or conses, but contains ~S" form)
 		      (let ((tag (make-instance 'tag :name form :freep nil :definition current :sites nil))) ;:gopoint is defined below
-			(setf lexical-namespace (augment-lexical-namespace tag lexical-namespace))))))
+			(setf lexical-namespace (augment-lexical-namespace tag lexical-namespace))
+			(push tag tags)))))
 	      (let ((parsed-body (loop for form in body collect
 				      (cond
 					((atom form)
@@ -1649,7 +1652,8 @@ Return the parsed abstract syntax tree (AST)."
 		     (let ((parsed-form (car parsed-form-rest)))
 		       (when (typep parsed-form 'tag)
 			 (setf (nso-gopoint parsed-form) (cdr parsed-form-rest)))))
-		(setf (form-body current) parsed-body))
+		(setf (form-body current) parsed-body)
+		(setf (form-tags current) (nreverse tags)))
 	      current))
 	   ((eq head 'go)
 	    (assert (and (consp rest) (symbolp (car rest)) (null (cdr rest))) () "Cannot parse GO-form ~S" form)
@@ -2024,6 +2028,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
 (test-symbol-macrolet)
 
 (defun test-tagbody ()
+  (declare (optimize (debug 3)))
   (let* ((form '(tagbody
 		 (go a)
 		 a
@@ -2046,15 +2051,18 @@ Returns three values: a list containing the lexical namespaces, a list containin
   (let* ((form '(tagbody
 		 (go b)
 		 b
+		 c
 		 (tagbody
 		  a
 		    (go b))))
 	 (ast (parse-with-namespace form))
 	 (go1-tag-b (form-tag (form-body-1 ast)))
 	 (tag-b (form-body-2 ast))
-	 (tagbody2 (form-body-3 ast))
+	 (tag-c (form-body-3 ast))
+	 (tagbody2 (form-body-4 ast))
 	 (go2-tag-b (form-tag (form-body-2 tagbody2))))
-    (assert (and (eq go1-tag-b tag-b) (eq go2-tag-b tag-b))))
+    (assert (and (eq go1-tag-b tag-b) (eq go2-tag-b tag-b)))
+    (assert (equal (form-tags ast) (list tag-b tag-c))))
   (let* ((form '(symbol-macrolet ((a 1))
 		 (tagbody
 		    (go a)
