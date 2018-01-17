@@ -12,17 +12,10 @@
    :funcall-form :var :arguments
    :assert-form :test
    ;; END OF FORMs
-   :parse-p
-   :parse
+   :parser-plus
+   ;;:parse is exported from package WALKER
    ;; DEPARSER
-   :deparse-multiple-value-bind-form
-   :deparse-values-form
-   :deparse-nth-value-form
-   :deparse-defun-form
-   :deparse-declaim-form
-   :deparse-funcall-form
-   :deparse-assert-form
-   :deparse-p
+   ;;:deparse is exported from package WALKER
    ;; DEAD CODE ANALYSIS
    :remove-dead-code!
    ;; FREE VARIABLE ANALYSIS
@@ -80,130 +73,117 @@
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (walker:form-test object))))
 
-(defun parse-p (form lexical-namespace free-namespace parent)
-  (declare (ignore lexical-namespace free-namespace parent))
-  (when (and (listp form)
-	     (let ((head (car form)))
-	       (find head '(multiple-value-bind values nth-value defun declaim funcall assert))))
-    #'parse))
+(defclass parser-plus (walker:parser)
+  ()
+  (:documentation "Subclass of WALKER:PARSER used for parsing the additional forms defined in walker-plus.lisp."))
 
-(defun parse (form lexical-namespace free-namespace parent &key parser declspec-parser &allow-other-keys)
-  (declare (optimize (debug 3)))
-  (labels ((parser (form parent &key (lexical-namespace lexical-namespace))
-	     (funcall parser form lexical-namespace free-namespace parent :parser parser :declspec-parser declspec-parser))
-	   (parse-body (body current &key (lexical-namespace lexical-namespace))
-	     (assert (walker:proper-list-p body) () "Body is not a proper list: ~S" body)
-	     (loop for form in body collect (parser form current :lexical-namespace lexical-namespace))))
-    (let ((head (car form))
-	  (rest (cdr form)))
-      (cond
-	((eq head 'multiple-value-bind)
-	 (assert (and (consp rest) (listp (car rest))) () "Cannot parse MULTIPLE-VALUE-BIND-form ~S" form)
-	 (let* ((vars-form (let ((vars-form (car rest))) (loop for var in vars-form do (assert (symbolp var) () "VARs in MULTIPLE-VALUE-BIND-form must be symbols, not ~S" var)) vars-form))
-		(values-form (cadr rest))
-		(body (cddr rest))
-		(current (make-instance 'multiple-value-bind-form :parent parent))
-		(parsed-vars (loop for var-form in vars-form collect (parser var-form current)))
-		(parsed-values (parser values-form current)))
-	   (multiple-value-bind (body parsed-declspecs)
-	       (walker:parse-declaration-in-body body lexical-namespace free-namespace current :declspec-parser declspec-parser)
-	     (setf (walker:form-vars current) parsed-vars)
-	     (setf (walker:form-values current) parsed-values)
-	     (setf (walker:form-declspecs current) parsed-declspecs)
-	     (setf (walker:form-body current) (parse-body body current)))
-	   current))
-	((eq head 'values)
-	 (let* ((objects-form rest)
-		(current (make-instance 'values-form :parent parent))
-		(parsed-objects (loop for object-form in objects-form collect (parser object-form current))))
-	   (setf (walker:form-body current) parsed-objects)
-	   current))
-	((eq head 'nth-value)
-	 (assert (and (consp rest) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse NTH-VALUE-form ~S" form)
-	 (let* ((value-form (car rest))
-		(values-form (cadr rest))
-		(current (make-instance 'nth-value-form :parent parent))
-		(parsed-value (parser value-form current))
-		(parsed-values (parser values-form current)))
-	   (setf (walker:form-value current) parsed-value)
-	   (setf (walker:form-values current) parsed-values)
-	   current))
-	((eq head 'defun)
-	 (multiple-value-bind (fun-type name) (walker:valid-function-name-p (car rest))
-	   (let* ((lambda-list-and-body (cdr rest))
-		  (block-name (ecase fun-type ((walker:fun) name) ((walker:setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-		  (blo (make-instance 'walker:blo :name block-name :freep nil :sites nil))
-		  (current (make-instance 'defun-form :parent parent :blo blo))
-		  (sym (walker:namespace-lookup/create 'walker:fun name lexical-namespace free-namespace)))
-	     (walker:parse-and-set-functiondef lambda-list-and-body #'walker:parse-ordinary-lambda-list (walker:augment-lexical-namespace blo lexical-namespace) free-namespace current :parser parser :declspec-parser declspec-parser)
-	     (setf (walker:nso-definition blo) current)
-	     (setf (walker:form-sym current) sym)
-	     current)))
-	((eq head 'declaim)
-	 (let* ((declspecs rest)
-		(current (make-instance 'declaim-form :parent parent))
-		(parsed-declspecs (walker:parse-declspecs declspecs lexical-namespace free-namespace current :declspec-parser declspec-parser)))
-	   (setf (walker:form-declspecs current) parsed-declspecs)
-	   current))
-	((eq head 'funcall)
-	 (assert (symbolp (car rest)) () "Cannot parse FUNCALL-form ~S" form)
-	 (let* ((fun-sym (car rest))
-		(arg-forms (cdr rest))
-		(sym (walker:namespace-lookup/create 'walker:var fun-sym lexical-namespace free-namespace))
-		(current (make-instance 'funcall-form :parent parent :sym sym))
-		(parsed-arguments nil))
-	   (loop do
-		(when (null arg-forms) (return))
-		(assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function or macro application" arg-forms)
-		(push (parser (car arg-forms) current) parsed-arguments)
-		(setf arg-forms (cdr arg-forms)))
-	   (setf (walker:form-arguments current) (nreverse parsed-arguments))
-	   current))
-	((eq head 'assert)
-	 (assert (consp rest) () "Cannot parse ASSERT-form ~S" form)
-	 (let* ((current (make-instance 'assert-form :parent parent))
-		(parsed-test (parser (car rest) current)))
-	   (setf (walker:form-test current) parsed-test)
-	   current))
-	))))
+(defmethod walker:copy-parser ((parser parser-plus))
+  (make-instance 'parser-plus :lexical-namespace (walker:parser-lexical-namespace parser) :free-namespace (walker:parser-free-namespace parser)))
+
+;;;; PARSE-FORM
+
+(defmethod walker:parse-form ((parser parser-plus) (head (eql 'multiple-value-bind)) rest parent)
+  (assert (and (consp rest) (listp (car rest))) () "Cannot parse MULTIPLE-VALUE-BIND-form ~S" (cons head rest))
+  (let* ((vars-form (let ((vars-form (car rest))) (loop for var in vars-form do (assert (symbolp var) () "VARs in MULTIPLE-VALUE-BIND-form must be symbols, not ~S" var)) vars-form))
+	 (values-form (cadr rest))
+	 (body (cddr rest))
+	 (current (make-instance 'multiple-value-bind-form :parent parent))
+	 (parsed-vars (loop for var-form in vars-form collect (walker:parse parser var-form current)))
+	 (parsed-values (walker:parse parser values-form current)))
+    (multiple-value-bind (body parsed-declspecs)
+	(walker:parse-declaration-in-body parser body current)
+      (setf (walker:form-vars current) parsed-vars)
+      (setf (walker:form-values current) parsed-values)
+      (setf (walker:form-declspecs current) parsed-declspecs)
+      (setf (walker:form-body current) (walker:parse-body parser body current)))
+    current))
+
+(defmethod walker:parse-form ((parser parser-plus) (head (eql 'values)) rest parent)
+  (let* ((objects-form rest)
+	 (current (make-instance 'values-form :parent parent))
+	 (parsed-objects (loop for object-form in objects-form collect (walker:parse parser object-form current))))
+    (setf (walker:form-body current) parsed-objects)
+    current))
+
+(defmethod walker:parse-form ((parser parser-plus) (head (eql 'nth-value)) rest parent)
+  (assert (and (consp rest) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse NTH-VALUE-form ~S" (cons head rest))
+  (let* ((value-form (car rest))
+	 (values-form (cadr rest))
+	 (current (make-instance 'nth-value-form :parent parent))
+	 (parsed-value (walker:parse parser value-form current))
+	 (parsed-values (walker:parse parser values-form current)))
+    (setf (walker:form-value current) parsed-value)
+    (setf (walker:form-values current) parsed-values)
+    current))
+
+(defmethod walker:parse-form ((parser parser-plus) (head (eql 'defun)) rest parent)
+  (multiple-value-bind (fun-type name) (walker:valid-function-name-p (car rest))
+    (let* ((lambda-list-and-body (cdr rest))
+	   (block-name (ecase fun-type ((walker:fun) name) ((walker:setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
+	   (blo (make-instance 'walker:blo :name block-name :freep nil :sites nil))
+	   (current (make-instance 'defun-form :parent parent :blo blo))
+	   (sym (walker:namespace-lookup/create 'walker:fun name parser)))
+      (walker:parse-and-set-functiondef (walker:augment-lexical-namespace blo parser) lambda-list-and-body #'walker:parse-ordinary-lambda-list current)
+      (setf (walker:nso-definition blo) current)
+      (setf (walker:form-sym current) sym)
+      current)))
+
+(defmethod walker:parse-form ((parser parser-plus) (head (eql 'declaim)) rest parent)
+  (let* ((declspecs rest)
+	 (current (make-instance 'declaim-form :parent parent))
+	 (parsed-declspecs (walker:parse-declspecs parser declspecs current)))
+    (setf (walker:form-declspecs current) parsed-declspecs)
+    current))
+
+(defmethod walker:parse-form ((parser parser-plus) (head (eql 'funcall)) rest parent)
+  (assert (symbolp (car rest)) () "Cannot parse FUNCALL-form ~S" (cons head rest))
+  (let* ((fun-sym (car rest))
+	 (arg-forms (cdr rest))
+	 (sym (walker:namespace-lookup/create parser 'walker:var fun-sym))
+	 (current (make-instance 'funcall-form :parent parent :sym sym))
+	 (parsed-arguments nil))
+    (loop do
+	 (when (null arg-forms) (return))
+	 (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function or macro application" arg-forms)
+	 (push (walker:parse parser (car arg-forms) current) parsed-arguments)
+	 (setf arg-forms (cdr arg-forms)))
+    (setf (walker:form-arguments current) (nreverse parsed-arguments))
+    current))
+
+(defmethod walker:parse-form ((parser parser-plus) (head (eql 'assert)) rest parent)
+  (assert (consp rest) () "Cannot parse ASSERT-form ~S" (cons head rest))
+  (let* ((current (make-instance 'assert-form :parent parent))
+	 (parsed-test (walker:parse parser (car rest) current)))
+    (setf (walker:form-test current) parsed-test)
+    current))
 
 ;;;; DEPARSER
 
-(defun deparse-multiple-value-bind-form (ast deparser)
+(defmethod walker:deparse ((deparser walker:deparser) (ast multiple-value-bind-form))
   (list* 'multiple-value-bind
-	 (mapcar (lambda (var) (funcall deparser var deparser)) (walker:form-vars ast))
-	 (funcall deparser (walker:form-values ast) deparser)
-	 (walker:deparse-body ast deparser t nil)))
-(defun deparse-values-form (ast deparser)
-  (list* 'values (walker:deparse-body ast deparser nil nil)))
-(defun deparse-nth-value-form (ast deparser)
+	 (mapcar (lambda (var) (walker:deparse deparser var)) (walker:form-vars ast))
+	 (walker:deparse deparser (walker:form-values ast))
+	 (walker:deparse-body deparser ast t nil)))
+(defmethod walker:deparse ((deparser walker:deparser) (ast values-form))
+  (list* 'values (walker:deparse-body deparser ast nil nil)))
+(defmethod walker:deparse ((deparser walker:deparser) (ast nth-value-form))
   (list* 'nth-value
-	 (funcall deparser (walker:form-value ast) deparser)
-	 (funcall deparser (walker:form-values ast) deparser)))
-(defun deparse-defun-form (ast deparser)
+	 (walker:deparse deparser (walker:form-value ast))
+	 (walker:deparse deparser (walker:form-values ast))))
+(defmethod walker:deparse ((deparser walker:deparser) (ast defun-form))
   (list* 'defun
-	 (funcall deparser (walker:form-sym ast) deparser)
-	 (walker:deparse-body ast deparser t t)))
-(defun deparse-declaim-form (ast deparser)
+	 (walker:deparse deparser (walker:form-sym ast))
+	 (walker:deparse-body deparser ast t t)))
+(defmethod walker:deparse ((deparser walker:deparser) (ast declaim-form))
   (list* 'declaim
-	 (funcall deparser (walker:form-declspecs deparser) ast)))
-(defun deparse-funcall-form (ast deparser)
+	 (walker:deparse deparser (walker:form-declspecs ast))))
+(defmethod walker:deparse ((deparser walker:deparser) (ast funcall-form))
   (list* 'funcall
-	 (funcall deparser (walker:form-var ast) deparser)
-	 (mapcar (lambda (arg) (funcall deparser arg deparser)) (walker:form-arguments ast))))
-(defun deparse-assert-form (ast deparser)
+	 (walker:deparse deparser (walker:form-var ast))
+	 (mapcar (lambda (arg) (walker:deparse deparser arg)) (walker:form-arguments ast))))
+(defmethod walker:deparse ((deparser walker:deparser) (ast assert-form))
   (list 'assert
-	(funcall deparser (walker:form-test ast) deparser)))
-
-(defun deparse-p (ast)
-  (typecase ast
-    (multiple-value-bind-form #'deparse-multiple-value-bind-form)
-    (values-form #'deparse-values-form)
-    (nth-value-form #'deparse-nth-value-form)
-    (defun-form #'deparse-defun-form)
-    (declaim-form #'deparse-declaim-form)
-    (funcall-form #'deparse-funcall-form)
-    (assert-form #'deparse-assert-form)))
+	(walker:deparse deparser (walker:form-test ast))))
 
 ;;;; DEAD CODE ANALYSIS
 
@@ -428,10 +408,10 @@
 
 (defun test-remove-dead-code ()
   (flet ((assert-result (form expected)
-	   (let ((ast (walker:parse-with-namespace form :parser (walker:make-parser (list #'walker-plus:parse-p #'walker:parse-p)))))
+	   (let ((ast (walker:parse-with-namespace form :parser (walker:make-parser :type 'parser-plus))))
 	     (when (remove-dead-code! ast)
 	       (setf ast (make-instance 'walker:selfevalobject :object nil)))
-	     (let ((actual (walker:deparse ast :deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p)))))
+	     (let ((actual (walker:deparse (make-instance 'walker:deparser) ast)))
 	       (assert (equal actual expected) () "Remove dead code in ~S~%gave ~S,~%but should have been ~S" form actual expected)))))
     (assert-result '(block nil (+ 1 (return-from nil) 2)) '(block nil (+ 1 (return-from nil) nil)))
     (assert-result '(block nil (progn 1 (return-from nil) 2) 3) '(block nil (progn 1 (return-from nil))))
@@ -469,7 +449,7 @@
 			  ast)
 	  t))))
 
-(defun nsos-accessed (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+(defun nsos-accessed (ast)
   "Return two values: the list of NSOs that are read within AST and the list of NSOs that are written within AST."
   (let ((accessed (make-hash-table))
 	(written (make-hash-table))
@@ -486,8 +466,7 @@
 			      (incf (gethash (walker:form-sym binding) defined 0))))
 			((typep ast 'walker:argument)
 			 (incf (gethash (walker:argument-var ast) defined 0)))))
-		    ast
-		    :deparser deparser)
+		    ast)
     (let ((nsos-read nil)
 	  (nsos-written nil))
       (loop for nso being the hash-key of accessed using (hash-value naccessed) do
@@ -499,9 +478,9 @@
 	   (push nso nsos-written))
       (values nsos-read nsos-written))))
 
-(defun free-nsos-accessed (ast &key (deparser (walker:make-deparser (list #'walker-plus:deparse-p #'walker:deparse-p))))
+(defun free-nsos-accessed (ast)
   "Return two values: the list of NSOs that are read within AST, and free in AST, and the list of NSOs that are written within AST, and free in AST."
-  (multiple-value-bind (nsos-read nsos-written) (nsos-accessed ast :deparser deparser)
+  (multiple-value-bind (nsos-read nsos-written) (nsos-accessed ast)
     (values (remove-if (lambda (nso) (not (nso-free-in-ast? nso ast))) nsos-read)
 	    (remove-if (lambda (nso) (not (nso-free-in-ast? nso ast))) nsos-written))))
 
