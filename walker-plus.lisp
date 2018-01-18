@@ -16,6 +16,8 @@
    ;;:parse is exported from package WALKER
    ;; DEPARSER
    ;;:deparse is exported from package WALKER
+   ;; ARGUMENTS AND LAMBDA LISTS
+   :assign-to-lambda-list
    ;; DEAD CODE ANALYSIS
    :remove-dead-code!
    ;; FREE VARIABLE ANALYSIS
@@ -184,6 +186,125 @@
 (defmethod walker:deparse ((deparser walker:deparser) (ast assert-form))
   (list 'assert
 	(walker:deparse deparser (walker:form-test ast))))
+
+;;;; ARGUMENTS AND LAMBDA LISTS
+
+(defmethod assign-to-lambda-list ((llist walker:ordinary-llist) arguments)
+  "LLIST is an ordinary (TODO: or macro) lambda list. ARGUMENTS is the list of arguments, i.e. (FORM-ARGUMENTS APPLICATION-FORM).
+Returns an alist, with VARs (from the LLIST-ARGUMENTS) as keys and FORMs (from ARGUMENTS) as values."
+  ;; take the LLIST as scaffold and assign ARGUMENTS to it.
+  (flet ((keyword-name (arg)
+	   (if (walker:argument-keywordp arg)
+	       (walker:argument-keyword arg)
+	       (intern (string (walker:nso-name (walker:argument-var arg))) 'keyword)))
+	 (init-form (arg)
+	   (if (walker:argument-init arg)
+	       (walker:argument-init arg)
+	       (make-instance 'walker:selfevalobject :object nil))))
+    (let ((result nil)
+	  (original-arguments arguments))
+      (loop for arg in (walker:llist-required llist) do
+	   (assert (not (null arguments)) () "Missing required argument ~W~%in lambda list ~W~%for argument list ~W" (walker:nso-name (walker:argument-var arg)) llist original-arguments)
+	   (setf result (acons (walker:argument-var arg) (pop arguments) result)))
+      (loop for arg in (walker:llist-optional llist) do
+	   (cond
+	     ((null arguments)
+	      (setf result (acons (walker:argument-var arg) (init-form arg) result))
+	      (when (walker:argument-suppliedp arg)
+		(setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object nil) result))))
+	     (t
+	      (setf result (acons (walker:argument-var arg) (pop arguments) result))
+	      (when (walker:argument-suppliedp arg)
+		(setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object t) result))))))
+      (when (walker:llist-rest llist)
+	(setf result (acons (walker:argument-var (walker:llist-rest llist)) arguments result)))
+      (assert (evenp (length arguments)) () "Odd number of arguments to &KEY: ~W" arguments)
+      (labels ((find-name (name arguments)
+		 (if (null arguments)
+		     nil
+		     (if (eql (walker:nso-name (car arguments)) name)
+			 arguments
+			 (find-name name (cddr arguments))))))
+	(loop for arg in (walker:llist-key llist) do
+	     (let* ((name (keyword-name arg))
+		    (cdr (find-name name arguments)))
+	       (cond
+		 ((null cdr)
+		  (setf result (acons (walker:argument-var arg) (init-form arg) result))
+		  (when (walker:argument-suppliedp arg)
+		    (setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object nil) result))))
+		 (t
+		  (setf result (acons (walker:argument-var arg) (cadr cdr) result))
+		  (when (walker:argument-suppliedp arg)
+		    (setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object t) result)))))))
+	;; keyword argument checking is suppressed if &ALLOW-OTHER-KEYS is present
+	(unless (or (walker:llist-allow-other-keys llist)
+		    (cadr (find-name :allow-other-keys arguments)))
+	  (labels ((check (rest)
+		     (if (null rest)
+			 t
+			 (and (or (position (walker:nso-name (car rest)) (walker:llist-key llist) :key #'keyword-name :test #'eql)
+				  (error "Unknown keyword argument name ~S~%in keyword list ~S" (walker:nso-name (car rest)) (mapcar #'keyword-name (walker:llist-key llist))))
+			      (check (cddr rest))))))
+	    (check arguments))))
+      (loop for arg in (walker:llist-aux llist) do
+	   (setf result (acons (walker:argument-var arg) (init-form arg) result)))
+      (nreverse result))))
+
+(defun test-assign-to-lambda-list ()
+  (flet ((assert-error (llist-list argument-list)
+	   (let* ((form `(labels ((f ,llist-list nil)) (f ,@argument-list)))
+		  (ast (walker:parse-with-namespace form))
+		  (llist (walker:form-llist (walker:form-binding-1 ast)))
+		  (arguments (walker:form-arguments (walker:form-body-1 ast)))
+		  (result nil))
+	     (handler-case (setf result (assign-to-lambda-list llist arguments))
+	       (error ()
+		 t)
+	       (:no-error (x)
+		 (declare (ignore x))
+		 (error "~W should have given an error,~%but gave ~W"
+			(list 'assign-to-lambda-list llist-list) result)))))
+	 (assert-result (llist-list argument-list desired-result-alist)
+	   (let* ((form `(labels ((f ,llist-list nil)) (f ,@argument-list)))
+		  (ast (walker:parse-with-namespace form))
+		  (llist (walker:form-llist (walker:form-binding-1 ast)))
+		  (arguments (walker:form-arguments (walker:form-body-1 ast)))
+		  (result (assign-to-lambda-list llist arguments)))
+	     (labels ((value-of (x)
+			(etypecase x
+			  (walker:selfevalobject (walker:selfevalobject-object x))
+			  (walker:var (walker:nso-name x))
+			  (null nil)
+			  (cons (loop for y in x collect (value-of y)))))
+		      (result-to-alist (cons)
+			(declare (optimize (debug 3)))
+			(list (walker:nso-name (car cons))
+			      (type-of (cdr cons))
+			      (value-of (cdr cons)))))
+	       (let ((obtained-result-alist (mapcar #'result-to-alist result)))
+		 (assert (equal desired-result-alist obtained-result-alist) () "~S~%on arguments ~S~%wanted ~S~%but gave ~S" (list 'assign-to-lambda-list llist-list) argument-list desired-result-alist obtained-result-alist))))))
+    (assert-result '(a b c) '(1 2 3) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject 3)))
+    (assert-error '(a) '(1 2))
+    (assert-error '(a b) '(1))
+    (assert-error '(a &optional b (c t)) '())
+    (assert-result '(a &optional b (c t)) '(1 2) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject t)))
+    (assert-result '(a &optional b (c t cp)) '(1 2) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject t) (cp walker:selfevalobject nil)))
+    (assert-result '(a &optional b (c t cp)) '(1 2 3) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject 3) (cp walker:selfevalobject t)))
+    (assert-error '(a &rest r &key b (c t)) '())
+    (assert-result '(a &rest r &key b (c t)) '(1) '((a walker:selfevalobject 1) (r null nil) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
+    (assert-error '(a &rest r &key b (c t)) '(1 2))
+    (assert-result '(a &rest r &key b (c t)) '(1 :b 2) '((a walker:selfevalobject 1) (r cons (:b 2)) (b walker:selfevalobject 2) (c walker:selfevalobject t)))
+    (assert-result '(a &rest r &key b ((hello c) t)) '(1 :b 2) '((a walker:selfevalobject 1) (r cons (:b 2)) (b walker:selfevalobject 2) (c walker:selfevalobject t)))
+    (assert-result '(a &rest r &key b ((hello c) t)) '(1 :b 2 hello 3) '((a walker:selfevalobject 1) (r cons (:b 2 hello 3)) (b walker:selfevalobject 2) (c walker:selfevalobject 3)))
+    (assert-error '(a &rest r &key b (c t)) '(1 :bla 2))
+    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2) '((a walker:selfevalobject 1) (r cons (:bla 2)) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
+    (assert-error '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys)) ;odd keywords
+    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys nil) '((a walker:selfevalobject 1) (r cons (:bla 2 :allow-other-keys nil)) (b walker:selfevalobject nil) (c walker:selfevalobject t))) ;if either &ALLOW-OTHER-KEYS is present or :ALLOW-OTHER-KEYS==T, suppress keyword checking
+    (assert-result '(a &rest r &key b (c t)) '(1 :bla 2 :allow-other-keys t) '((a walker:selfevalobject 1) (r cons (:bla 2 :allow-other-keys t)) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
+    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys t) '((a walker:selfevalobject 1) (r cons (:bla 2 :allow-other-keys t)) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
+    ))
+(test-assign-to-lambda-list)
 
 ;;;; DEAD CODE ANALYSIS
 
