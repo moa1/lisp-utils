@@ -934,6 +934,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	       (cond
 		 ((find head '(&whole &environment &optional &rest &body &key &aux)) ;&ALLOW-OTHER-KEYS not included because it does not accept variables
 		  (setf current-keyword head))
+		 ((eql head '&allow-other-keys) ;must be checked before comparing with CURRENT-KEYWORD
+		  (assert (not (null key)) () "&ALLOW-OTHER-KEYS not allowed without preceding &KEY keyword in lambda list ~S" lambda-list)
+		  (assert (null allow-other-keys) () "Only one &ALLOW-OTHER-KEYS keyword allowed in lambda list ~S" lambda-list)
+		  (setf allow-other-keys t)
+		  (setf current-keyword nil))
 		 ((eq current-keyword '&whole) ;TODO: allow recursive lambda-list parsing, see CLHS 3.4.4.1.2 Lambda-list-directed Destructuring by Lambda Lists
 		  (assert allow-macro-lambda-list () "&WHOLE only allowed in macro lambda lists")
 		  (assert (null whole) () "Only one &WHOLE keyword allowed in lambda list ~S" lambda-list)
@@ -978,11 +983,6 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			    (parse-optional-or-key-or-aux-argument head '&key)
 			  (add-key-argument keywordp keyword varname init-form-p init-form suppliedp suppliedp-name))
 			key))
-		 ((eq current-keyword '&allow-other-keys)
-		  (assert (not (null key)) () "&ALLOW-OTHER-KEYS not allowed without preceding &KEY keyword in lambda list ~S" lambda-list)
-		  (assert (null allow-other-keys) () "Only one &ALLOW-OTHER-KEYS keyword allowed in lambda list ~S" lambda-list)
-		  (setf allow-other-keys t)
-		  (setf current-keyword nil))
 		 ((eq current-keyword '&aux)
 		  (push (multiple-value-bind (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name)
 			    (parse-optional-or-key-or-aux-argument head '&aux)
