@@ -220,7 +220,7 @@ For VARs and FUNs it is of type (OR BINDING LLIST)),
 for BLOs it is an instance of a subclass of BLOCK-NAMING-FORM),
 for TAGs it is an instance of class TAGBODY-FORM (or a subclass of that).")
    (sites :initform nil :initarg :sites :accessor nso-sites :type list
-	  :documentation "List of forms where this NSO is used, excluding the definition. For example, for FUN-nsos it is the list of APPLICATION-FORMs and FUNCTION-forms.")
+	  :documentation "List of forms where this NSO is used, excluding the definition. For example, for FUN-nsos it is the list of APPLICATION-FORMs and FUNCTION-forms. For TAG-nsos, it is the list of GO-FORMs.")
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot."))
   (:documentation "a namespace-object (NSO) containing a name and information whether it is free or bound"))
@@ -2408,7 +2408,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
   (funcall (deparser-function deparser) ast))
 
 (defun map-ast (function ast)
-  "Recursively call FUNCTION with all objects occurring in the AST in the order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
+  "Recursively call FUNCTION with all objects occurring in the AST in the left-to-right order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
 FUNCTION is called with one parameter: the current AST.
 Return NIL."
   (declare (optimize (debug 3)))
