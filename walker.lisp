@@ -135,9 +135,11 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :special-form
    :function-form :object :form-object
    :progn-form
-   :binding :parent :form-parent :sym :form-sym
+   :binding :parent :form-parent :sym :form-sym :user
    :var-binding :value :form-value
    :bindings-form :bindings :form-bindings :declspecs :form-declspecs
+   :var-bindings-form
+   :fun-bindings-form
    :let-form
    :let*-form
    :functiondef :parent :form-parent :llist :form-llist :declspecs :form-declspecs :documentation :form-documentation
@@ -168,7 +170,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :tagbody-form :body :form-body :tags :form-tags
    :go-form :tag :form-tag
    :format-body
-   :form-body-1 :form-body-2 :form-body-3 :form-body-4 :form-body-5 :form-body-6 :form-body-7
+   :form-body-1 :form-body-2 :form-body-3 :form-body-4 :form-body-5 :form-body-6 :form-body-7 :form-body-last
    :form-binding-1 :form-binding-2 :form-binding-3 :form-binding-4 :form-binding-5 :form-binding-6 :form-binding-7
    ;; END OF FORMs
    :parse-and-set-functiondef
@@ -1093,16 +1095,21 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ())
 (defclass binding ()
   ((parent :initarg :parent :accessor form-parent :documentation "the LET-FORM, LET*-FORM, FLET-FORM, LABELS-FORM, SYMBOL-MACROLET-FORM, or MACROLET-FORM in which the binding is defined.")
-   (sym :initarg :sym :accessor form-sym :type sym)))
+   (sym :initarg :sym :accessor form-sym :type sym)
+   (user :initform nil :initarg :user :accessor user)))
 (defclass var-binding (binding)
   ((value :initarg :value :accessor form-value :documentation "Either NIL if not given, or the form initializing the variable, or the expansion form of the symbol macro." :type (or null generalform t))))
 (defclass bindings-form ()
   ((bindings :initarg :bindings :accessor form-bindings :type list :documentation "list of VAR-BINDINGs, or FUN-BINDINGs")
    (declspecs :initarg :declspecs :accessor form-declspecs :type list :documentation "list of DECLSPECs"))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
-(defclass let-form (special-form bindings-form body-form)
+(defclass var-bindings-form (bindings-form)
+  () (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
+(defclass fun-bindings-form (bindings-form)
+  () (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
+(defclass let-form (special-form var-bindings-form body-form)
   ())
-(defclass let*-form (special-form bindings-form body-form)
+(defclass let*-form (special-form var-bindings-form body-form)
   ())
 (defclass functiondef (body-form)
   ((parent :initarg :parent :accessor form-parent)
@@ -1117,9 +1124,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ())
 (defclass fun-binding (binding block-naming-form functiondef)
   ())
-(defclass flet-form (special-form bindings-form body-form)
+(defclass flet-form (special-form fun-bindings-form body-form)
   ())
-(defclass labels-form (special-form bindings-form body-form)
+(defclass labels-form (special-form fun-bindings-form body-form)
   ())
 (defclass lambda-form (special-form functiondef)
   ())
@@ -1167,9 +1174,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass macroapplication-form (application-form)
   ((lexicalnamespace :initarg :lexicalnamespace :accessor form-lexicalnamespace :type lexicalnamespace :documentation "The lexical namespace at the macro application form")
    (freenamespace :initarg :freenamespace :accessor form-freenamespace :type freenamespace :documentation "The free namespace at the macro application form")))
-(defclass symbol-macrolet-form (special-form bindings-form body-form)
+(defclass symbol-macrolet-form (special-form var-bindings-form body-form)
   ())
-(defclass macrolet-form (special-form bindings-form body-form)
+(defclass macrolet-form (special-form fun-bindings-form body-form)
   ())
 (defclass tagbody-form (special-form body-form)
   ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR GENERALFORM TAG)")
@@ -1302,6 +1309,8 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (sixth (form-body ast)))
 (defun form-body-7 (ast)
   (seventh (form-body ast)))
+(defun form-body-last (ast)
+  (car (last (form-body ast))))
 
 (defun form-binding-1 (ast)
   (first (form-bindings ast)))
