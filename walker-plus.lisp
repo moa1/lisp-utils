@@ -89,7 +89,7 @@
   (let* ((vars-form (let ((vars-form (car rest))) (loop for var in vars-form do (assert (symbolp var) () "VARs in MULTIPLE-VALUE-BIND-form must be symbols, not ~S" var)) vars-form))
 	 (values-form (cadr rest))
 	 (body (cddr rest))
-	 (current (make-instance 'multiple-value-bind-form :parent parent))
+	 (current (walker:make-ast parser 'multiple-value-bind-form :parent parent))
 	 (parsed-vars (loop for var-form in vars-form collect (walker:parse parser var-form current)))
 	 (parsed-values (walker:parse parser values-form current)))
     (multiple-value-bind (body parsed-declspecs)
@@ -102,7 +102,7 @@
 
 (defmethod walker:parse-form ((parser parser-plus) (head (eql 'values)) rest parent)
   (let* ((objects-form rest)
-	 (current (make-instance 'values-form :parent parent))
+	 (current (walker:make-ast parser 'values-form :parent parent))
 	 (parsed-objects (loop for object-form in objects-form collect (walker:parse parser object-form current))))
     (setf (walker:form-body current) parsed-objects)
     current))
@@ -111,7 +111,7 @@
   (assert (and (consp rest) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse NTH-VALUE-form ~S" (cons head rest))
   (let* ((value-form (car rest))
 	 (values-form (cadr rest))
-	 (current (make-instance 'nth-value-form :parent parent))
+	 (current (walker:make-ast parser 'nth-value-form :parent parent))
 	 (parsed-value (walker:parse parser value-form current))
 	 (parsed-values (walker:parse parser values-form current)))
     (setf (walker:form-value current) parsed-value)
@@ -122,8 +122,8 @@
   (multiple-value-bind (fun-type name) (walker:valid-function-name-p (car rest))
     (let* ((lambda-list-and-body (cdr rest))
 	   (block-name (ecase fun-type ((walker:fun) name) ((walker:setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-	   (blo (make-instance 'walker:blo :name block-name :freep nil :sites nil))
-	   (current (make-instance 'defun-form :parent parent :blo blo))
+	   (blo (walker:make-ast parser 'walker:blo :name block-name :freep nil :sites nil))
+	   (current (walker:make-ast parser 'defun-form :parent parent :blo blo))
 	   (sym (walker:namespace-lookup/create 'walker:fun name parser)))
       (walker:parse-and-set-functiondef (walker:augment-lexical-namespace blo parser) lambda-list-and-body #'walker:parse-ordinary-lambda-list current)
       (setf (walker:nso-definition blo) current)
@@ -132,7 +132,7 @@
 
 (defmethod walker:parse-form ((parser parser-plus) (head (eql 'declaim)) rest parent)
   (let* ((declspecs rest)
-	 (current (make-instance 'declaim-form :parent parent))
+	 (current (walker:make-ast parser 'declaim-form :parent parent))
 	 (parsed-declspecs (walker:parse-declspecs parser declspecs current)))
     (setf (walker:form-declspecs current) parsed-declspecs)
     current))
@@ -142,7 +142,7 @@
   (let* ((fun-sym (car rest))
 	 (arg-forms (cdr rest))
 	 (sym (walker:namespace-lookup/create parser 'walker:var fun-sym))
-	 (current (make-instance 'funcall-form :parent parent :sym sym))
+	 (current (walker:make-ast parser 'funcall-form :parent parent :sym sym))
 	 (parsed-arguments nil))
     (loop do
 	 (when (null arg-forms) (return))
@@ -154,7 +154,7 @@
 
 (defmethod walker:parse-form ((parser parser-plus) (head (eql 'assert)) rest parent)
   (assert (consp rest) () "Cannot parse ASSERT-form ~S" (cons head rest))
-  (let* ((current (make-instance 'assert-form :parent parent))
+  (let* ((current (walker:make-ast parser 'assert-form :parent parent))
 	 (parsed-test (walker:parse parser (car rest) current)))
     (setf (walker:form-test current) parsed-test)
     current))
@@ -189,7 +189,7 @@
 
 ;;;; ARGUMENTS AND LAMBDA LISTS
 
-(defmethod assign-to-lambda-list ((llist walker:ordinary-llist) arguments)
+(defmethod assign-to-lambda-list ((parser walker:parser) (llist walker:ordinary-llist) arguments)
   "LLIST is an ordinary (TODO: or macro) lambda list. ARGUMENTS is the list of arguments, i.e. (FORM-ARGUMENTS APPLICATION-FORM).
 Returns an alist, with VARs (from the LLIST-ARGUMENTS) as keys and FORMs (from ARGUMENTS) as values."
   ;; take the LLIST as scaffold and assign ARGUMENTS to it.
@@ -200,7 +200,7 @@ Returns an alist, with VARs (from the LLIST-ARGUMENTS) as keys and FORMs (from A
 	 (init-form (arg)
 	   (if (walker:argument-init arg)
 	       (walker:argument-init arg)
-	       (make-instance 'walker:selfevalobject :object nil))))
+	       (walker:make-ast parser 'walker:selfevalobject :object nil))))
     (let ((result nil)
 	  (original-arguments arguments))
       (loop for arg in (walker:llist-required llist) do
@@ -211,11 +211,11 @@ Returns an alist, with VARs (from the LLIST-ARGUMENTS) as keys and FORMs (from A
 	     ((null arguments)
 	      (setf result (acons (walker:argument-var arg) (init-form arg) result))
 	      (when (walker:argument-suppliedp arg)
-		(setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object nil) result))))
+		(setf result (acons (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object nil) result))))
 	     (t
 	      (setf result (acons (walker:argument-var arg) (pop arguments) result))
 	      (when (walker:argument-suppliedp arg)
-		(setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object t) result))))))
+		(setf result (acons (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object t) result))))))
       (when (walker:llist-rest llist)
 	(setf result (acons (walker:argument-var (walker:llist-rest llist)) arguments result)))
       (assert (evenp (length arguments)) () "Odd number of arguments to &KEY: ~W" arguments)
@@ -232,11 +232,11 @@ Returns an alist, with VARs (from the LLIST-ARGUMENTS) as keys and FORMs (from A
 		 ((null cdr)
 		  (setf result (acons (walker:argument-var arg) (init-form arg) result))
 		  (when (walker:argument-suppliedp arg)
-		    (setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object nil) result))))
+		    (setf result (acons (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object nil) result))))
 		 (t
 		  (setf result (acons (walker:argument-var arg) (cadr cdr) result))
 		  (when (walker:argument-suppliedp arg)
-		    (setf result (acons (walker:argument-suppliedp arg) (make-instance 'walker:selfevalobject :object t) result)))))))
+		    (setf result (acons (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object t) result)))))))
 	;; keyword argument checking is suppressed if &ALLOW-OTHER-KEYS is present
 	(unless (or (walker:llist-allow-other-keys llist)
 		    (cadr (find-name :allow-other-keys arguments)))
@@ -255,22 +255,24 @@ Returns an alist, with VARs (from the LLIST-ARGUMENTS) as keys and FORMs (from A
   (flet ((assert-error (llist-list argument-list)
 	   (let* ((form `(labels ((f ,llist-list nil)) (f ,@argument-list)))
 		  (ast (walker:parse-with-namespace form))
+		  (parser (walker:make-parser :variables nil :functions nil :macros nil))
 		  (llist (walker:form-llist (walker:form-binding-1 ast)))
 		  (arguments (walker:form-arguments (walker:form-body-1 ast)))
 		  (result nil))
-	     (handler-case (setf result (assign-to-lambda-list llist arguments))
+	     (handler-case (setf result (assign-to-lambda-list parser llist arguments))
 	       (error ()
 		 t)
 	       (:no-error (x)
 		 (declare (ignore x))
 		 (error "~W should have given an error,~%but gave ~W"
-			(list 'assign-to-lambda-list llist-list) result)))))
+			(list 'assign-to-lambda-list parser llist-list) result)))))
 	 (assert-result (llist-list argument-list desired-result-alist)
 	   (let* ((form `(labels ((f ,llist-list nil)) (f ,@argument-list)))
 		  (ast (walker:parse-with-namespace form))
+		  (parser (walker:make-parser :variables nil :functions nil :macros nil))
 		  (llist (walker:form-llist (walker:form-binding-1 ast)))
 		  (arguments (walker:form-arguments (walker:form-body-1 ast)))
-		  (result (assign-to-lambda-list llist arguments)))
+		  (result (assign-to-lambda-list parser llist arguments)))
 	     (labels ((value-of (x)
 			(etypecase x
 			  (walker:selfevalobject (walker:selfevalobject-object x))

@@ -88,6 +88,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :make-empty-free-namespace
    :+common-lisp-variables+ :+common-lisp-functions+ :+common-lisp-macros+
    :make-parser
+   :make-ast
    ;; TODO: what is this? why are these symbols exported?
    :parent :type :vars :body :declspecs :documentation
    ;; DECLARATIONS
@@ -304,6 +305,12 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   ()
   (:documentation "A namespace of free (i.e. unbound) namespace objects (e.g. variables). This means that (NSO-FREEP OBJECT)==T for all OBJECTs in any slot of the namespace."))
 
+(defun make-empty-lexical-namespace ()
+  (make-instance 'lexical-namespace))
+
+(defun make-empty-free-namespace ()
+  (make-instance 'free-namespace))
+
 (defmethod print-object ((object namespace) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
@@ -325,20 +332,8 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
     (assert (not (null cons)) () "SYMBOL ~A with NSO-type ~S not bound in ~S" symbol symbol-type namespace)
     (cdr cons)))
 
-(defgeneric copy-lexical-namespace (namespace)
+(defgeneric copy-lexical-namespace (parser namespace)
   (:documentation "Create a new instance of the type of NAMESPACE, with all slots of NAMESPACE bound to the same objects as in NAMESPACE."))
-(defmethod copy-lexical-namespace ((namespace lexical-namespace))
-  (make-instance 'lexical-namespace
-		 :var (namespace-var namespace)
-		 :fun (namespace-fun namespace)
-		 :blo (namespace-blo namespace)
-		 :tag (namespace-tag namespace)))
-
-(defun make-empty-lexical-namespace ()
-  (make-instance 'lexical-namespace))
-
-(defun make-empty-free-namespace ()
-  (make-instance 'free-namespace))
 
 ;;;; PARSERS
 
@@ -361,14 +356,27 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   "Shallow-copies PARSER. Must be defined for all user-defined subclasses of PARSER."
   (make-instance 'parser-copy :lexical-namespace (parser-lexical-namespace parser) :free-namespace (parser-free-namespace parser)))
 
+(defgeneric make-ast (parser type &rest arguments)
+  (:documentation "This method is called to create an instance or part of an AST. Override to set e.g. a custom USER slot."))
+
+(defmethod make-ast ((parser parser) type &rest arguments)
+  (apply #'make-instance type arguments))
+
 ;;;; NAMESPACES again
+
+(defmethod copy-lexical-namespace ((parser parser) (namespace lexical-namespace))
+  (make-ast parser 'lexical-namespace
+	    :var (namespace-var namespace)
+	    :fun (namespace-fun namespace)
+	    :blo (namespace-blo namespace)
+	    :tag (namespace-tag namespace)))
 
 (defgeneric augment-lexical-namespace (nso-object parser)
   (:documentation "Create a copy of the lexical namespace in PARSER, add the NSO-OBJECT (which must be a subtype of NSO) to the copy, and return the copy."))
 (defmethod augment-lexical-namespace (nso-object (parser parser))
   (assert (not (nso-freep nso-object)) () "Cannot augment a lexical namespace with free namespace object ~S" nso-object)
   (let* ((namespace (parser-lexical-namespace parser))
-	 (new-namespace (copy-lexical-namespace namespace))
+	 (new-namespace (copy-lexical-namespace parser namespace))
 	 (nso-type (type-of nso-object))
 	 (parser-copy (copy-parser parser)))
     (setf (slot-value new-namespace nso-type)
@@ -400,13 +408,13 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
        new-nso))))
 (defmethod namespace-lookup/create ((symbol-type (eql 'var)) symbol (parser parser))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol parser (make-instance 'var :name symbol :freep t :declspecs nil :sites nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'var :name symbol :freep t :declspecs nil :sites nil))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'fun)) symbol (parser parser))
   (assert (not (null (valid-function-name-p symbol))) () "Invalid function name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol parser (make-instance 'fun :name symbol :freep t :declspecs nil :sites nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'fun :name symbol :freep t :declspecs nil :sites nil))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'blo)) symbol (parser parser))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol parser (make-instance 'blo :name symbol :freep t :sites nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'blo :name symbol :freep t :sites nil))) ;do not bind :DEFINITION
 
 (let ((parser (make-instance 'parser-copy)))
   (setf parser (augment-lexical-namespace (make-instance 'var :name 'a :freep nil :sites nil) parser))
@@ -439,11 +447,11 @@ You may pass any keyword option accepted by (MAKE-INSTANCE TYPE ...)."
 	 (parser (apply #'make-instance type rest-filtered)))
     ;; do not bind the :DEFINITION slots.
     (loop for variable in variables do
-	 (augment-free-namespace (make-instance 'var :name variable :freep t :declspecs nil :macrop nil :sites nil) parser))
+	 (augment-free-namespace (make-ast parser 'var :name variable :freep t :declspecs nil :macrop nil :sites nil) parser))
     (loop for function in functions do
-	 (augment-free-namespace (make-instance 'fun :name function :freep t :declspecs nil :macrop nil :sites nil) parser))
+	 (augment-free-namespace (make-ast parser 'fun :name function :freep t :declspecs nil :macrop nil :sites nil) parser))
     (loop for macro in macros do
-	 (augment-free-namespace (make-instance 'fun :name macro :freep t :declspecs nil :macrop t :sites nil) parser))
+	 (augment-free-namespace (make-ast parser 'fun :name macro :freep t :declspecs nil :macrop t :sites nil) parser))
     parser))
 
 ;;;; DECLARATIONS
@@ -529,8 +537,8 @@ Note that this function does not do recursive parsing when an argument or return
     (assert (proper-list-p syms) () "Not a proper list in ~W declaration ~W" identifier body)
     (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym parser)))
 	   (parsed-declspec (ecase identifier
-			      ((type) (make-instance 'declspec-type :parent parent :type typespec :vars parsed-syms))
-			      ((ftype) (make-instance 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
+			      ((type) (make-ast parser 'declspec-type :parent parent :type typespec :vars parsed-syms))
+			      ((ftype) (make-ast parser 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
       (loop for sym in parsed-syms do
 	   (push parsed-declspec (nso-declspecs sym)) (push parsed-declspec (nso-sites sym)))
       parsed-declspec)))
@@ -551,7 +559,7 @@ Note that this function does not do recursive parsing when an argument or return
 			    (let ((quality quality-value))
 			      (assert (symbolp quality) () "Malformed ~W in ~W" body identifier)
 			      (cons quality nil))))))
-    (make-instance 'declspec-optimize :parent parent :qualities qualities)))
+    (make-ast parser 'declspec-optimize :parent parent :qualities qualities)))
 
 (defun parse-declspec-ignore-ignorable-dynamic-extent (parser identifier body parent)
   (assert (listp body) () "Malformed ~W declaration ~W" identifier body)
@@ -565,7 +573,7 @@ Note that this function does not do recursive parsing when an argument or return
 				(namespace-lookup/create 'fun (cadr sym) parser))
 			       (t
 				(error "Symbol in ~W declaration must be either a SYMBOL or a function name, but is ~W" identifier sym)))))
-	   (parsed-declspec (make-instance (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
+	   (parsed-declspec (make-ast parser (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
       (loop for sym in parsed-syms do
 	   (push parsed-declspec (nso-declspecs sym)) (push parsed-declspec (nso-sites sym)))
       parsed-declspec)))
@@ -587,7 +595,7 @@ Note that this function does not do recursive parsing when an argument or return
 			     (progn
 			       (assert (valid-function-name-p fun))
 			       (namespace-lookup/create 'fun fun parser))))
-	   (parsed-declspec (make-instance (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
+	   (parsed-declspec (make-ast parser (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
       (loop for fun in parsed-funs do
 	   (push parsed-declspec (nso-declspecs fun)) (push parsed-declspec (nso-sites fun)))
       parsed-declspec)))
@@ -602,7 +610,7 @@ Note that this function does not do recursive parsing when an argument or return
   (let* ((vars body))
     (assert (proper-list-p vars) () "Not a proper list in ~W declaration ~W" identifier body)
     (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var parser)))
-	   (parsed-declspec (make-instance 'declspec-special :parent parent :vars parsed-vars)))
+	   (parsed-declspec (make-ast parser 'declspec-special :parent parent :vars parsed-vars)))
       (loop for var in parsed-vars do
 	   (setf (nso-freep var) t) ;mark all PARSED-VARS as special
 	   (push parsed-declspec (nso-declspecs var)) (push parsed-declspec (nso-sites var)))
@@ -876,29 +884,29 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ;; TODO: rewrite so that parsing the following is possible: Allow user-defined Lambda Lists (i.e. user-defined subclasses of 'llist), 3.4.1 Ordinary Lambda Lists, 3.4.2 Generic Function Lambda Lists, 3.4.3 Specialized Lambda Lists, 3.4.4 Macro Lambda Lists, 3.4.5 Destructuring Lambda Lists, 3.4.6 Boa Lambda Lists, 3.4.7 Defsetf Lambda Lists, 3.4.8 Deftype Lambda Lists, 3.4.9 Define-modify-macro Lambda Lists, 3.4.10 Define-method-combination Arguments Lambda Lists
   ;; "CLHS 3.4.1 Ordinary Lambda Lists" says: "An init-form can be any form. Whenever any init-form is evaluated for any parameter specifier, that form may refer to any parameter variable to the left of the specifier in which the init-form appears, including any supplied-p-parameter variables, and may rely on the fact that no other parameter variable has yet been bound (including its own parameter variable)." But luckily the order of allowed keywords is fixed for both normal lambda-lists and macro lambda-lists, and a normal lambda-list allows a subset of macro lambda-lists. Maybe I'll have to rewrite this for other lambda-lists.
   (let* ((llist-type (if allow-macro-lambda-list 'macro-llist 'ordinary-llist)) ;TODO: when making this function modular: probably allow passing LLIST-TYPE.
-	 (new-llist (make-instance llist-type :parent parent)))
+	 (new-llist (make-ast parser llist-type :parent parent)))
     (labels ((add-argument (varname argument-type)
-	       (let* ((new-argument (make-instance argument-type :parent new-llist))
-		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser argument-type :parent new-llist))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 new-argument))
 	     (add-required-argument (varname)
-	       (let* ((new-argument (make-instance 'required-argument :parent new-llist))
-		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'required-argument :parent new-llist))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 new-argument))
 	     (add-optional-argument (varname init-form-p init-form suppliedp suppliedp-name)
 	       "If INIT-FORM is not given for the &OPTIONAL argument, pass NIL for it. If SUPPLIEDP is non-NIL, INIT-FORM must be non-NIL as well."
 	       (assert (if suppliedp (not (null init-form)) t))
-	       (let* ((new-argument (make-instance 'optional-argument :parent new-llist))
-		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'optional-argument :parent new-llist))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 (let ((parsed-init-form (if init-form-p (parse parser init-form new-argument) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
-		   (let ((new-supplied-var (if suppliedp (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil) nil)))
+		   (let ((new-supplied-var (if suppliedp (make-ast parser 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
 		     (when new-supplied-var
 		       (setf parser (augment-lexical-namespace new-supplied-var parser)))
@@ -906,21 +914,21 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	     (add-key-argument (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name)
 	       "If KEYWORDNAME or INIT-FORM is not given for the &KEY argument, pass NIL for it. If SUPPLIEDP is non-NIL, INIT-FORM must be non-NIL as well."
 	       (assert (if suppliedp (not (null init-form)) t))
-	       (let* ((new-argument (make-instance 'key-argument :parent new-llist :keywordp keywordp :keyword keyword))
-		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'key-argument :parent new-llist :keywordp keywordp :keyword keyword))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 (let ((parsed-init-form (if init-form-p (parse parser init-form new-argument) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
-		   (let ((new-supplied-var (if suppliedp (make-instance 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil) nil)))
+		   (let ((new-supplied-var (if suppliedp (make-ast parser 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
 		     (when new-supplied-var
 		       (setf parser (augment-lexical-namespace new-supplied-var parser)))
 		     new-argument))))
 	     (add-aux-argument (varname init-form-p init-form)
 	       "If INIT-FORM is not given for the &KEY argument, pass NIL for it."
-	       (let* ((new-argument (make-instance 'aux-argument :parent new-llist))
-		      (new-var (make-instance 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'aux-argument :parent new-llist))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 (let ((parsed-init-form (if init-form-p (parse parser init-form new-argument) nil)))
@@ -1373,10 +1381,10 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
        (parse parser form current)))
 
 (defmethod parse ((parser parser) (form (eql nil)) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 
 (defmethod parse ((parser parser) (form (eql t)) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 
 (defmethod parse ((parser parser) (form symbol) parent)
   (let ((var (namespace-lookup/create 'var form parser)))
@@ -1388,49 +1396,49 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 
 (defmethod parse ((parser parser) form parent)
   (assert (atom form))
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 
 #|
 ;; The following types are atoms: taken from CLHS 4.2.2 first star.
 (defmethod parse ((parser parser) (form array) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form number) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form character) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form hash-table) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form readtable) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form package) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form pathname) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form stream) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form random-state) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form condition) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 (defmethod parse ((parser parser) (form restart) parent)
-  (make-instance 'selfevalobject :object form))
+  (make-ast parser 'selfevalobject :object form))
 |#
 
 (defmethod parse-form ((parser parser) (head (eql 'function)) rest parent)
   (assert (and (consp rest) (null (cdr rest))) () "Invalid FUNCTION-form ~S" (cons head rest))
   (let* ((name-form (car rest))
 	 (fun (namespace-lookup/create 'fun name-form parser))
-	 (current (make-instance 'function-form :parent parent
-				 :object (cond
-					   ((valid-function-name-p name-form) fun)
-					   ((and (consp name-form) (eq (car name-form) 'lambda))
-					    (parse parser name-form parent))
-					   (t (error "Invalid FUNCTION-form ~S" (cons head rest)))))))
+	 (current (make-ast parser 'function-form :parent parent
+			    :object (cond
+				      ((valid-function-name-p name-form) fun)
+				      ((and (consp name-form) (eq (car name-form) 'lambda))
+				       (parse parser name-form parent))
+				      (t (error "Invalid FUNCTION-form ~S" (cons head rest)))))))
     (when (valid-function-name-p name-form) (push current (nso-sites fun)))
     current))
 
 (defmethod parse-form ((parser parser) (head (eql 'progn)) rest parent)
-  (let* ((current (make-instance 'progn-form :parent parent :body nil))
+  (let* ((current (make-ast parser 'progn-form :parent parent :body nil))
 	 (body rest)
 	 (parsed-body (parse-body parser body current)))
     (setf (form-body current) parsed-body)
@@ -1442,7 +1450,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (let* ((definitions (car rest))
 	 (body (cdr rest))
 	 (form-type (ecase head ((let) 'let-form) ((let*) 'let*-form) ((flet) 'flet-form) ((labels) 'labels-form) ((symbol-macrolet) 'symbol-macrolet-form) ((macrolet) 'macrolet-form)))
-	 (current (make-instance form-type :parent parent :body nil))) ;:BINDINGS and :DECLSPECS are defined below
+	 (current (make-ast parser form-type :parent parent :body nil))) ;:BINDINGS and :DECLSPECS are defined below
     (assert (proper-list-p definitions) () "Not a proper list: ~S" definitions)
     (labels ((make-var-binding (def parser)
 	       (ecase head
@@ -1453,11 +1461,12 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	       (let* ((name (if (consp def) (car def) def))
 		      (value-form-present-p (consp def))
 		      (value-form (if (consp def) (cadr def) nil))
-		      (binding (make-instance 'var-binding :parent current))
+		      (binding (make-ast parser 'var-binding :parent current))
 		      (parsed-value (ecase head ((let* let) (if value-form-present-p (parse parser value-form binding) nil)) ((symbol-macrolet) value-form)))
 		      (macrop (ecase head ((let* let) nil) ((symbol-macrolet) t)))
-		      (sym (make-instance 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil)))
-		 (setf (form-sym binding) sym) (setf (form-value binding) parsed-value)
+		      (sym (make-ast parser 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil)))
+		 (setf (form-sym binding) sym
+		       (form-value binding) parsed-value)
 		 binding))
 	     (make-fun-binding (def parser)
 	       (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def)
@@ -1465,13 +1474,13 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 		 (assert (or (not (eq head 'macrolet)) (symbolp name)) () "macro function name in ~S-definition must be a SYMBOL, but is ~S" head (car def))
 		 (let* ((body-form (cdr def))
 			(block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-			(blo (make-instance 'blo :name block-name :freep nil :sites nil))
-			(binding (make-instance 'fun-binding :parent current :blo blo))
+			(blo (make-ast parser 'blo :name block-name :freep nil :sites nil))
+			(binding (make-ast parser 'fun-binding :parent current :blo blo))
 			(macrop (ecase head ((flet labels) nil) ((macrolet) t)))
 			(parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 			(sym (if (eq head 'labels)
 				 (namespace-lookup 'fun name (parser-lexical-namespace parser))
-				 (make-instance 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil)))
+				 (make-ast parser 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil)))
 			(parser (ecase head ((flet macrolet) parser) ((labels) parser)))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake SYM, and we want to have it when parsing the body.
 		   (setf (form-sym binding) sym)
 		   (setf (nso-definition blo) binding)
@@ -1501,7 +1510,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	       (loop for def in definitions do
 		    (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def))
 	       (let* ((function-names (loop for def in definitions collect (nth-value 1 (valid-function-name-p (car def)))))
-		      (fake-syms (loop for name in function-names collect (make-instance 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil)))
+		      (fake-syms (loop for name in function-names collect (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil)))
 		      (new-parser (let ((parser parser))
 				    (loop for sym in fake-syms do
 					 (setf parser (augment-lexical-namespace sym parser)))
@@ -1535,7 +1544,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 
 (defmethod parse-form ((parser parser) (head (eql 'lambda)) rest parent)
   (let* ((lambda-list-and-body rest)
-	 (current (make-instance 'lambda-form :parent parent)))
+	 (current (make-ast parser 'lambda-form :parent parent)))
     (parse-and-set-functiondef parser lambda-list-and-body #'parse-ordinary-lambda-list current)
     current))
 
@@ -1543,8 +1552,8 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" (cons head rest))
   (let* ((name (car rest))
 	 (body (cdr rest))
-		   (blo (make-instance 'blo :name name :freep nil :sites nil))
-	 (current (make-instance 'block-form :parent parent :blo blo))
+	 (blo (make-ast parser 'blo :name name :freep nil :sites nil))
+	 (current (make-ast parser 'block-form :parent parent :blo blo))
 	 (parsed-body (parse-body (augment-lexical-namespace blo parser) body current)))
     (setf (nso-definition blo) current)
     (setf (form-body current) parsed-body)
@@ -1556,7 +1565,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	 (value-form-p (not (null (cdr rest))))
 	 (value-form (cadr rest))
 	 (blo (namespace-lookup/create 'blo name parser))
-	 (current (make-instance 'return-from-form :parent parent :blo blo))
+	 (current (make-ast parser 'return-from-form :parent parent :blo blo))
 	 (parsed-value (if value-form-p (parse parser value-form current) nil)))
     (setf (form-value current) parsed-value)
     (push current (nso-sites blo))
@@ -1565,7 +1574,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 (defmethod parse-form ((parser parser) (head (eql 'locally)) rest parent)
   (assert (and (consp rest) (consp (car rest))) () "Cannot parse LOCALLY-form ~S" (cons head rest))
   (let ((body rest)
-	(current (make-instance 'locally-form :parent parent)))
+	(current (make-ast parser 'locally-form :parent parent)))
     (multiple-value-bind (body parsed-declspecs)
 	(parse-declaration-in-body parser body current)
       (setf (form-declspecs current) parsed-declspecs)
@@ -1576,7 +1585,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (assert (and (consp rest) (or (symbolp (car rest)) (consp (car rest))) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse THE-form ~S" (cons head rest))
   (let* ((value-type-form (car rest))
 	 (value-form (cadr rest))
-	 (current (make-instance 'the-form :parent parent :type value-type-form))
+	 (current (make-ast parser 'the-form :parent parent :type value-type-form))
 	 (parsed-value (parse parser value-form current)))
     (setf (form-value current) parsed-value)
     current))
@@ -1587,7 +1596,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	 (then-form (cadr rest))
 	 (else-present (not (null (cddr rest))))
 	 (else-form (if else-present (caddr rest) nil))
-	 (current (make-instance 'if-form :parent parent))
+	 (current (make-ast parser 'if-form :parent parent))
 	 (parsed-test (parse parser test-form current))
 	 (parsed-then (parse parser then-form current))
 	 (parsed-else (if else-present (parse parser else-form current) nil)))
@@ -1597,7 +1606,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 (defmethod parse-form ((parser parser) (head (eql 'setq)) rest parent)
   (let ((vars nil)
 	(values nil)
-	(current (make-instance 'setq-form :parent parent)))
+	(current (make-ast parser 'setq-form :parent parent)))
     (loop do
 	 (when (null rest) (return))
 	 (assert (and (consp rest) (symbolp (car rest)) (consp (cdr rest))) () "Cannot parse SETQ-form part ~S" rest)
@@ -1615,7 +1624,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (assert (consp rest) () "Cannot parse CATCH-form ~S" (cons head rest))
   (let* ((tag (car rest))
 	 (body (cdr rest))
-	 (current (make-instance 'catch-form :parent parent))
+	 (current (make-ast parser 'catch-form :parent parent))
 	 (parsed-tag (parse parser tag current))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-tag current) parsed-tag (form-body current) parsed-body)
@@ -1625,7 +1634,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (assert (and (consp rest) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse THROW-form ~S" (cons head rest))
   (let* ((tag (car rest))
 	 (result-form (cadr rest))
-	 (current (make-instance 'throw-form :parent parent))
+	 (current (make-ast parser 'throw-form :parent parent))
 	 (parsed-tag (parse parser tag current))
 	 (parsed-value (parse parser result-form current)))
     (setf (form-tag current) parsed-tag (form-value current) parsed-value)
@@ -1635,7 +1644,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (assert (and (consp rest) (listp (car rest))) () "Cannot parse EVAL-WHEN-form ~S" (cons head rest))
   (let* ((situations-form (car rest))
 	 (body (cdr rest))
-	 (current (make-instance 'eval-when-form :parent parent :situations situations-form))
+	 (current (make-ast parser 'eval-when-form :parent parent :situations situations-form))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-body current) parsed-body)
     current))
@@ -1645,7 +1654,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (let* ((value-form (car rest))
 	 (readonly (cadr rest)))
     (assert (position (cadr rest) '(nil t)) () "READ-ONLY-P in LOAD-TIME-VALUE-form ~S must be either NIL or T, but is ~S" (cons head rest) readonly)
-	      (let* ((current (make-instance 'load-time-value-form :parent parent :readonly readonly))
+	      (let* ((current (make-ast parser 'load-time-value-form :parent parent :readonly readonly))
 		     (parsed-value (parse (make-instance 'parser-copy :free-namespace (parser-free-namespace parser)) value-form current))) ;Note that dynamic variables must be parsed: in the form (LOAD-TIME-VALUE *A*), *A* must refer to the global *A*.
 		(setf (form-value current) parsed-value)
 		current)))
@@ -1653,13 +1662,13 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 (defmethod parse-form ((parser parser) (head (eql 'quote)) rest parent)
   (assert (and (consp rest) (null (cdr rest))) () "Cannot parse QUOTE-form ~S" (cons head rest))
   (let* ((object (car rest)))
-    (make-instance 'quote-form :parent parent :object object)))
+    (make-ast parser 'quote-form :parent parent :object object)))
 
 (defun parse-form-multiple-value-call-multiple-value-prog1 (parser head rest parent)
   (assert (and (consp rest) (listp (cdr rest))) () "Cannot parse ~S-form ~S" head (cons head rest))
   (let* ((function-form (car rest))
 	 (body (cdr rest))
-	 (current (make-instance (ecase head ((multiple-value-call) 'multiple-value-call-form) ((multiple-value-prog1) 'multiple-value-prog1-form)) :parent parent))
+	 (current (make-ast parser (ecase head ((multiple-value-call) 'multiple-value-call-form) ((multiple-value-prog1) 'multiple-value-prog1-form)) :parent parent))
 	 (parsed-function (parse parser function-form current))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-function current) parsed-function (form-body current) parsed-body)
@@ -1676,7 +1685,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (let* ((symbols-form (car rest))
 	 (values-form (cadr rest))
 	 (body (cddr rest))
-	 (current (make-instance 'progv-form :parent parent))
+	 (current (make-ast parser 'progv-form :parent parent))
 	 (parsed-symbols (parse parser symbols-form current))
 	 (parsed-values (parse parser values-form current))
 	 (parsed-body (parse-body parser body current)))
@@ -1687,7 +1696,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (assert (consp rest) () "Cannot parse UNWIND-PROTECT-form ~S" (cons head rest))
   (let* ((protected-form (car rest))
 	 (cleanup-body (cdr rest))
-	 (current (make-instance 'unwind-protect-form :parent parent))
+	 (current (make-ast parser 'unwind-protect-form :parent parent))
 	 (parsed-protected (parse parser protected-form current))
 	 (parsed-cleanup-body (parse-body parser cleanup-body current)))
     (setf (form-protected current) parsed-protected (form-body current) parsed-cleanup-body)
@@ -1695,7 +1704,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 
 (defmethod parse-form ((parser parser) (head (eql 'tagbody)) rest parent)
   (let ((body rest)
-	(current (make-instance 'tagbody-form :parent parent))
+	(current (make-ast parser 'tagbody-form :parent parent))
 	(tags nil))
     (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
     ;; pass over BODY thrice: in the first pass, establish lexical TAGs, because a GO-form referencing a tag defined after the GO would not know about the tag; in the second, create the parsed body (containing GO-FORMs); in the third, set slot :GOPOINT of the TAGs to the correct position in the parsed body list.
@@ -1704,7 +1713,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	   ;; The CLHS for TAGBODY says "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element. If a statement is a macro form and its macro expansion is an atom, that atom is treated as a statement, not a tag.". So we know symbols in the body are always tags, and that later in macro-expansion we cannot ever produce a tag.
 	   ((atom form)
 	    (assert (symbolp form) () "Cannot parse TAGBODY-form: it must only contain tags (which must be symbols) or conses, but contains ~S" form)
-	    (let ((tag (make-instance 'tag :name form :freep nil :definition current :sites nil))) ;:gopoint is defined below
+	    (let ((tag (make-ast parser 'tag :name form :freep nil :definition current :sites nil))) ;:gopoint is defined below
 	      (setf parser (augment-lexical-namespace tag parser))
 	      (push tag tags)))))
     (let ((parsed-body (loop for form in body collect
@@ -1726,7 +1735,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
   (let ((tag-name (car rest)))
     (assert (namespace-boundp 'tag tag-name (parser-lexical-namespace parser)) () "Undefined tag ~S in GO-form ~S" tag-name (cons head rest))
     (let* ((tag (namespace-lookup 'tag tag-name (parser-lexical-namespace parser)))
-	   (current (make-instance 'go-form :parent parent :tag tag)))
+	   (current (make-ast parser 'go-form :parent parent :tag tag)))
       (push current (nso-sites tag))
       current)))
 
@@ -1736,8 +1745,8 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	 (fun (namespace-lookup/create 'fun fun-name parser))
 	 (macrop (nso-macrop fun))
 	 (current (if macrop
-		      (make-instance 'macroapplication-form :parent parent :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
-		      (make-instance 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent))))
+		      (make-ast parser 'macroapplication-form :parent parent :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
+		      (make-ast parser 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent))))
 	 (parsed-arguments nil))
     (push current (nso-sites fun))
     (loop do
