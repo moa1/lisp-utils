@@ -34,8 +34,8 @@
   ((vars :initarg :vars :accessor walker:form-vars :type list :documentation "list of VARs")
    (values :initarg :values :accessor walker:form-values :type generalform)
    (declspecs :initarg :declspecs :accessor walker:form-declspecs :type list)))
-(defclass values-form (walker:form walker:body-form)
-  ())
+(defclass values-form (walker:form)
+  ((values :initarg :values :accessor walker:form-values :type generalform)))
 (defclass nth-value-form (walker:form) ;TODO: implement NTH-VALUE-form, but I think this will not be easy since there is no way in LISP to specify multiple value types for a form. Probably implementing this will need an automatic type inferencer, like NIMBLE.
   ((value :initarg :value :accessor walker:form-value :type generalform)
    (values :initarg :values :accessor walker:form-values :type generalform)))
@@ -56,7 +56,9 @@
     (format stream "~S ~S ~A" (walker:form-vars object) (walker:form-values object) (walker:format-body object t nil))))
 (defmethod print-object ((object values-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~A" (walker:format-body object nil nil))))
+    (format stream "~A" (car (walker:form-values object)))
+    (loop for value in (cdr (walker:form-values object)) do
+	 (format stream " ~A" value))))
 (defmethod print-object ((object nth-value-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~A ~A" (walker:form-value object) (walker:form-values object))))
@@ -104,7 +106,7 @@
   (let* ((objects-form rest)
 	 (current (walker:make-ast parser 'values-form :parent parent))
 	 (parsed-objects (loop for object-form in objects-form collect (walker:parse parser object-form current))))
-    (setf (walker:form-body current) parsed-objects)
+    (setf (walker:form-values current) parsed-objects)
     current))
 
 (defmethod walker:parse-form ((parser parser-plus) (head (eql 'nth-value)) rest parent)
@@ -167,7 +169,8 @@
 	 (walker:deparse deparser (walker:form-values ast))
 	 (walker:deparse-body deparser ast t nil)))
 (defmethod walker:deparse ((deparser walker:deparser) (ast values-form))
-  (list* 'values (walker:deparse-body deparser ast nil nil)))
+  (list* 'values (loop for value in (walker:form-values ast) collect
+		      (walker:deparse deparser value))))
 (defmethod walker:deparse ((deparser walker:deparser) (ast nth-value-form))
   (list* 'nth-value
 	 (walker:deparse deparser (walker:form-value ast))
@@ -500,7 +503,14 @@ Returns an alist, with VARs (from the LLIST-ARGUMENTS) as keys and FORMs (from A
       (walker:return-from-form
        (walker:nso-definition (walker:form-blo ast)))
       (walker-plus:values-form
-       (remove-dead-body! nil))
+       (let ((dead nil) ;copied from #'REMOVE-DEAD-BODY
+	     (values nil))
+	 (loop for form in (walker:form-values ast) do
+	      (unless (prog1 dead ;if DEAD is NIL, do not remove code yet
+			(or dead (setf dead (recurse! form))))
+		(push form values)))
+	 (setf (walker:form-values ast) (nreverse values))
+	 dead))
       (walker-plus:multiple-value-bind-form
        (let ((dead (recurse! (walker:form-values ast))))
 	 (remove-dead-body! dead)))
