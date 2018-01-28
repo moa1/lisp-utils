@@ -415,6 +415,9 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defmethod namespace-lookup/create ((symbol-type (eql 'blo)) symbol (parser parser))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
   (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'blo :name symbol :freep t :sites nil))) ;do not bind :DEFINITION
+(defmethod namespace-lookup/create ((symbol-type (eql 'tag)) symbol (parser parser))
+  (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'tag :name symbol :freep t :sites nil))) ;do not bind :DEFINITION
 
 (let ((parser (make-instance 'parser-copy)))
   (setf parser (augment-lexical-namespace (make-instance 'var :name 'a :freep nil :sites nil) parser))
@@ -794,7 +797,8 @@ Return the parsed abstract syntax tree (AST)."))
 (defclass aux-argument (argument)
   ((init :initarg :init :accessor argument-init :type (or null generalform))))
 (defclass llist ()
-  ((parent :initarg :parent :accessor form-parent)
+  ((parent :initarg :parent :accessor llist-parent
+	   :documentation "The FUNCTIONDEF this LLIST is defined in.")
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
 (defclass ordinary-llist (llist)
@@ -1733,8 +1737,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 (defmethod parse-form ((parser parser) (head (eql 'go)) rest parent)
   (assert (and (consp rest) (symbolp (car rest)) (null (cdr rest))) () "Cannot parse GO-form ~S" (cons head rest))
   (let ((tag-name (car rest)))
-    (assert (namespace-boundp 'tag tag-name (parser-lexical-namespace parser)) () "Undefined tag ~S in GO-form ~S" tag-name (cons head rest))
-    (let* ((tag (namespace-lookup 'tag tag-name (parser-lexical-namespace parser)))
+    (let* ((tag (namespace-lookup/create 'tag tag-name parser))
 	   (current (make-ast parser 'go-form :parent parent :tag tag)))
       (push current (nso-sites tag))
       current)))
