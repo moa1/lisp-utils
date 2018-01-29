@@ -826,14 +826,17 @@ and REPEAT must be an integer greater 0."
 
 (defmacro prind (&rest args)
   "Print args"
-  (with-gensyms (i)
-    `(progn
+  ;; TODO: modify the pretty print dispatch table so that it prints representations readable by #'READ. (especially modify the table so that printing a float respects *print-base*.)
+  (let ((i (gensym "I")))
+    `(let ((*print-pretty* t)
+	   (*print-right-margin* most-positive-fixnum))
        ,@(loop for a in args collect
 	      (if (eq a T)
 		  `(format t "~%")
 		  `(progn
 		     (format t "~A:" ,(format nil "~A" a))
-		     (dolist (,i (multiple-value-list ,a))
+		     (dolist (,i (handler-case (multiple-value-list ,a)
+				   (error (e) (list e))))
 		       (prin1 ,i)
 		       (princ " ")))))
        (format t "~%"))))
