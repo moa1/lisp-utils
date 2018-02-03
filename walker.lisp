@@ -248,7 +248,7 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 	    :documentation "The list with elements of type GENERALFORM or TAG that come after the TAG in the body of DEFINITION."))
   (:documentation "A tag in a TAGBODY form."))
 
-(defvar *print-detailed-walker-objects* t "If T, print more details of objects in package WALKER.")
+(defvar *print-detailed-walker-objects* nil "If T, print more details of objects in package WALKER.")
 
 (defmethod print-object ((object sym) stream)
   (print-unreadable-object (object stream :type t :identity t)
