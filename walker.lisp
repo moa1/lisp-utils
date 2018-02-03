@@ -76,6 +76,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :namespace-boundp
    :namespace-lookup
    :copy-lexical-namespace
+   :copy-parser-deep-lexical-namespace
    ;; PARSERS
    :parser :lexical-namespace :parser-lexical-namespace :free-namespace :parser-free-namespace
    :parser-copy
@@ -335,6 +336,9 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defgeneric copy-lexical-namespace (parser namespace)
   (:documentation "Create a new instance of the type of NAMESPACE, with all slots of NAMESPACE bound to the same objects as in NAMESPACE."))
 
+(defgeneric copy-parser-deep-lexical-namespace (parser)
+  (:documentation "Create a new instance of parser that has a deep-copied lexical namespace"))
+
 ;;;; PARSERS
 
 (defclass parser ()
@@ -370,6 +374,13 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 	    :fun (namespace-fun namespace)
 	    :blo (namespace-blo namespace)
 	    :tag (namespace-tag namespace)))
+
+(defmethod copy-parser-deep-lexical-namespace ((parser parser))
+  (let* ((p (copy-parser parser))
+	 (ln (copy-lexical-namespace p (parser-lexical-namespace p))))
+    (setf (parser-lexical-namespace p) ln)
+    (setf (namespace-var (parser-lexical-namespace p)) (loop for acons in (namespace-var ln) collect (cons (car acons) (cdr acons))))
+    p))
 
 (defgeneric augment-lexical-namespace (nso-object parser)
   (:documentation "Create a copy of the lexical namespace in PARSER, add the NSO-OBJECT (which must be a subtype of NSO) to the copy, and return the copy."))
@@ -1602,8 +1613,9 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	 (else-form (if else-present (caddr rest) nil))
 	 (current (make-ast parser 'if-form :parent parent))
 	 (parsed-test (parse parser test-form current))
-	 (parsed-then (parse parser then-form current))
-	 (parsed-else (if else-present (parse parser else-form current) nil)))
+	 ;;(COPY-PARSER-DEEP-LEXICAL-NAMESPACE PARSER) instead of PARSER was used to parse THEN-FORM and ELSE-FORM so that changes made to the parser when parsing THEN-FORM does not induce changes when parsing ELSE-FORM. TODO: maybe separate syntax and semantics more clearly.
+	 (parsed-then (parse (copy-parser-deep-lexical-namespace parser) then-form current))
+	 (parsed-else (if else-present (parse (copy-parser-deep-lexical-namespace parser) else-form current) nil)))
     (setf (form-test current) parsed-test (form-then current) parsed-then (form-else current) parsed-else)
     current))
 
@@ -1723,6 +1735,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
     (let ((parsed-body (loop for form in body collect
 			    (cond
 			      ((atom form)
+			       (setf parser (copy-parser-deep-lexical-namespace parser)) ;this is so that joining namespaces in NTI works. TODO: maybe separate syntax and semantics more clearly.
 			       (namespace-lookup 'tag form (parser-lexical-namespace parser)))
 			      (t
 			       (parse parser form current))))))
