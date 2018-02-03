@@ -245,7 +245,7 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
   (:documentation "A named block."))
 (defclass tag (nso)
   ((gopoint :initarg :gopoint :accessor nso-gopoint :type list
-	    :documentation "The list with elements of type GENERALFORM or TAG that come after the TAG in the body of DEFINITION."))
+	    :documentation "The list with elements of type GENERALFORM or TAG that come after (and including) the TAG in the body of DEFINITION."))
   (:documentation "A tag in a TAGBODY form."))
 
 (defvar *print-detailed-walker-objects* nil "If T, print more details of objects in package WALKER.")
@@ -1729,7 +1729,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
       (loop for parsed-form-rest on parsed-body do
 	   (let ((parsed-form (car parsed-form-rest)))
 	     (when (typep parsed-form 'tag)
-	       (setf (nso-gopoint parsed-form) (cdr parsed-form-rest)))))
+	       (setf (nso-gopoint parsed-form) parsed-form-rest))))
       (setf (form-body current) parsed-body)
       (setf (form-tags current) (nreverse tags)))
     current))
@@ -2140,8 +2140,8 @@ Returns three values: a list containing the lexical namespaces, a list containin
     (assert (eq (form-tag go1-form) a1-tag))
     (assert (eq (form-tag go2-form) a2-tag))
     (assert (not (eq a1-tag a2-tag)))
-    (assert (eq (nso-gopoint a1-tag) (nthcdr 2 (form-body tagbody1))))
-    (assert (eq (nso-gopoint a2-tag) (nthcdr 1 (form-body tagbody2))))
+    (assert (eq (nso-gopoint a1-tag) (nthcdr 1 (form-body tagbody1))))
+    (assert (eq (nso-gopoint a2-tag) (nthcdr 0 (form-body tagbody2))))
     (assert (equal (nso-sites a1-tag) (list go1-form)))
     (assert (equal (nso-sites a2-tag) (list go2-form))))
   (let* ((form '(tagbody
