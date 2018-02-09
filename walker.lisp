@@ -1776,6 +1776,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
     current))
 
 (defmethod parse-form ((parser parser) head rest parent)
+  ;; TODO: allow '((LAMBDA (X) X) 1), which is legal COMMON LISP.
   (error "Function or macro application must start with a symbol, but is ~W" (cons head rest)))
 
 (defun parse-with-namespace (form &key (parser (make-parser :variables nil :functions nil :macros nil)))
