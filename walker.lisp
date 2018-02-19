@@ -2436,16 +2436,18 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	(deparse deparser (form-tag ast))))
 
 (defclass deparser-map-ast (deparser)
-  ((function :initarg :function :initform (constantly nil) :accessor deparser-function :type function :documentation "The function called."))
-  (:documentation "A deparser that calls FUNCTION before every deparsing step."))
+  ((function :initarg :function :initform (constantly nil) :accessor deparser-function :type function :documentation "The function called.")
+   (result :initarg :result :accessor deparser-result :type t :documentation "The last result returned by #'DEPARSE."))
+  (:documentation "A deparser that calls FUNCTION after every deparsing step."))
 
-(defmethod deparse :before ((deparser deparser-map-ast) ast)
-  (funcall (deparser-function deparser) ast))
+(defmethod deparse :after ((deparser deparser-map-ast) ast)
+  (setf (deparser-result deparser) (multiple-value-list (funcall (deparser-function deparser) ast))))
 
 (defun map-ast (function ast &key (deparser (make-instance 'deparser-map-ast :function function)))
   "Recursively call FUNCTION with all objects occurring in the AST in the left-to-right order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
 FUNCTION is called with one parameter: the current AST.
-Return NIL."
+Return the last returned multiple values of FUNCTION."
   (declare (optimize (debug 3)))
   ;;TODO: FIXME: the DEPARSE-* functions above do not call RECURSE-FUNCTION for some slots (those which are not parsed by #'PARSE). Come up with a scheme that allows an adapted RECURSE-FUNCTION to know what type those unparsed slots are (e.g. type specifiers). The slots to which this applies is marked above with "TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)".
-  (deparse deparser ast))
+  (deparse deparser ast)
+  (apply #'values (deparser-result deparser)))
