@@ -174,9 +174,10 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :format-body
    :form-body-1 :form-body-2 :form-body-3 :form-body-4 :form-body-5 :form-body-6 :form-body-7 :form-body-last
    :form-binding-1 :form-binding-2 :form-binding-3 :form-binding-4 :form-binding-5 :form-binding-6 :form-binding-7
-   ;; END OF FORMs
+   ;; END OF FORMs and Utility Functions
    :parse-and-set-functiondef
    :is-recursive
+   :is-inside
    :parse-body
    :parse-form
    :parse-with-namespace
@@ -1350,7 +1351,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defun form-binding-7 (ast)
   (seventh (form-bindings ast)))
 
-;;;; END OF FORMs
+;;;; END OF FORMs and Utility Functions
 
 (defun parse-and-set-functiondef (parser form parse-lambda-list-function current-functiondef)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
@@ -1377,7 +1378,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
       current-functiondef)))
 
 (defun is-recursive (fun parent)
-  "Checks if PARENT is a FUNCTIONDEF defining FUN or walks up the parent path of PARENT otherwise."
+  "Checks if PARENT is a FUNCTIONDEF defining FUN or checks for FUN in the parent path of PARENT otherwise."
   (cond
     ((null parent)
      nil)
@@ -1385,6 +1386,13 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
      (if (and (typep parent 'fun-binding) (eq (form-sym parent) fun))
 	 t
 	 (is-recursive fun (form-parent parent))))))
+
+(defun is-inside (inner-ast outer-ast &optional (eql-means-inside nil))
+  "Returns non-NIL if and only if INNER-AST is inside of OUTER-AST.
+If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
+  (if (eql (if eql-means-inside inner-ast (form-parent inner-ast)) outer-ast)
+      t
+      (ast-inside-ast-p (form-parent inner-ast) outer-ast eql-means-inside)))
 
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
 ;; TODO: FIXME: Must handle arbitrary nonsense input gracefully. (see comment near #'PROPER-LIST-P.)
