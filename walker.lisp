@@ -162,7 +162,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :load-time-value-form :value :form-value :readonly :form-readonly
    :quote-form :object :form-object
    :multiple-value-call-form :function :form-function
-   :multiple-value-prog1-form :function :form-function
+   :multiple-value-prog1-form :values :form-values
    :progv-form :symbols :form-symbols :values :form-values
    :unwind-protect-form :protected :form-protected
    :application-form :fun :form-fun :arguments :form-arguments :recursivep :form-recursivep
@@ -1184,7 +1184,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass multiple-value-call-form (special-form body-form)
   ((function :initarg :function :accessor form-function :type generalform))) ;note that this slot is not called FUN, because slots named FUN in other FORM-classes mean "of type FUN".
 (defclass multiple-value-prog1-form (special-form body-form)
-  ((function :initarg :function :accessor form-function :type generalform))) ;note that this slot is not called FUN, because slots named FUN in other FORM-classes mean "of type FUN".
+  ((values :initarg :values :accessor form-values :type generalform)))
 (defclass progv-form (special-form body-form)
   ((symbols :initarg :symbols :accessor form-symbols :type generalform)
    (values :initarg :values :accessor form-values :type generalform)))
@@ -1291,7 +1291,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S ~S" (form-function object) (form-body object))))
 (defmethod print-object ((object multiple-value-prog1-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-function object) (form-body object))))
+    (format stream "~S ~S" (form-values object) (form-body object))))
 (defmethod print-object ((object progv-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~S ~S" (form-symbols object) (form-values object) (form-body object))))
@@ -1688,20 +1688,25 @@ If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
   (let* ((object (car rest)))
     (make-ast parser 'quote-form :parent parent :object object)))
 
-(defun parse-form-multiple-value-call-multiple-value-prog1 (parser head rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'multiple-value-call)) rest parent)
   (assert (and (consp rest) (listp (cdr rest))) () "Cannot parse ~S-form ~S" head (cons head rest))
   (let* ((function-form (car rest))
 	 (body (cdr rest))
-	 (current (make-ast parser (ecase head ((multiple-value-call) 'multiple-value-call-form) ((multiple-value-prog1) 'multiple-value-prog1-form)) :parent parent))
+	 (current (make-ast parser 'multiple-value-call-form :parent parent))
 	 (parsed-function (parse parser function-form current))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-function current) parsed-function (form-body current) parsed-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'multiple-value-call)) rest parent)
-  (parse-form-multiple-value-call-multiple-value-prog1 parser head rest parent))
 (defmethod parse-form ((parser parser) (head (eql 'multiple-value-prog1)) rest parent)
-  (parse-form-multiple-value-call-multiple-value-prog1 parser head rest parent))
+  (assert (and (consp rest) (listp (cdr rest))) () "Cannot parse ~S-form ~S" head (cons head rest))
+  (let* ((function-form (car rest))
+	 (body (cdr rest))
+	 (current (make-ast parser 'multiple-value-prog1-form :parent parent))
+	 (parsed-function (parse parser function-form current))
+	 (parsed-body (parse-body parser body current)))
+    (setf (form-values current) parsed-function (form-body current) parsed-body)
+    current))
 
 (defmethod parse-form ((parser parser) (head (eql 'progv)) rest parent)
   (assert (and (consp rest) (consp (cdr rest))) () "Cannot parse PROGV-form ~S" (cons head rest))
@@ -2411,7 +2416,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	 (deparse-body deparser ast nil nil)))
 (defmethod deparse ((deparser deparser) (ast multiple-value-prog1-form))
   (list* 'multiple-value-prog1
-	 (deparse deparser (form-function ast))
+	 (deparse deparser (form-values ast))
 	 (deparse-body deparser ast nil nil)))
 (defmethod deparse ((deparser deparser) (ast progv-form))
   (list* 'progv
