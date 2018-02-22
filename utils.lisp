@@ -37,6 +37,18 @@ e.g. (((1)) 2 (3 4)) -> ((1) 2 3 4), the (1) in both is eq.
 				   (cons (car l) acc)))))))
     (rec l nil)))
 
+(defun last1 (list)
+  "Return the last element of LIST."
+  (car (last list)))
+
+(defmacro pushend (list1 &rest lists)
+  "Concatenate LIST1 and all LISTS, using #'NCONC, and set LIST1 to the resulting list."
+  `(setf ,list1 (apply #'nconc ,list1 ,@(butlast lists) (list ,(last1 lists)))))
+
+(defmacro pushfront (list-last &rest lists)
+  "Concatenate all LISTS and LIST-LAST, using #'NCONC, and set LIST-LAST to the resulting list."
+  `(setf ,list-last (apply #'nconc ,@lists (list ,list-last))))
+
 (defun has-key (key h)
   (multiple-value-bind (val p) (gethash key h)
     (declare (ignore val))
