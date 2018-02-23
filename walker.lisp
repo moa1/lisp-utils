@@ -131,8 +131,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form-var ;for future extensions
    ;; FORMS
    :generalform
-   :selfevalobject :object :selfevalobject-object :user
    :form :parent :form-parent :user
+   :object-form :object :form-object :user
    :body-form :body :form-body
    :special-form
    :function-form :object :form-object
@@ -1092,22 +1092,15 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   "A form as described in 'CLHS 3.1.2.1 Form Evaluation'"
   `(or sym ;CLHS 3.1.2.1.1 Symbols as Forms
        form ;CLHS 3.1.2.1.2 Conses as Forms
-       selfevalobject ;CLHS 3.1.2.1.3 Self-Evaluating Objects
        ))
-
-(defclass selfevalobject ()
-  ((object :initarg :object :accessor selfevalobject-object) ;TODO: add something like ":type (or number string vector pathname ...)" when I know what types of objects are self-evaluating objects. CLHS 3.1.2.1.3 doesn't seem to have a complete list.
-   (user :initform nil :initarg :user :accessor user
-	 :documentation "Arbitrary user-definable slot."))
-  (:documentation "A self-evaluating object as described in 'CLHS 3.1.2.1.3 Self-Evaluating Objects'"))
-(defmethod print-object ((object selfevalobject) stream)
-  (print-unreadable-object (object stream :type t)
-    (format stream "~S" (selfevalobject-object object))))
 
 (defclass form ()
   ((parent :initarg :parent :accessor form-parent)
    (user :initform nil :initarg :user :accessor user))
   (:documentation "A cons form as described in 'CLHS 3.1.2.1.2 Conses as Forms'"))
+(defclass object-form (form)
+  ((object :initarg :object :accessor form-object)) ;TODO: add something like ":type (or number string vector pathname ...)" when I know what types of objects are self-evaluating objects. CLHS 3.1.2.1.3 doesn't seem to have a complete list.
+  (:documentation "A self-evaluating object as described in 'CLHS 3.1.2.1.3 Self-Evaluating Objects'"))
 (defclass body-form ()
   ((body :initarg :body :accessor form-body :type list :documentation "list of GENERALFORMs"))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
@@ -1209,6 +1202,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((tag :initarg :tag :accessor form-tag :type tag)))
 
 ;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
+(defmethod print-object ((object object-form) stream)
+  (print-unreadable-object (object stream :type t)
+    (format stream "~S" (form-object object))))
 (defmethod print-object ((object function-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-object object))))
@@ -1404,47 +1400,37 @@ If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
        (parse parser form current)))
 
 (defmethod parse ((parser parser) (form (eql nil)) parent)
-  (make-ast parser 'selfevalobject :object form))
+  (make-ast parser 'object-form :parent parent :object form))
 
 (defmethod parse ((parser parser) (form (eql t)) parent)
-  (make-ast parser 'selfevalobject :object form))
+  (make-ast parser 'object-form :parent parent :object form))
 
 (defmethod parse ((parser parser) (form symbol) parent)
-  (let ((var (namespace-lookup/create 'var form parser)))
-    (push parent (nso-sites var))
-    var))
+  (let* ((var (namespace-lookup/create 'var form parser))
+	 (read-var (make-ast parser 'var-read-form :parent parent :var var)))
+    (push read-var (nso-sites var))
+    read-var))
 
 (defmethod parse ((parser parser) (form cons) parent)
   (parse-form parser (car form) (cdr form) parent))
 
 (defmethod parse ((parser parser) form parent)
   (assert (atom form))
-  (make-ast parser 'selfevalobject :object form))
+  (make-ast parser 'object-form :parent parent :object form))
 
 #|
 ;; The following types are atoms: taken from CLHS 4.2.2 first star.
-(defmethod parse ((parser parser) (form array) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form number) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form character) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form hash-table) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form readtable) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form package) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form pathname) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form stream) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form random-state) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form condition) parent)
-  (make-ast parser 'selfevalobject :object form))
-(defmethod parse ((parser parser) (form restart) parent)
-  (make-ast parser 'selfevalobject :object form))
+array
+number
+character
+hash-table
+readtable
+package
+pathname
+stream
+random-state
+condition
+restart
 |#
 
 (defmethod parse-form ((parser parser) (head (eql 'function)) rest parent)
@@ -1885,7 +1871,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	     (lexical-namespace-2 (cadr lexical-namespaces))
 	     (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
 	     (b-2 (namespace-lookup 'var 'b lexical-namespace-2)))
-	(assert (eq (selfevalobject-object (form-value (nso-definition b-1))) 5))
+	(assert (eq (form-object (form-value (nso-definition b-1))) 5))
 	(assert (eq b-1 (form-value (nso-definition b-2))))
 	(assert (not (eq b-1 b-2)))
 	(assert (equal (nso-sites b-1) (list (form-binding-1 (form-body-2 ast)))))))
@@ -1895,7 +1881,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	     (lexical-namespace-2 (cadr lexical-namespaces))
 	     (b-1 (namespace-lookup 'var 'b lexical-namespace-1))
 	     (b-2 (namespace-lookup 'var 'b lexical-namespace-2)))
-	(assert (eq (selfevalobject-object (form-value (nso-definition b-1))) 5))
+	(assert (eq (form-object (form-value (nso-definition b-1))) 5))
 	(assert (eq b-1 (form-value (nso-definition b-2))))
 	(assert (not (eq b-1 b-2)))
 	(assert (equal (nso-sites b-1) (list (form-binding-1 (form-body-2 ast)))))))
@@ -2324,8 +2310,8 @@ Returns three values: a list containing the lexical namespaces, a list containin
 		   (rec (form-body ast)))
 	    (rec (form-body ast))))))
 
-(defmethod deparse ((deparser deparser) (selfevalobject selfevalobject))
-  (selfevalobject-object selfevalobject)) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
+(defmethod deparse ((deparser deparser) (ast object-form))
+  (form-object ast))
 (defmethod deparse ((deparser deparser) (ast function-form))
   (list 'function
 	(deparse deparser (form-object ast))))

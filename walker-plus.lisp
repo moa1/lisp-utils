@@ -193,7 +193,7 @@
 ;;;; ARGUMENTS AND LAMBDA LISTS
 
 (defmethod arguments-assign-to-lambda-list ((parser walker:parser) (llist walker:ordinary-llist) arguments)
-  "LLIST is a parsed ordinary (TODO: or macro) lambda list. ARGUMENTS is the parsed list of arguments, i.e. (FORM-ARGUMENTS APPLICATION-FORM). PARSER is needed to allow multiple #'ARGUMENTS-ASSIGN-TO-LAMBDA-LIST, and for creating WALKER:SELFEVALOBJETs NIL and T.
+  "LLIST is a parsed ordinary (TODO: or macro) lambda list. ARGUMENTS is the parsed list of arguments, i.e. (FORM-ARGUMENTS APPLICATION-FORM). PARSER is needed to allow multiple #'ARGUMENTS-ASSIGN-TO-LAMBDA-LIST, and for creating WALKER:OBJECT-FORMs NIL and T.
 Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMENTS) as values."
   ;; take the LLIST as scaffold and assign ARGUMENTS to it.
   (let ((result nil)
@@ -205,7 +205,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	   (init-form (arg)
 	     (if (walker:argument-init arg)
 		 (walker:argument-init arg)
-		 (walker:make-ast parser 'walker:selfevalobject :object nil)))
+		 (walker:make-ast parser 'walker:object-form :object nil)))
 	   (set-result! (key datum)
 	     (setf result (acons key datum result))))
       (loop for arg in (walker:llist-required llist) do
@@ -216,11 +216,11 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	     ((null arguments)
 	      (set-result! (walker:argument-var arg) (init-form arg))
 	      (when (walker:argument-suppliedp arg)
-		(set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object nil))))
+		(set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object nil))))
 	     (t
 	      (set-result! (walker:argument-var arg) (pop arguments))
 	      (when (walker:argument-suppliedp arg)
-		(set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object t))))))
+		(set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object t))))))
       (when (walker:llist-rest llist)
 	(set-result! (walker:argument-var (walker:llist-rest llist)) arguments))
       (assert (evenp (length arguments)) () "Odd number of arguments to &KEY: ~W" arguments)
@@ -237,11 +237,11 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 		 ((null cdr)
 		  (set-result! (walker:argument-var arg) (init-form arg))
 		  (when (walker:argument-suppliedp arg)
-		    (set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object nil))))
+		    (set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object nil))))
 		 (t
 		  (set-result! (walker:argument-var arg) (cadr cdr))
 		  (when (walker:argument-suppliedp arg)
-		    (set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:selfevalobject :object t)))))))
+		    (set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object t)))))))
 	;; keyword argument checking is suppressed if &ALLOW-OTHER-KEYS is present
 	(unless (or (walker:llist-allow-other-keys llist)
 		    (cadr (find-name :allow-other-keys arguments)))
@@ -280,7 +280,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 		  (result (arguments-assign-to-lambda-list parser llist arguments)))
 	     (labels ((value-of (x)
 			(etypecase x
-			  (walker:selfevalobject (walker:selfevalobject-object x))
+			  (walker:object-form (walker:form-object x))
 			  (walker:var (walker:nso-name x))
 			  (null nil)
 			  (cons (loop for y in x collect (value-of y)))))
@@ -291,27 +291,27 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 			      (value-of (cdr cons)))))
 	       (let ((obtained-result-alist (mapcar #'result-to-alist result)))
 		 (assert (equal desired-result-alist obtained-result-alist) () "~S~%on arguments ~S~%wanted ~S~%but gave ~S" (list 'arguments-assign-to-lambda-list llist-list) argument-list desired-result-alist obtained-result-alist))))))
-    (assert-result '(a b c) '(1 2 3) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject 3)))
+    (assert-result '(a b c) '(1 2 3) '((a walker:object-form 1) (b walker:object-form 2) (c walker:object-form 3)))
     (assert-error '(a) '(1 2))
     (assert-error '(a b) '(1))
     (assert-error '(a &optional b (c t)) '())
-    (assert-result '(a &optional b (c t)) '(1 2) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject t)))
-    (assert-result '(a &optional b (c t)) '(1) '((a walker:selfevalobject 1) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
-    (assert-result '(a &optional b (c t cp)) '(1 2) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject t) (cp walker:selfevalobject nil)))
-    (assert-result '(a &optional b (c t cp)) '(1 2 3) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:selfevalobject 3) (cp walker:selfevalobject t)))
-    ;;works correctly, but testing for (C (WALKER:VAR b)) is not implemented: (assert-result '(a &optional b (c b)) '(1 2) '((a walker:selfevalobject 1) (b walker:selfevalobject 2) (c walker:var b)))
+    (assert-result '(a &optional b (c t)) '(1 2) '((a walker:object-form 1) (b walker:object-form 2) (c walker:object-form t)))
+    (assert-result '(a &optional b (c t)) '(1) '((a walker:object-form 1) (b walker:object-form nil) (c walker:object-form t)))
+    (assert-result '(a &optional b (c t cp)) '(1 2) '((a walker:object-form 1) (b walker:object-form 2) (c walker:object-form t) (cp walker:object-form nil)))
+    (assert-result '(a &optional b (c t cp)) '(1 2 3) '((a walker:object-form 1) (b walker:object-form 2) (c walker:object-form 3) (cp walker:object-form t)))
+    ;;works correctly, but testing for (C (WALKER:VAR b)) is not implemented: (assert-result '(a &optional b (c b)) '(1 2) '((a walker:object-form 1) (b walker:object-form 2) (c walker:var b)))
     (assert-error '(a &rest r &key b (c t)) '())
-    (assert-result '(a &rest r &key b (c t)) '(1) '((a walker:selfevalobject 1) (r null nil) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
+    (assert-result '(a &rest r &key b (c t)) '(1) '((a walker:object-form 1) (r null nil) (b walker:object-form nil) (c walker:object-form t)))
     (assert-error '(a &rest r &key b (c t)) '(1 2))
-    (assert-result '(a &rest r &key b (c t)) '(1 :b 2) '((a walker:selfevalobject 1) (r cons (:b 2)) (b walker:selfevalobject 2) (c walker:selfevalobject t)))
-    (assert-result '(a &rest r &key b ((hello c) t)) '(1 :b 2) '((a walker:selfevalobject 1) (r cons (:b 2)) (b walker:selfevalobject 2) (c walker:selfevalobject t)))
-    (assert-result '(a &rest r &key b ((hello c) t)) '(1 :b 2 hello 3) '((a walker:selfevalobject 1) (r cons (:b 2 hello 3)) (b walker:selfevalobject 2) (c walker:selfevalobject 3)))
+    (assert-result '(a &rest r &key b (c t)) '(1 :b 2) '((a walker:object-form 1) (r cons (:b 2)) (b walker:object-form 2) (c walker:object-form t)))
+    (assert-result '(a &rest r &key b ((hello c) t)) '(1 :b 2) '((a walker:object-form 1) (r cons (:b 2)) (b walker:object-form 2) (c walker:object-form t)))
+    (assert-result '(a &rest r &key b ((hello c) t)) '(1 :b 2 hello 3) '((a walker:object-form 1) (r cons (:b 2 hello 3)) (b walker:object-form 2) (c walker:object-form 3)))
     (assert-error '(a &rest r &key b (c t)) '(1 :bla 2))
-    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2) '((a walker:selfevalobject 1) (r cons (:bla 2)) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
+    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2) '((a walker:object-form 1) (r cons (:bla 2)) (b walker:object-form nil) (c walker:object-form t)))
     (assert-error '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys)) ;odd keywords
-    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys nil) '((a walker:selfevalobject 1) (r cons (:bla 2 :allow-other-keys nil)) (b walker:selfevalobject nil) (c walker:selfevalobject t))) ;if either &ALLOW-OTHER-KEYS is present or :ALLOW-OTHER-KEYS==T, suppress keyword checking
-    (assert-result '(a &rest r &key b (c t)) '(1 :bla 2 :allow-other-keys t) '((a walker:selfevalobject 1) (r cons (:bla 2 :allow-other-keys t)) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
-    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys t) '((a walker:selfevalobject 1) (r cons (:bla 2 :allow-other-keys t)) (b walker:selfevalobject nil) (c walker:selfevalobject t)))
+    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys nil) '((a walker:object-form 1) (r cons (:bla 2 :allow-other-keys nil)) (b walker:object-form nil) (c walker:object-form t))) ;if either &ALLOW-OTHER-KEYS is present or :ALLOW-OTHER-KEYS==T, suppress keyword checking
+    (assert-result '(a &rest r &key b (c t)) '(1 :bla 2 :allow-other-keys t) '((a walker:object-form 1) (r cons (:bla 2 :allow-other-keys t)) (b walker:object-form nil) (c walker:object-form t)))
+    (assert-result '(a &rest r &key b (c t) &allow-other-keys) '(1 :bla 2 :allow-other-keys t) '((a walker:object-form 1) (r cons (:bla 2 :allow-other-keys t)) (b walker:object-form nil) (c walker:object-form t)))
     ))
 (test-arguments-assign-to-lambda-list)
 
@@ -331,7 +331,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	       (setf (walker:form-body ast) (nreverse body))
 	       dead))
 	   (no-code ()
-	     (make-instance 'walker:selfevalobject :object nil))
+	     (make-instance 'walker:object-form :object nil))
 	   (remove-dead-let! ()
 	     (let ((dead nil)
 		   (bindings nil))
@@ -377,7 +377,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	     "Return the innermost abort-form if DEAD1 or DEAD2 are abort forms, or T if one form is T, NIL otherwise"
 	     (find-abort-form dead1 dead2 :or)))
     (etypecase ast
-      (walker:selfevalobject nil)
+      (walker:object-form nil)
       (walker:var nil)
       (walker:fun nil)
       (walker:progn-form
@@ -547,7 +547,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
   (flet ((assert-result (form expected)
 	   (let ((ast (walker:parse-with-namespace form :parser (walker:make-parser :type 'parser-plus))))
 	     (when (remove-dead-code! ast)
-	       (setf ast (make-instance 'walker:selfevalobject :object nil)))
+	       (setf ast (make-instance 'walker:form-object :object nil)))
 	     (let ((actual (walker:deparse (make-instance 'walker:deparser) ast)))
 	       (assert (equal actual expected) () "Remove dead code in ~S~%gave ~S,~%but should have been ~S" form actual expected)))))
     (assert-result '(block nil (+ 1 (return-from nil) 2)) '(block nil (+ 1 (return-from nil) nil)))
