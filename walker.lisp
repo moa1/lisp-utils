@@ -1176,7 +1176,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass unwind-protect-form (special-form body-form)
   ((protected :initarg :protected :accessor form-protected :type form)))
 (defclass application-form (form)
-  ((fun :initarg :fun :accessor form-fun :type fun)
+  ((fun :initarg :fun :accessor form-fun :type (or fun lambda-form))
    (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of FORMs")
    (recursivep :initarg :recursivep :accessor form-recursivep :type boolean :documentation "T if the call is inside the function called, NIL otherwise.")))
 ;; Probably FREENAMESPACE should not be a slot in MACROAPPLICATION-FORM, since CLHS says that the lexical environment is saved, but says nothing about the free environment: CLHS Glossary "environment parameter n. A parameter in a defining form f for which there is no corresponding argument; instead, this parameter receives as its value an environment object which corresponds to the lexical environment in which the defining form f appeared."
@@ -1804,29 +1804,34 @@ restart
       (push current (nso-sites tag))
       current)))
 
+(defun parse-macro-or-function-application (parser macrop fun arg-forms parent)
+  (let* ((current (if macrop
+		      (make-ast parser 'macroapplication-form :parent parent :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
+		      (make-ast parser 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent)))))
+    (unless (typep fun 'lambda-form)
+      (push current (nso-sites fun)))
+    (assert (proper-list-p arg-forms) () "Arguments in function or macro application must be a proper list, but are~%~S" arg-forms)
+    (let ((parsed-arguments (loop for arg-form in arg-forms collect
+				 (if macrop arg-form (parse parser arg-form current)))))
+      (setf (form-arguments current) parsed-arguments))
+    current))
+
 (defmethod parse-form ((parser parser) (head symbol) rest parent)
   (let* ((fun-name head)
 	 (arg-forms rest)
 	 (fun (namespace-lookup/create 'fun fun-name parser))
-	 (macrop (nso-macrop fun))
-	 (current (if macrop
-		      (make-ast parser 'macroapplication-form :parent parent :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
-		      (make-ast parser 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent))))
-	 (parsed-arguments nil))
-    (push current (nso-sites fun))
-    (loop do
-	 (when (null arg-forms) (return))
-	 (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function or macro application" arg-forms)
-	 (push (let ((arg-form (car arg-forms)))
-		 (if macrop arg-form (parse parser arg-form current)))
-	       parsed-arguments)
-	 (setf arg-forms (cdr arg-forms)))
-    (setf (form-arguments current) (nreverse parsed-arguments))
-    current))
+	 (macrop (nso-macrop fun)))
+    (parse-macro-or-function-application parser macrop fun arg-forms parent)))
 
 (defmethod parse-form ((parser parser) head rest parent)
-  ;; TODO: FIXME: allow '((LAMBDA (X) X) 1), which is legal COMMON LISP.
-  (error "Function or macro application must start with a symbol, but is ~W" (cons head rest)))
+  (cond
+    ;; allow '((LAMBDA (X) X) 1), which is legal Common Lisp.
+    ((and (consp head) (eql (car head) 'lambda))
+     (let ((fun (parse parser head parent))
+	   (arg-forms rest))
+       (parse-macro-or-function-application parser nil fun arg-forms parent)))
+    (t
+     (error "Function or macro application must start with a symbol, but is~%~W" (cons head rest)))))
 
 (defun parse-with-namespace (form &key (parser (make-parser :variables nil :functions nil :macros nil)))
   "Parse FORM using the PARSER, and any occurring declarations using DECLSPEC-PARSER. Use FREE-NAMESPACE as the free namespace.
