@@ -227,7 +227,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
       (labels ((find-name (name arguments)
 		 (if (null arguments)
 		     nil
-		     (if (eql (walker:nso-name (car arguments)) name)
+		     (if (eql (walker:nso-name (walker:form-var (car arguments))) name)
 			 arguments
 			 (find-name name (cddr arguments))))))
 	(loop for arg in (walker:llist-key llist) do
@@ -248,7 +248,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	  (labels ((check (rest)
 		     (if (null rest)
 			 t
-			 (and (or (position (walker:nso-name (car rest)) (walker:llist-key llist) :key #'keyword-name :test #'eql)
+			 (and (or (position (walker:nso-name (walker:form-var (car rest))) (walker:llist-key llist) :key #'keyword-name :test #'eql)
 				  (error "Unknown keyword argument name ~S~%in keyword list ~S" (walker:nso-name (car rest)) (mapcar #'keyword-name (walker:llist-key llist))))
 			      (check (cddr rest))))))
 	    (check arguments))))
@@ -281,7 +281,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	     (labels ((value-of (x)
 			(etypecase x
 			  (walker:object-form (walker:form-object x))
-			  (walker:var (walker:nso-name x))
+			  (walker:var-read-form (walker:nso-name (walker:form-var x)))
 			  (null nil)
 			  (cons (loop for y in x collect (value-of y)))))
 		      (result-to-alist (cons)
@@ -378,7 +378,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	     (find-abort-form dead1 dead2 :or)))
     (etypecase ast
       (walker:object-form nil)
-      (walker:var nil)
+      (walker:var-read-form nil)
       (walker:fun nil)
       (walker:progn-form
        (remove-dead-body! nil))
@@ -593,9 +593,11 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	(defined (make-hash-table)))
     (walker:map-ast (lambda (ast)
 		      (cond
-			((typep ast 'walker:setq-form)
-			 (loop for var in (walker:form-vars ast) do
-			      (incf (gethash var written 0))))
+			((typep ast 'walker:var-read-form)
+			 (incf (gethash (walker:form-var ast) accessed 0)))
+			((typep ast 'walker:var-write-form)
+			 (incf (gethash (walker:form-var ast) written 0))
+			 (incf (gethash (walker:form-var ast) accessed 0)))
 			((typep ast 'walker:nso)
 			 (incf (gethash ast accessed 0)))
 			((or (typep ast 'walker:let-form) (typep ast 'walker:let*-form) (typep ast 'walker:flet-form) (typep ast 'walker:labels-form))
@@ -609,6 +611,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
       (loop for nso being the hash-key of accessed using (hash-value naccessed) do
 	   (let ((nwritten (gethash nso written 0))
 		 (ndefined (gethash nso defined 0)))
+	     ;;(format t "nso:~S naccessed:~S nwritten:~S ndefined:~S~%" nso naccessed nwritten ndefined)
 	     (when (> (- naccessed nwritten ndefined) 0)
 	       (push nso nsos-read))))
       (loop for nso being the hash-key of written do
@@ -666,6 +669,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
     (multiple-value-bind (fnsosr fnsosw) (free-nsos-accessed ast2)
       (assert (set-equal fnsosr (list nso-z nso-+)))
       (assert (set-equal fnsosw (list nso-y))))))
+
 ;;Test that the list of variables that are read within the function definition #'BLA, and which are not defined within #'BLA, but outside of #'BLA, are computed correctly.
 (let* ((form '(let ((y 0) (z 0))
 	       (flet ((bla (&rest numbers) (+ numbers y z))))))
