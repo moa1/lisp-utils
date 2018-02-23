@@ -1,23 +1,3 @@
-;;(load "/home/toni/quicklisp/setup.lisp")
-
-#|
-(ql:quickload :hu.dwim.walker)
-(use-package :hu.dwim.walker)
-
-(let* ((form '(defun foo (x)
-			(declare (type fixnum x))
-			(labels ((bar ()
-				   (let ((y (+ x pi)))
-				     (values x y))))
-			  (declare (ftype (function () (values fixnum double-float)) bar))
-			  (let ((bar 5.0))
-			    (declare (type single-float bar))
-			    (values bar (type-of bar))))))
-		(ast (walk-form form))
-		(var (car (arguments-of (car (body-of (car (body-of (car (body-of ast))))))))))
-	   (declared-type-of var)) ;returns NIL, but should be SINGLE-FLOAT.
-|#
-
 ;; Note that the classes VAR, FUN and so on should be named VARIABLE, FUNCTION and so on, but SBCL pollutes the CL package.
 
 ;; How to define DEFUN from special forms:
@@ -53,12 +33,12 @@
 
 (defpackage :walker
   (:documentation "A syntactic parser of Common Lisp.
-Its scope is the syntactic handling of arbitrary Common Lisp code, i.e. parsing a list into an abstract syntax tree, and TODO: FIXME: converting an abstract syntax tree into a list.
-It should have as little semantics in it as possible (while still being useful as a Common Lisp parser). In particular, there is no notion of constant variables (so NIL and T are ordinary variable names).
+Its scope is the syntactic handling of arbitrary Common Lisp code, i.e. parsing a list into an abstract syntax tree (e.g. using #'PARSE-WITH-NAMESPACE), and converting an abstract syntax tree into a list (using #'DEPARSE).
+It has as little Common Lisp semantics in it as possible (while still being useful as a Common Lisp parser). In particular, there is no notion of constant variables (so NIL and T are ordinary variable names).
 Type declarations are parsed, but the contained types are neither parsed nor interpreted.")
   (:use :cl)
   (:export
-   ;; for classes: export the class and _all_ accessors on one line so that deleting a class doesn't have to consider all exports of other classes
+   ;; for classes: export the class and _all_ slots and their accessors on one line so that deleting a class doesn't have to consider all exports of other classes
    :proper-list-p
    :remove-from-key-list
    ;; NAMESPACES
@@ -90,8 +70,6 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :+common-lisp-variables+ :+common-lisp-functions+ :+common-lisp-macros+
    :make-parser
    :make-ast
-   ;; TODO: what is this? why are these symbols exported?
-   :parent :type :vars :body :declspecs :documentation
    ;; DECLARATIONS
    :declspec :parent :declspec-parent :user
    :declspec-type :type :declspec-type :vars :declspec-vars
@@ -128,7 +106,6 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;;:parse-lambda-list ;do not export this as it should be split into several smaller functions.
    :parse-ordinary-lambda-list
    :parse-macro-lambda-list
-   :form-var ;for future extensions
    ;; FORMS
    :form :parent :form-parent :user
    :object-form :object :form-object :user
@@ -452,8 +429,6 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 
 (unless (boundp '+common-lisp-variables+)
   (defconstant +common-lisp-variables+ '(* ** *** *BREAK-ON-SIGNALS* *COMPILE-FILE-PATHNAME* *COMPILE-FILE-TRUENAME* *COMPILE-PRINT* *COMPILE-VERBOSE* *DEBUG-IO* *DEBUGGER-HOOK* *DEFAULT-PATHNAME-DEFAULTS* *ERROR-OUTPUT* *FEATURES* *GENSYM-COUNTER* *LOAD-PATHNAME* *LOAD-PRINT* *LOAD-TRUENAME* *LOAD-VERBOSE* *MACROEXPAND-HOOK* *MODULES* *PACKAGE* *PRINT-ARRAY* *PRINT-BASE* *PRINT-CASE* *PRINT-CIRCLE* *PRINT-ESCAPE* *PRINT-GENSYM* *PRINT-LENGTH* *PRINT-LEVEL* *PRINT-LINES* *PRINT-MISER-WIDTH* *PRINT-PPRINT-DISPATCH* *PRINT-PRETTY* *PRINT-RADIX* *PRINT-READABLY* *PRINT-RIGHT-MARGIN* *QUERY-IO* *RANDOM-STATE* *READ-BASE* *READ-DEFAULT-FLOAT-FORMAT* *READ-EVAL* *READ-SUPPRESS* *READTABLE* *STANDARD-INPUT* *STANDARD-OUTPUT* *TERMINAL-IO* *TRACE-OUTPUT* + ++ +++ - / // /// ARRAY-DIMENSION-LIMIT ARRAY-RANK-LIMIT ARRAY-TOTAL-SIZE-LIMIT BOOLE-1 BOOLE-2 BOOLE-AND BOOLE-ANDC1 BOOLE-ANDC2 BOOLE-C1 BOOLE-C2 BOOLE-CLR BOOLE-EQV BOOLE-IOR BOOLE-NAND BOOLE-NOR BOOLE-ORC1 BOOLE-ORC2 BOOLE-SET BOOLE-XOR CALL-ARGUMENTS-LIMIT CHAR-CODE-LIMIT DOUBLE-FLOAT-EPSILON DOUBLE-FLOAT-NEGATIVE-EPSILON INTERNAL-TIME-UNITS-PER-SECOND LAMBDA-LIST-KEYWORDS LAMBDA-PARAMETERS-LIMIT LEAST-NEGATIVE-DOUBLE-FLOAT LEAST-NEGATIVE-LONG-FLOAT LEAST-NEGATIVE-NORMALIZED-DOUBLE-FLOAT LEAST-NEGATIVE-NORMALIZED-LONG-FLOAT LEAST-NEGATIVE-NORMALIZED-SHORT-FLOAT LEAST-NEGATIVE-NORMALIZED-SINGLE-FLOAT LEAST-NEGATIVE-SHORT-FLOAT LEAST-NEGATIVE-SINGLE-FLOAT LEAST-POSITIVE-DOUBLE-FLOAT LEAST-POSITIVE-LONG-FLOAT LEAST-POSITIVE-NORMALIZED-DOUBLE-FLOAT LEAST-POSITIVE-NORMALIZED-LONG-FLOAT LEAST-POSITIVE-NORMALIZED-SHORT-FLOAT LEAST-POSITIVE-NORMALIZED-SINGLE-FLOAT LEAST-POSITIVE-SHORT-FLOAT LEAST-POSITIVE-SINGLE-FLOAT LONG-FLOAT-EPSILON LONG-FLOAT-NEGATIVE-EPSILON MOST-NEGATIVE-DOUBLE-FLOAT MOST-NEGATIVE-FIXNUM MOST-NEGATIVE-LONG-FLOAT MOST-NEGATIVE-SHORT-FLOAT MOST-NEGATIVE-SINGLE-FLOAT MOST-POSITIVE-DOUBLE-FLOAT MOST-POSITIVE-FIXNUM MOST-POSITIVE-LONG-FLOAT MOST-POSITIVE-SHORT-FLOAT MOST-POSITIVE-SINGLE-FLOAT MULTIPLE-VALUES-LIMIT NIL PI SHORT-FLOAT-EPSILON SHORT-FLOAT-NEGATIVE-EPSILON SINGLE-FLOAT-EPSILON SINGLE-FLOAT-NEGATIVE-EPSILON T) "The list of special variables defined in Common Lisp."))
-
-;; TODO: add global variables defined by Common Lisp.
 
 (defun make-parser (&rest rest &key (type 'parser-copy) (variables +common-lisp-variables+) (functions +common-lisp-functions+) (macros +common-lisp-macros+) &allow-other-keys)
   "Return a free namespace in which the list of VARIABLES, FUNCTIONS, and MACROS are defined.
@@ -875,22 +850,25 @@ Return seven values: indicator whether keyword name is present (NIL for &OPTIONA
     (t
      (error "Invalid ~S argument ~S" argument-type argform))))
 
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument 'a '&optional)) '(nil nil a nil nil nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument 'a '&key)) '(nil nil a nil nil nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument 'a '&aux)) '(nil nil a nil nil nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a) '&optional)) '(nil nil a nil nil nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a) '&key)) '(nil nil a nil nil nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a) '&aux)) '(nil nil a nil nil nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1) '&optional)) '(nil nil a t 1 nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1) '&key)) '(nil nil a t 1 nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1) '&aux)) '(nil nil a t 1 nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1 ap) '&optional)) '(nil nil a t 1 t ap)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '(a 1 ap) '&key)) '(nil nil a t 1 t ap)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((:b a)) '&key)) '(t :b a nil nil nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((:b a) 1) '&key)) '(t :b a t 1 nil nil)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((:b a) 1 ap) '&key)) '(t :b a t 1 t ap)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((t a) 1 ap) '&key)) '(t t a t 1 t ap)))
-(assert (equal (multiple-value-list (parse-optional-or-key-or-aux-argument '((nil a) 1 ap) '&key)) '(t nil a t 1 t ap)))
+(flet ((assert-parse-optional-or-key-or-aux-argument (argform argument-type desired-result)
+	 (let ((actual-result (multiple-value-list (parse-optional-or-key-or-aux-argument argform argument-type))))
+	   (assert (equal actual-result desired-result)))))
+  (assert-parse-optional-or-key-or-aux-argument 'a '&optional '(nil nil a nil nil nil nil))
+  (assert-parse-optional-or-key-or-aux-argument 'a '&key '(nil nil a nil nil nil nil))
+  (assert-parse-optional-or-key-or-aux-argument 'a '&aux '(nil nil a nil nil nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '(a) '&optional '(nil nil a nil nil nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '(a) '&key '(nil nil a nil nil nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '(a) '&aux '(nil nil a nil nil nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '(a 1) '&optional '(nil nil a t 1 nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '(a 1) '&key '(nil nil a t 1 nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '(a 1) '&aux '(nil nil a t 1 nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '(a 1 ap) '&optional '(nil nil a t 1 t ap))
+  (assert-parse-optional-or-key-or-aux-argument '(a 1 ap) '&key '(nil nil a t 1 t ap))
+  (assert-parse-optional-or-key-or-aux-argument '((:b a)) '&key '(t :b a nil nil nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '((:b a) 1) '&key '(t :b a t 1 nil nil))
+  (assert-parse-optional-or-key-or-aux-argument '((:b a) 1 ap) '&key '(t :b a t 1 t ap))
+  (assert-parse-optional-or-key-or-aux-argument '((t a) 1 ap) '&key '(t t a t 1 t ap))
+  (assert-parse-optional-or-key-or-aux-argument '((nil a) 1 ap) '&key '(t nil a t 1 t ap)))
 
 ;;Note that passing BLOCKS is not necessary here because PARSER-FUNCTION has captured BLOCKS, and BLOCKS is not modified in #'PARSE-LAMBDA-LIST: parsing e.g. "(BLOCK TEST (FLET ((F (&OPTIONAL (A (RETURN-FROM TEST 4))) A)) (F)))" works.
 (defmethod parse-lambda-list ((parser parser) lambda-list parent &key (allow-macro-lambda-list nil))
@@ -1198,12 +1176,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass macrolet-form (special-form fun-bindings-form body-form)
   ())
 (defclass tagbody-form (special-form body-form)
-  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAG)")
-   (tags :initarg :tags :accessor form-tags :type list :documentation "The list of all tags defined in the TAGBODY."))) ;redefine BODY here to allow deviating documentation from BODY-FORM.
+  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAG)") ;do not inherit from BODY-FORM, otherwise slot DOCUMENTATION would be allowed here
+   (tags :initarg :tags :accessor form-tags :type list :documentation "The list of all tags defined in the TAGBODY.")))
 (defclass go-form (special-form)
   ((tag :initarg :tag :accessor form-tag :type tag)))
 
-;; TODO: In the following functions, wherever (form-body ...) is printed, print "BODY:" before the list so that the user knows that the upper-most list printed is because BODY is a list (and she doesn't think its a function application).
 (defmethod print-object ((object object-form) stream)
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (form-object object))))
@@ -1218,7 +1195,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S" (form-object object))))
 (defmethod print-object ((object progn-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S" (form-body object))))
+    (format stream "body:~S" (form-body object))))
 (defmethod print-object ((object var-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
@@ -1226,25 +1203,18 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
       (when (form-value object)
 	(format stream " ~S" (form-value object))))))
 (defun format-body (object declspecsp documentationp)
-  (labels ((rec (list)
-	     (if (null list)
-		 ""
-		 (let ((out (format nil "~S" (car list))))
-		   (loop for form in (cdr list) do
-			(setf out (concatenate 'string out (format nil " ~S" form))))
-		   out))))
-    (if (and documentationp (form-documentation object))
-	(if (or (null declspecsp) (null (form-declspecs object)))
-	    (rec (cons (form-documentation object) (form-body object)))
-	    (rec (cons (form-documentation object) (cons (cons 'declare (form-declspecs object)) (form-body object)))))
-	(if (or (null declspecsp) (null (form-declspecs object)))
-	    (rec (form-body object))
-	    (rec (cons (cons 'declare (form-declspecs object)) (form-body object)))))))
+  (if (and documentationp (form-documentation object))
+      (if (or (null declspecsp) (null (form-declspecs object)))
+	  (format nil "~S body:~S" (form-documentation object) (form-body object))
+	  (format nil "~S ~S body:~S" (form-documentation object) (cons 'declare (form-declspecs object)) (form-body object)))
+      (if (or (null declspecsp) (null (form-declspecs object)))
+	  (format nil "body:~S" (form-body object))
+	  (format nil "~S body:~S" (cons 'declare (form-declspecs object)) (form-body object)))))
 (defmethod print-object ((object bindings-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
 	(format stream "BINDINGS:~S ~A" (form-bindings object) (format-body object t nil))
-	(format stream "~S" (form-body object)))))
+	(format stream "body:~S" (form-body object)))))
 (defmethod print-object ((object fun-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (when *print-detailed-walker-objects*
@@ -1254,7 +1224,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S ~A" (form-llist object) (format-body object t t))))
 (defmethod print-object ((object block-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-blo object) (form-body object))))
+    (format stream "~S body:~S" (form-blo object) (form-body object))))
 (defmethod print-object ((object return-from-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~S" (form-blo object) (form-value object))))
@@ -1277,13 +1247,13 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	   (format stream " ~S ~S" var value)))))
 (defmethod print-object ((object catch-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-tag object) (form-body object))))
+    (format stream "~S body:~S" (form-tag object) (form-body object))))
 (defmethod print-object ((object throw-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~S" (form-tag object) (form-value object))))
 (defmethod print-object ((object eval-when-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-situations object) (form-body object))))
+    (format stream "~S body:~S" (form-situations object) (form-body object))))
 (defmethod print-object ((object load-time-value-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~S" (form-value object) (form-readonly object))))
@@ -1292,16 +1262,16 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "~S" (form-object object))))
 (defmethod print-object ((object multiple-value-call-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-function object) (form-body object))))
+    (format stream "~S body:~S" (form-function object) (form-body object))))
 (defmethod print-object ((object multiple-value-prog1-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-values object) (form-body object))))
+    (format stream "~S body:~S" (form-values object) (form-body object))))
 (defmethod print-object ((object progv-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S ~S" (form-symbols object) (form-values object) (form-body object))))
+    (format stream "~S ~S body:~S" (form-symbols object) (form-values object) (form-body object))))
 (defmethod print-object ((object unwind-protect-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S ~S" (form-protected object) (form-body object))))
+    (format stream "~S body:~S" (form-protected object) (form-body object))))
 (defmethod print-object ((object application-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-fun object))
@@ -1318,7 +1288,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
       (format stream " ~S" (form-freenamespace object)))))
 (defmethod print-object ((object tagbody-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (format stream "~S" (form-body object))))
+    (format stream "body:~S" (form-body object))))
 (defmethod print-object ((object go-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-tag object))))
@@ -1411,6 +1381,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (setf (sixth (form-arguments ast)) value))
 (defun (setf form-argument-7) (value ast)
   (setf (seventh (form-arguments ast)) value))
+
 ;;;; END OF FORMs and Utility Functions
 
 (defun parse-and-set-functiondef (parser form parse-lambda-list-function current-functiondef)
@@ -1671,7 +1642,7 @@ restart
 	 (else-form (if else-present (caddr rest) nil))
 	 (current (make-ast parser 'if-form :parent parent))
 	 (parsed-test (parse parser test-form current))
-	 ;;(COPY-PARSER-DEEP-LEXICAL-NAMESPACE PARSER) instead of PARSER was used to parse THEN-FORM and ELSE-FORM so that changes made to the parser when parsing THEN-FORM does not induce changes when parsing ELSE-FORM. TODO: maybe separate syntax and semantics more clearly.
+	 ;;(COPY-PARSER-DEEP-LEXICAL-NAMESPACE PARSER) instead of PARSER was used to parse THEN-FORM and ELSE-FORM so that changes made to the parser when parsing THEN-FORM does not induce changes when parsing ELSE-FORM. TODO: FIXME: maybe separate syntax and semantics more clearly.
 	 (parsed-then (parse (copy-parser-deep-lexical-namespace parser) then-form current))
 	 (parsed-else (if else-present (parse (copy-parser-deep-lexical-namespace parser) else-form current) nil)))
     (setf (form-test current) parsed-test (form-then current) parsed-then (form-else current) parsed-else)
@@ -1763,7 +1734,7 @@ restart
 
 (defmethod parse-form ((parser parser) (head (eql 'progv)) rest parent)
   (assert (and (consp rest) (consp (cdr rest))) () "Cannot parse PROGV-form ~S" (cons head rest))
-  ;; Note that in (PROGV SYMBOLS VALUES . BODY), both SYMBOLS and VALUES are evaluated, and thus the dynamic variable names are known only at run-time.
+  ;; Note that in (PROGV SYMBOLS VALUES . BODY), both SYMBOLS and VALUES are evaluated, and thus the dynamic variable names are not known at compile- and load-time, only at run-time.
   (let* ((symbols-form (car rest))
 	 (values-form (cadr rest))
 	 (body (cddr rest))
@@ -1801,7 +1772,7 @@ restart
     (let ((parsed-body (loop for form in body collect
 			    (cond
 			      ((atom form)
-			       (setf parser (copy-parser-deep-lexical-namespace parser)) ;this is so that joining namespaces in NTI works. TODO: maybe separate syntax and semantics more clearly.
+			       (setf parser (copy-parser-deep-lexical-namespace parser)) ;this is so that joining namespaces in NTI works. TODO: FIXME: maybe separate syntax and semantics more clearly.
 			       (namespace-lookup 'tag form (parser-lexical-namespace parser)))
 			      (t
 			       (parse parser form current))))))
@@ -1842,7 +1813,7 @@ restart
     current))
 
 (defmethod parse-form ((parser parser) head rest parent)
-  ;; TODO: allow '((LAMBDA (X) X) 1), which is legal COMMON LISP.
+  ;; TODO: FIXME: allow '((LAMBDA (X) X) 1), which is legal COMMON LISP.
   (error "Function or macro application must start with a symbol, but is ~W" (cons head rest)))
 
 (defun parse-with-namespace (form &key (parser (make-parser :variables nil :functions nil :macros nil)))
@@ -2132,7 +2103,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	 (a-binding (form-sym (form-binding-1 ast)))
 	 (a-body (form-var (form-body-1 ast))))
     (assert (eq a-binding a-body)))
-  ;; I should not add a check that (PARSE-WITH-NAMESPACE '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing since this would require evaluation of macro A, which should not be part of WALKER because it should contain as little semantics as possible. (If you want to add semantics somewhere else, you might consider passing to #'PARSE a form read using the package FARE-QUASIQUOTE since different Lisps read the backquote (`) differently.)
+  ;; I should not add a check that (PARSE-WITH-NAMESPACE '(MACROLET ((A (X &ENVIRONMENT ENV) `(IF ,X 2 3))) (A))) does the right thing since this would require evaluation of macro A, which should not be part of WALKER because it should contain as little semantics as possible. (If you want to add semantics (somewhere else), you might consider passing to #'PARSE a form read using the package FARE-QUASIQUOTE since different Lisps read the backquote (`) differently.)
   )
 (test-macro-form)
 
@@ -2356,7 +2327,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
    (let ((it (llist-rest llist))) (when it (list '&rest (deparse deparser it))))
    (let ((it (llist-body llist))) (when it (list '&body (deparse deparser it))))
    (let ((it (llist-key llist))) (when it (cons '&key (mapcar (lambda (x) (deparse deparser x)) it))))
-   (let ((it (llist-allow-other-keys llist))) (when it (list '&allow-other-keys))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
+   (let ((it (llist-allow-other-keys llist))) (when it (list '&allow-other-keys)))
    (let ((it (llist-aux llist))) (when it (cons '&aux (mapcar (lambda (x) (deparse deparser x)) it))))))
 
 (defun deparse-body (deparser ast declspecsp documentationp)
