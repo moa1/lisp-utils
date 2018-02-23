@@ -1546,9 +1546,9 @@ restart
 			(parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 			(sym (if (eq head 'labels)
 				 (namespace-lookup 'fun name (parser-lexical-namespace parser))
-				 (make-ast parser 'fun :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil)))
-			(parser (ecase head ((flet macrolet) parser) ((labels) parser)))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake SYM, and we want to have it when parsing the body.
+				 (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil)))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake SYM, and we want to have it when parsing the body.
 		   (setf (form-sym binding) sym)
+		   (setf (nso-definition sym) binding)
 		   (setf (nso-definition blo) binding)
 		   (parse-and-set-functiondef (augment-lexical-namespace blo parser) body-form parse-lambda-list-function binding) ;note that the augmented LEXICAL-NAMESPACE is not returned, so the BLO binding is temporary.
 		   binding))))
@@ -1576,7 +1576,7 @@ restart
 	       (loop for def in definitions do
 		    (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def))
 	       (let* ((function-names (loop for def in definitions collect (nth-value 1 (valid-function-name-p (car def)))))
-		      (fake-syms (loop for name in function-names collect (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil)))
+		      (fake-syms (loop for name in function-names collect (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil))) ;:DEFINITION will be set in #'MAKE-FUN-BINDING
 		      (new-parser (let ((parser parser))
 				    (loop for sym in fake-syms do
 					 (setf parser (augment-lexical-namespace sym parser)))
