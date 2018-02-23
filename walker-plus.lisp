@@ -32,22 +32,22 @@
 
 (defclass multiple-value-bind-form (walker:form walker:body-form)
   ((vars :initarg :vars :accessor walker:form-vars :type list :documentation "list of VARs")
-   (values :initarg :values :accessor walker:form-values :type generalform)
+   (values :initarg :values :accessor walker:form-values :type form)
    (declspecs :initarg :declspecs :accessor walker:form-declspecs :type list)))
 (defclass values-form (walker:form)
-  ((values :initarg :values :accessor walker:form-values :type generalform)))
+  ((values :initarg :values :accessor walker:form-values :type form)))
 (defclass nth-value-form (walker:form) ;TODO: implement NTH-VALUE-form, but I think this will not be easy since there is no way in LISP to specify multiple value types for a form. Probably implementing this will need an automatic type inferencer, like NIMBLE.
-  ((value :initarg :value :accessor walker:form-value :type generalform)
-   (values :initarg :values :accessor walker:form-values :type generalform)))
+  ((value :initarg :value :accessor walker:form-value :type form)
+   (values :initarg :values :accessor walker:form-values :type form)))
 (defclass defun-form (walker:fun-binding)
   ())
 (defclass declaim-form (walker:form)
   ((declspecs :initarg :declspecs :accessor walker:form-declspecs :type list)))
 (defclass funcall-form (walker:form)
   ((var :initarg :sym :accessor walker:form-var :type walker:var)
-   (arguments :initarg :arguments :accessor walker:form-arguments :type list :documentation "list of GENERALFORMs")))
+   (arguments :initarg :arguments :accessor walker:form-arguments :type list :documentation "list of FORMs")))
 (defclass assert-form (walker:form)
-  ((test :initarg :test :accessor walker:form-test :type walker:generalform)))
+  ((test :initarg :test :accessor walker:form-test :type walker:form)))
 
 ;;;; END OF FORMS
 
@@ -576,7 +576,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 (defun nso-free-in-ast? (nso ast)
   "Return T if the name-space-object NSO is not defined within AST, NIL otherwise."
   (declare (type (or walker:sym walker:blo walker:tag) nso)
-	   (type walker:generalform ast))
+	   (type walker:form ast))
   (or (walker:nso-freep nso)
       (let ((definition (walker:nso-definition nso))) ;the AST that the NSO is defined in
 	(block search-definition

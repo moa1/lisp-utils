@@ -130,7 +130,6 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-macro-lambda-list
    :form-var ;for future extensions
    ;; FORMS
-   :generalform
    :form :parent :form-parent :user
    :object-form :object :form-object :user
    :var-read-form :var :form-var
@@ -250,7 +249,7 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
   (:documentation "A named block."))
 (defclass tag (nso)
   ((gopoint :initarg :gopoint :accessor nso-gopoint :type list
-	    :documentation "The list with elements of type GENERALFORM or TAG that come after (and including) the TAG in the body of DEFINITION."))
+	    :documentation "The list with elements of type FORM or TAG that come after (and including) the TAG in the body of DEFINITION."))
   (:documentation "A tag in a TAGBODY form."))
 
 (defvar *print-detailed-walker-objects* nil "If T, print more details of objects in package WALKER.")
@@ -800,7 +799,7 @@ Return the parsed abstract syntax tree (AST)."))
 (defclass required-argument (argument)
   ())
 (defclass optional-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null generalform) :documentation "NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)")
+  ((init :initarg :init :accessor argument-init :type (or null form) :documentation "NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)")
    (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var) :documentation "NIL means not present")))
 (defclass rest-argument (argument)
   ())
@@ -810,7 +809,7 @@ Return the parsed abstract syntax tree (AST)."))
   ((keywordp :initarg :keywordp :accessor argument-keywordp :type boolean :documentation "NIL means not present")
    (keyword :initarg :keyword :accessor argument-keyword :type symbol :documentation "has no meaning if KEYWORDP==NIL")))
 (defclass aux-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null generalform))))
+  ((init :initarg :init :accessor argument-init :type (or null form))))
 (defclass llist ()
   ((parent :initarg :parent :accessor llist-parent
 	   :documentation "The FUNCTIONDEF this LLIST is defined in.")
@@ -1091,10 +1090,6 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 ;;;; FORMS
 
-(deftype generalform ()
-  "A form as described in 'CLHS 3.1.2.1 Form Evaluation'"
-  `form) ;CLHS 3.1.2.1.2 Conses as Forms
-
 (defclass form ()
   ((parent :initarg :parent :accessor form-parent)
    (user :initform nil :initarg :user :accessor user))
@@ -1109,7 +1104,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((var :initarg :var :accessor form-var :documentation "The VAR being written"))
   (:documentation "VAR is being accessed for writing. CLHS 3.1.2.1.1 Symbols as Forms"))
 (defclass body-form ()
-  ((body :initarg :body :accessor form-body :type list :documentation "list of GENERALFORMs"))
+  ((body :initarg :body :accessor form-body :type list :documentation "list of FORMs"))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
 (defclass special-form (form)
   ())
@@ -1122,7 +1117,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
    (sym :initarg :sym :accessor form-sym :type sym)
    (user :initform nil :initarg :user :accessor user)))
 (defclass var-binding (binding)
-  ((value :initarg :value :accessor form-value :documentation "Either NIL if not given, or the form initializing the variable, or the expansion form of the symbol macro." :type (or null generalform t))))
+  ((value :initarg :value :accessor form-value :documentation "Either NIL if not given, or the form initializing the variable, or the expansion form of the symbol macro." :type (or null form t))))
 (defclass bindings-form ()
   ((bindings :initarg :bindings :accessor form-bindings :type list :documentation "list of VAR-BINDINGs, or FUN-BINDINGs")
    (declspecs :initarg :declspecs :accessor form-declspecs :type list :documentation "list of DECLSPECs"))
@@ -1156,24 +1151,24 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ())
 (defclass return-from-form (special-form)
   ((blo :initarg :blo :accessor form-blo :type blo)
-   (value :initarg :value :accessor form-value :type (or null generalform))))
+   (value :initarg :value :accessor form-value :type (or null form))))
 (defclass locally-form (special-form body-form)
   ((declspecs :initarg :declspecs :accessor form-declspecs :type list)))
 (defclass the-form (special-form)
   ((type :initarg :type :accessor form-type :type (or symbol list))
-   (value :initarg :value :accessor form-value :type generalform)))
+   (value :initarg :value :accessor form-value :type form)))
 (defclass if-form (special-form)
-  ((test :initarg :test :accessor form-test :type generalform)
-   (then :initarg :then :accessor form-then :type generalform)
-   (else :initarg :else :accessor form-else :type (or null generalform))))
+  ((test :initarg :test :accessor form-test :type form)
+   (then :initarg :then :accessor form-then :type form)
+   (else :initarg :else :accessor form-else :type (or null form))))
 (defclass setq-form (special-form)
   ((vars :initarg :vars :accessor form-vars :type list :documentation "list of VARs")
-   (values :initarg :values :accessor form-values :type list :documentation "list of GENERALFORMs")))
+   (values :initarg :values :accessor form-values :type list :documentation "list of FORMs")))
 (defclass catch-form (special-form body-form)
-  ((tag :initarg :tag :accessor form-tag :type generalform)))
+  ((tag :initarg :tag :accessor form-tag :type form)))
 (defclass throw-form (special-form)
-  ((tag :initarg :tag :accessor form-tag :type generalform)
-   (value :initarg :value :accessor form-value :type generalform)))
+  ((tag :initarg :tag :accessor form-tag :type form)
+   (value :initarg :value :accessor form-value :type form)))
 (defclass eval-when-form (special-form body-form)
   ((situations :initarg :situations :accessor form-situations :type list)))
 (defclass load-time-value-form (special-form)
@@ -1182,17 +1177,17 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass quote-form (special-form)
   ((object :initarg :object :accessor form-object :type t)))
 (defclass multiple-value-call-form (special-form body-form)
-  ((function :initarg :function :accessor form-function :type generalform))) ;note that this slot is not called FUN, because slots named FUN in other FORM-classes mean "of type FUN".
+  ((function :initarg :function :accessor form-function :type form))) ;note that this slot is not called FUN, because slots named FUN in other FORM-classes mean "of type FUN".
 (defclass multiple-value-prog1-form (special-form body-form)
-  ((values :initarg :values :accessor form-values :type generalform)))
+  ((values :initarg :values :accessor form-values :type form)))
 (defclass progv-form (special-form body-form)
-  ((symbols :initarg :symbols :accessor form-symbols :type generalform)
-   (values :initarg :values :accessor form-values :type generalform)))
+  ((symbols :initarg :symbols :accessor form-symbols :type form)
+   (values :initarg :values :accessor form-values :type form)))
 (defclass unwind-protect-form (special-form body-form)
-  ((protected :initarg :protected :accessor form-protected :type generalform)))
+  ((protected :initarg :protected :accessor form-protected :type form)))
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type fun)
-   (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of GENERALFORMs")
+   (arguments :initarg :arguments :accessor form-arguments :type list :documentation "list of FORMs")
    (recursivep :initarg :recursivep :accessor form-recursivep :type boolean :documentation "T if the call is inside the function called, NIL otherwise.")))
 ;; Probably FREENAMESPACE should not be a slot in MACROAPPLICATION-FORM, since CLHS says that the lexical environment is saved, but says nothing about the free environment: CLHS Glossary "environment parameter n. A parameter in a defining form f for which there is no corresponding argument; instead, this parameter receives as its value an environment object which corresponds to the lexical environment in which the defining form f appeared."
 (defclass macroapplication-form (application-form)
@@ -1203,7 +1198,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass macrolet-form (special-form fun-bindings-form body-form)
   ())
 (defclass tagbody-form (special-form body-form)
-  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR GENERALFORM TAG)")
+  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAG)")
    (tags :initarg :tags :accessor form-tags :type list :documentation "The list of all tags defined in the TAGBODY."))) ;redefine BODY here to allow deviating documentation from BODY-FORM.
 (defclass go-form (special-form)
   ((tag :initarg :tag :accessor form-tag :type tag)))
@@ -2395,7 +2390,7 @@ Returns three values: a list containing the lexical namespaces, a list containin
   (if (or (form-value ast)
 	  (nso-macrop (form-sym ast))) ;(SYMBOL-MACROLET ((A NIL)) A) must not be converted to (SYMBOL-MACROLET ((A)) A)
       (list (deparse deparser (form-sym ast))
-	    (if (typep (form-value ast) 'generalform)
+	    (if (typep (form-value ast) 'form)
 		(deparse deparser (form-value ast))
 		(form-value ast)))
       (deparse deparser (form-sym ast))))
