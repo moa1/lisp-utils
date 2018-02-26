@@ -71,7 +71,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :make-parser
    :make-ast
    ;; DECLARATIONS
-   :declspec :parent :declspec-parent :user
+   :declspec :parent :declspec-parent :user :form-parent
    :declspec-type :type :declspec-type :vars :declspec-vars
    :declspec-ftype :type :declspec-type :funs :declspec-funs
    :declspec-optimize :qualities :declspec-qualities
@@ -89,7 +89,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-declaration-and-documentation-in-body
    :parse
    ;; LAMBDA LISTS
-   :argument :parent :argument-parent :var :argument-var :user
+   :argument :parent :argument-parent :var :argument-var :user :form-parent
    :whole-argument
    :environment-argument
    :required-argument
@@ -98,7 +98,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :body-argument
    :key-argument :keywordp :argument-keywordp :keyword :argument-keyword
    :aux-argument :init :argument-init
-   :llist :parent :form-parent :user
+   :llist :parent :llist-parent :user :form-parent
    :ordinary-llist :required :llist-required :optional :llist-optional :rest :llist-rest :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
    :macro-llist :whole :llist-whole :environment :llist-environment :required :llist-required :optional :llist-optional :rest :llist-rest :body :llist-body :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
    :parse-required-argument
@@ -452,6 +452,10 @@ You may pass any keyword option accepted by (MAKE-INSTANCE TYPE ...)."
   ((parent :initarg :parent :accessor declspec-parent)
    (user :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
+(defmethod form-parent ((ast declspec))
+  (declspec-parent ast))
+(defmethod (setf form-parent) (value (ast declspec))
+  (setf (declspec-parent ast) value))
 (defclass declspec-type (declspec)
   ((type :initarg :type :accessor declspec-type)
    (vars :initarg :vars :accessor declspec-vars :type list)))
@@ -767,6 +771,10 @@ Return the parsed abstract syntax tree (AST)."))
    (var :initarg :var :accessor argument-var :type var)
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
+(defmethod form-parent ((ast argument))
+  (argument-parent ast))
+(defmethod (setf form-parent) (value (ast argument))
+  (setf (argument-parent ast) value))
 (defclass whole-argument (argument)
   ())
 (defclass environment-argument (argument)
@@ -790,6 +798,10 @@ Return the parsed abstract syntax tree (AST)."))
 	   :documentation "The FUNCTIONDEF this LLIST is defined in.")
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
+(defmethod form-parent ((ast llist))
+  (llist-parent ast))
+(defmethod (setf form-parent) (value (ast llist))
+  (setf (llist-parent ast) value))
 (defclass ordinary-llist (llist)
   ((required :initarg :required :accessor llist-required :type list :documentation "list, with each element of type REQUIRED-ARGUMENT")
    (optional :initarg :optional :accessor llist-optional :type list :documentation "list, with each element of type OPTIONAL-ARGUMENT")
