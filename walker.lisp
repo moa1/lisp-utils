@@ -156,7 +156,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; END OF FORMs and Utility Functions
    :parse-and-set-functiondef
    :is-recursive
-   :is-inside
+   :ast-inside-ast-p
    :parse-body
    :parse-form
    :parse-with-namespace
@@ -1418,7 +1418,7 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 	 t
 	 (is-recursive fun (form-parent parent))))))
 
-(defun is-inside (inner-ast outer-ast &optional (eql-means-inside nil))
+(defun ast-inside-ast-p (inner-ast outer-ast &optional (eql-means-inside nil))
   "Returns non-NIL if and only if INNER-AST is inside of OUTER-AST.
 If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
   (if (eql (if eql-means-inside inner-ast (form-parent inner-ast)) outer-ast)
