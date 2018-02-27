@@ -106,7 +106,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;;:parse-lambda-list ;do not export this as it should be split into several smaller functions.
    :parse-ordinary-lambda-list
    :parse-macro-lambda-list
-   ;; FORMS
+   ;; FORMS and Utility Functions
    :form :parent :form-parent :user
    :object-form :object :form-object :user
    :var-read-form :var :form-var
@@ -150,6 +150,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :tagbody-form :body :form-body :tags :form-tags
    :go-form :tag :form-tag
    :format-body
+   :function-object
    :form-body-1 :form-body-2 :form-body-3 :form-body-4 :form-body-5 :form-body-6 :form-body-7 :form-body-last
    :form-binding-1 :form-binding-2 :form-binding-3 :form-binding-4 :form-binding-5 :form-binding-6 :form-binding-7
    :form-argument-1 :form-argument-2 :form-argument-3 :form-argument-4 :form-argument-5 :form-argument-6 :form-argument-7
@@ -159,6 +160,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :ast-inside-ast-p
    :parse-body
    :parse-form
+   :parse-macro-or-function-application
    :parse-with-namespace
    :parser-namespace-at
    :namespace-at
@@ -1078,7 +1080,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 			   (let ((it (llist-allow-other-keys object))) (when it (list '&allow-other-keys)))
 			   (let ((it (llist-aux object))) (when it (cons '&aux it))))))))
 
-;;;; FORMS
+;;;; FORMS and Utility Functions
 
 (defclass form ()
   ((parent :initarg :parent :accessor form-parent)
@@ -1304,6 +1306,20 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object go-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-tag object))))
+
+(defun function-object (ast)
+  "Return the function object of AST without a FUNCTION-FORM wrapper."
+  (cond
+    ((typep ast 'lambda-form)
+     ast)
+    ((and (typep ast 'function-form) (typep (form-object ast) 'lambda-form))
+     (form-object ast))
+    ((and (typep ast 'function-form) (typep (form-object ast) 'fun))
+     (form-object ast))
+    ((typep ast 'fun)
+     ast)
+    (t
+     (error "unknown function object ~S" ast))))
 
 (defun form-body-1 (ast)
   (first (form-body ast)))
@@ -1808,9 +1824,10 @@ restart
 (defun parse-macro-or-function-application (parser macrop fun arg-forms parent)
   (let* ((current (if macrop
 		      (make-ast parser 'macroapplication-form :parent parent :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
-		      (make-ast parser 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent)))))
-    (unless (typep fun 'lambda-form)
-      (push current (nso-sites fun)))
+		      (make-ast parser 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent))))
+	 (funobj (function-object fun)))
+    (unless (typep funobj 'lambda-form)
+      (push current (nso-sites funobj)))
     (assert (proper-list-p arg-forms) () "Arguments in function or macro application must be a proper list, but are~%~S" arg-forms)
     (let ((parsed-arguments (loop for arg-form in arg-forms collect
 				 (if macrop arg-form (parse parser arg-form current)))))
