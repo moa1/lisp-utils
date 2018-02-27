@@ -1482,15 +1482,16 @@ restart
 
 (defmethod parse-form ((parser parser) (head (eql 'function)) rest parent)
   (assert (and (consp rest) (null (cdr rest))) () "Invalid FUNCTION-form ~S" (cons head rest))
-  (let* ((name-form (car rest))
-	 (fun (namespace-lookup/create 'fun name-form parser))
-	 (current (make-ast parser 'function-form :parent parent
-			    :object (cond
-				      ((valid-function-name-p name-form) fun)
-				      ((and (consp name-form) (eq (car name-form) 'lambda))
-				       (parse parser name-form parent))
-				      (t (error "Invalid FUNCTION-form ~S" (cons head rest)))))))
-    (when (valid-function-name-p name-form) (push current (nso-sites fun)))
+  (let* ((name (car rest))
+	 (current (make-ast parser 'function-form :parent parent)))
+    (setf (form-object current) (cond
+				  ((valid-function-name-p name)
+				   (let ((fun (namespace-lookup/create 'fun name parser)))
+				     (push current (nso-sites fun))
+				     fun))
+				  ((and (consp name) (eql (car name) 'lambda))
+				   (parse parser name current))
+				  (t (error "Invalid FUNCTION-form ~S" (cons head rest)))))
     current))
 
 (defmethod parse-form ((parser parser) (head (eql 'progn)) rest parent)
