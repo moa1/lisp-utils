@@ -5,7 +5,7 @@
    ;; for classes: export the class and _all_ accessors on one line so that deleting a class doesn't have to consider all exports of other classes
    ;; FORMS
    :multiple-value-bind-form :vars :values :declspecs
-   :values-form
+   :values-form :values
    :nth-value-form :value :values
    :defun-form
    :declaim-form :declspecs
@@ -140,19 +140,11 @@
     current))
 
 (defmethod walker:parse-form ((parser parser-plus) (head (eql 'funcall)) rest parent)
-  (assert (symbolp (car rest)) () "Cannot parse FUNCALL-form ~S" (cons head rest))
-  (let* ((fun-sym (car rest))
+  (assert (consp rest) () "Cannot parse FUNCALL-form ~S" (cons head rest))
+  (let* ((fun-form (car rest))
 	 (arg-forms (cdr rest))
-	 (sym (walker:namespace-lookup/create parser 'walker:var fun-sym))
-	 (current (walker:make-ast parser 'funcall-form :parent parent :sym sym))
-	 (parsed-arguments nil))
-    (loop do
-	 (when (null arg-forms) (return))
-	 (assert (and (consp arg-forms) (listp (cdr arg-forms))) () "Invalid argument rest ~S in function or macro application" arg-forms)
-	 (push (walker:parse parser (car arg-forms) current) parsed-arguments)
-	 (setf arg-forms (cdr arg-forms)))
-    (setf (walker:form-arguments current) (nreverse parsed-arguments))
-    current))
+	 (fun (walker:parse parser fun-form parent)))
+    (walker:parse-macro-or-function-application parser nil fun arg-forms parent)))
 
 (defmethod walker:parse-form ((parser parser-plus) (head (eql 'assert)) rest parent)
   (assert (consp rest) () "Cannot parse ASSERT-form ~S" (cons head rest))
