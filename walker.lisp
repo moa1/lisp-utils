@@ -108,8 +108,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; FORMS and Utility Functions
    :form :parent :form-parent :user
    :object-form :object :form-object :user
-   :var-read-form :var :form-var
-   :var-write-form :var :form-var
+   :var-reading :var :form-var
+   :var-writing :var :form-var
    :body-form :body :form-body
    :special-form
    :function-form :object :form-object
@@ -336,7 +336,9 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (:documentation "Shallow-copies PARSER. Must be defined for all user-defined subclasses of PARSER."))
 (defmethod copy-parser ((parser parser-copy))
   "Shallow-copies PARSER. Must be defined for all user-defined subclasses of PARSER."
-  (make-instance 'parser-copy :lexical-namespace (parser-lexical-namespace parser) :free-namespace (parser-free-namespace parser)))
+  (make-instance 'parser-copy
+		 :lexical-namespace (parser-lexical-namespace parser)
+		 :free-namespace (parser-free-namespace parser)))
 
 (defgeneric make-ast (parser type &rest arguments)
   (:documentation "This method is called to create an instance or part of an AST. Override to set e.g. a custom USER slot."))
@@ -346,10 +348,10 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 
 ;;;; NAMESPACES again
 
-(defmethod copy-deep-namespace ((parser parser) type)
-  "Return a copy of the namespace of type TYPE of PARSER where all namespace slots are copied shallowly except slot VAR, which is copied deeply."
-  (let ((namespace (slot-value parser type)))
-    (make-ast parser type
+(defmethod copy-deep-namespace ((parser parser) namespace-type)
+  "Return a shallow copy of PARSER where all NAMESPACE-TYPE namespace slots are copied shallowly except slot VAR, which is copied deeply."
+  (let ((namespace (slot-value parser namespace-type)))
+    (make-ast parser namespace-type
 	      :var (loop for acons in (namespace-var namespace) collect
 			(cons (car acons) (cdr acons)))
 	      :fun (namespace-fun namespace)
@@ -1088,11 +1090,15 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass object-form (form)
   ((object :initarg :object :accessor form-object)) ;TODO: add something like ":type (or number string vector pathname ...)" when I know what types of objects are self-evaluating objects. CLHS 3.1.2.1.3 doesn't seem to have a complete list.
   (:documentation "A self-evaluating object as described in 'CLHS 3.1.2.1.3 Self-Evaluating Objects'"))
-(defclass var-read-form (form)
-  ((var :initarg :var :accessor form-var :documentation "The VAR being read"))
+(defclass var-reading ()
+  ((parent :initarg :parent :accessor form-parent)
+   (var :initarg :var :accessor form-var :documentation "The VAR being read")
+   (user :initform nil :initarg :user :accessor user))
   (:documentation "VAR is being accessed for reading. CLHS 3.1.2.1.1 Symbols as Forms. Note that this form is not to be used for variable declarations."))
-(defclass var-write-form (form)
-  ((var :initarg :var :accessor form-var :documentation "The VAR being written"))
+(defclass var-writing ()
+  ((parent :initarg :parent :accessor form-parent)
+   (var :initarg :var :accessor form-var :documentation "The VAR being written")
+   (user :initform nil :initarg :user :accessor user))
   (:documentation "VAR is being accessed for writing. CLHS 3.1.2.1.1 Symbols as Forms"))
 (defclass body-form ()
   ((body :initarg :body :accessor form-body :type list :documentation "list of FORMs"))
@@ -1197,10 +1203,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object object-form) stream)
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (form-object object))))
-(defmethod print-object ((object var-read-form) stream)
+(defmethod print-object ((object var-reading) stream)
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (form-var object))))
-(defmethod print-object ((object var-write-form) stream)
+(defmethod print-object ((object var-writing) stream)
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (form-var object))))
 (defmethod print-object ((object function-form) stream)
@@ -1469,7 +1475,7 @@ If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
 
 (defmethod parse ((parser parser) (form symbol) parent)
   (let* ((var (namespace-lookup/create 'var form parser))
-	 (read-var (make-ast parser 'var-read-form :parent parent :var var)))
+	 (read-var (make-ast parser 'var-reading :parent parent :var var)))
     (push read-var (nso-sites var))
     read-var))
 
@@ -1686,7 +1692,7 @@ restart
 	 (let* ((name (car rest))
 		(value-form (cadr rest))
 		(var (namespace-lookup/create 'var name parser))
-		(write-var (make-ast parser 'var-write-form :parent current :var var))
+		(write-var (make-ast parser 'var-writing :parent current :var var))
 		(parsed-value (parse parser value-form current)))
 	   (push write-var vars)
 	   (push parsed-value values)
@@ -2381,9 +2387,9 @@ Returns three values: a list containing the lexical namespaces, a list containin
 
 (defmethod deparse ((deparser deparser) (ast object-form))
   (form-object ast))
-(defmethod deparse ((deparser deparser) (ast var-read-form))
+(defmethod deparse ((deparser deparser) (ast var-reading))
   (nso-name (form-var ast)))
-(defmethod deparse ((deparser deparser) (ast var-write-form))
+(defmethod deparse ((deparser deparser) (ast var-writing))
   (nso-name (form-var ast)))
 (defmethod deparse ((deparser deparser) (ast function-form))
   (list 'function

@@ -82,7 +82,9 @@
   (:documentation "Subclass of WALKER:PARSER used for parsing the additional forms defined in walker-plus.lisp."))
 
 (defmethod walker:copy-parser ((parser parser-plus))
-  (make-instance 'parser-plus :lexical-namespace (walker:parser-lexical-namespace parser) :free-namespace (walker:parser-free-namespace parser)))
+  (make-instance 'parser-plus
+		 :lexical-namespace (walker:parser-lexical-namespace parser)
+		 :free-namespace (walker:parser-free-namespace parser)))
 
 ;;;; PARSE-FORM
 
@@ -273,7 +275,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	     (labels ((value-of (x)
 			(etypecase x
 			  (walker:object-form (walker:form-object x))
-			  (walker:var-read-form (walker:nso-name (walker:form-var x)))
+			  (walker:var-reading (walker:nso-name (walker:form-var x)))
 			  (null nil)
 			  (cons (loop for y in x collect (value-of y)))))
 		      (result-to-alist (cons)
@@ -370,7 +372,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	     (find-abort-form dead1 dead2 :or)))
     (etypecase ast
       (walker:object-form nil)
-      (walker:var-read-form nil)
+      (walker:var-reading nil)
       (walker:fun nil)
       (walker:progn-form
        (remove-dead-body! nil))
@@ -585,9 +587,9 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	(defined (make-hash-table)))
     (walker:map-ast (lambda (ast)
 		      (cond
-			((typep ast 'walker:var-read-form)
+			((typep ast 'walker:var-reading)
 			 (incf (gethash (walker:form-var ast) accessed 0)))
-			((typep ast 'walker:var-write-form)
+			((typep ast 'walker:var-writing)
 			 (incf (gethash (walker:form-var ast) written 0))
 			 (incf (gethash (walker:form-var ast) accessed 0)))
 			((typep ast 'walker:nso)
