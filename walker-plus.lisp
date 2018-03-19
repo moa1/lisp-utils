@@ -449,8 +449,8 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 					(t
 					 ;;(prind "aborting" (and dead t))
 					 (return-from liveness dead))))
-				    (when (typep form 'walker:tag) ;continue at live tags
-				      (setf live (gethash form ht nil))))
+				    (when (typep form 'walker:tagpoint) ;continue at live tags
+				      (setf live (gethash (walker:form-tag form) ht nil))))
 				;;(prind live)
 				))
 			 ;;(let ((l nil)) (loop for tag being the hash-key of ht do (push tag l)) (prind "live2" l old-count))
@@ -461,11 +461,12 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	   (let ((live t))
 	     (let ((body nil))
 	       (loop for form in (walker:form-body ast) do
-		    (when (typep form 'walker:tag)
-		      (setf (walker:nso-sites form) ;remove dead GO-FORMs
-			    (remove-if (lambda (x) (gethash x ht t))
-				       (walker:nso-sites form)))
-		      (setf live (gethash form ht nil)))
+		    (when (typep form 'walker:tagpoint)
+		      (let ((tag (walker:form-tag form)))
+			(setf (walker:nso-sites tag) ;remove dead GO-FORMs
+			      (remove-if (lambda (x) (gethash x ht t))
+					 (walker:nso-sites tag)))
+			(setf live (gethash tag ht nil))))
 		    ;;(prind (walker:deparse form) live)
 		    (when live
 		      (push form body)
@@ -473,8 +474,8 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	       (setf (walker:form-body ast) (nreverse body))
 	       ))
 	   dead)))
-      (walker:tag
-       (let* ((tag ast)
+      (walker:tagpoint
+       (let* ((tag (walker:form-tag ast))
 	      (tagbody-form (walker:nso-definition tag))
 	      (ht (cdr (assoc tagbody-form live-tags))))
 	 (assert (not (null ht)))

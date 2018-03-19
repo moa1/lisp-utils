@@ -147,6 +147,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :symbol-macrolet-form
    :macrolet-form
    :tagbody-form :body :form-body :tags :form-tags
+   :tagpoint :parent :form-parent :tag :form-tag
    :go-form :tag :form-tag
    :format-body
    :function-object
@@ -227,7 +228,7 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
   (:documentation "A named block."))
 (defclass tag (nso)
   ((gopoint :initarg :gopoint :accessor nso-gopoint :type list
-	    :documentation "The list with elements of type FORM or TAG that come after (and including) the TAG in the body of DEFINITION."))
+	    :documentation "The list with elements of type FORM or TAGPOINT that come after (and including) the TAGPOINT in the body of DEFINITION."))
   (:documentation "A tag in a TAGBODY form."))
 
 (defvar *print-detailed-walker-objects* nil "If T, print more details of objects in package WALKER.")
@@ -1195,8 +1196,13 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass macrolet-form (special-form fun-bindings-form body-form)
   ())
 (defclass tagbody-form (special-form body-form)
-  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAG)") ;do not inherit from BODY-FORM, otherwise slot DOCUMENTATION would be allowed here
+  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAGPOINT)") ;do not inherit from BODY-FORM, otherwise slot DOCUMENTATION would be allowed here
    (tags :initarg :tags :accessor form-tags :type list :documentation "The list of all tags defined in the TAGBODY.")))
+(defclass tagpoint ()
+  ((parent :initarg :parent :accessor form-parent)
+   (tag :initarg :tag :accessor form-tag :documentation "The TAG")
+   (user :initform nil :initarg :user :accessor user))
+  (:documentation "A TAG inside a TAGBODY-FORM. We encapsulate TAG inside a TAGPOINT instance so that it has slots PARENT and USER."))
 (defclass go-form (special-form)
   ((tag :initarg :tag :accessor form-tag :type tag)))
 
@@ -1308,6 +1314,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod print-object ((object tagbody-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "body:~S" (form-body object))))
+(defmethod print-object ((object tagpoint) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (form-tag object))))
 (defmethod print-object ((object go-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (form-tag object))))
@@ -1810,14 +1819,15 @@ restart
     (let ((parsed-body (loop for form in body collect
 			    (cond
 			      ((atom form)
-			       (setf parser (copy-deep-parser parser)) ;this is so that joining namespaces in NTI works. TODO: FIXME: maybe separate syntax and semantics more clearly.
-			       (namespace-lookup 'tag form (parser-lexical-namespace parser)))
+			       (make-ast parser 'tagpoint :parent current :tag (namespace-lookup 'tag form (parser-lexical-namespace parser))))
 			      (t
 			       (parse parser form current))))))
       (loop for parsed-form-rest on parsed-body do
 	   (let ((parsed-form (car parsed-form-rest)))
-	     (when (typep parsed-form 'tag)
-	       (setf (nso-gopoint parsed-form) parsed-form-rest))))
+	     (when (typep parsed-form 'tagpoint)
+	       (let ((tag (form-tag parsed-form)))
+		 (push parsed-form (nso-sites tag))
+		 (setf (nso-gopoint tag) parsed-form-rest)))))
       (setf (form-body current) parsed-body)
       (setf (form-tags current) (nreverse tags)))
     current))
@@ -2225,17 +2235,19 @@ Returns three values: a list containing the lexical namespaces, a list containin
 		    (go a))))
 	 (tagbody1 (parse-with-namespace form))
 	 (go1-form (form-body-1 tagbody1))
-	 (a1-tag (form-body-2 tagbody1))
+	 (a1-tagpoint (form-body-2 tagbody1))
+	 (a1-tag (form-tag a1-tagpoint))
 	 (tagbody2 (form-body-3 tagbody1))
-	 (a2-tag (form-body-1 tagbody2))
+	 (a2-tagpoint (form-body-1 tagbody2))
+	 (a2-tag (form-tag a2-tagpoint))
 	 (go2-form (form-body-2 tagbody2)))
     (assert (eq (form-tag go1-form) a1-tag))
     (assert (eq (form-tag go2-form) a2-tag))
     (assert (not (eq a1-tag a2-tag)))
     (assert (eq (nso-gopoint a1-tag) (nthcdr 1 (form-body tagbody1))))
     (assert (eq (nso-gopoint a2-tag) (nthcdr 0 (form-body tagbody2))))
-    (assert (equal (nso-sites a1-tag) (list go1-form)))
-    (assert (equal (nso-sites a2-tag) (list go2-form))))
+    (assert (equal (nso-sites a1-tag) (list a1-tagpoint go1-form)))
+    (assert (equal (nso-sites a2-tag) (list a2-tagpoint go2-form))))
   (let* ((form '(tagbody
 		 (go b)
 		 b
@@ -2245,8 +2257,8 @@ Returns three values: a list containing the lexical namespaces, a list containin
 		    (go b))))
 	 (ast (parse-with-namespace form))
 	 (go1-tag-b (form-tag (form-body-1 ast)))
-	 (tag-b (form-body-2 ast))
-	 (tag-c (form-body-3 ast))
+	 (tag-b (form-tag (form-body-2 ast)))
+	 (tag-c (form-tag (form-body-3 ast)))
 	 (tagbody2 (form-body-4 ast))
 	 (go2-tag-b (form-tag (form-body-2 tagbody2))))
     (assert (and (eq go1-tag-b tag-b) (eq go2-tag-b tag-b)))
@@ -2256,9 +2268,9 @@ Returns three values: a list containing the lexical namespaces, a list containin
 		    (go a)
 		  a))) ;this A must be parsed as TAG, and the GO above must refer to a known tag. See CLHS for TAGBODY: "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element."
 	 (ast (parse-with-namespace form))
-	 (tagbody-form (form-body (form-body-1 ast)))
-	 (go-tag-a (form-tag (car tagbody-form)))
-	 (tagbody-tag-a (cadr tagbody-form)))
+	 (tagbody-ast (form-body-1 ast))
+	 (go-tag-a (form-tag (form-body-1 tagbody-ast)))
+	 (tagbody-tag-a (form-tag (form-body-2 tagbody-ast))))
     (assert (eq go-tag-a tagbody-tag-a))
     (assert (typep tagbody-tag-a 'tag))))
 (test-tagbody)
@@ -2513,6 +2525,8 @@ Returns three values: a list containing the lexical namespaces, a list containin
 (defmethod deparse ((deparser deparser) (ast tagbody-form))
   (list* 'tagbody
 	 (deparse-body deparser ast nil nil)))
+(defmethod deparse ((deparser deparser) (ast tagpoint))
+  (deparse deparser (form-tag ast)))
 (defmethod deparse ((deparser deparser) (ast go-form))
   (list 'go
 	(deparse deparser (form-tag ast))))
