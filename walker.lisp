@@ -1454,9 +1454,13 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
 (defun ast-inside-ast-p (inner-ast outer-ast &optional (eql-means-inside nil))
   "Returns non-NIL if and only if INNER-AST is inside of OUTER-AST.
 If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
-  (if (eql (if eql-means-inside inner-ast (form-parent inner-ast)) outer-ast)
-      t
-      (ast-inside-ast-p (form-parent inner-ast) outer-ast eql-means-inside)))
+  (cond
+    ((null inner-ast)
+     nil)
+    ((eql (if eql-means-inside inner-ast (form-parent inner-ast)) outer-ast)
+     t)
+    (t
+     (ast-inside-ast-p (form-parent inner-ast) outer-ast eql-means-inside))))
 
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
 ;; TODO: FIXME: Must handle arbitrary nonsense input gracefully. (see comment near #'PROPER-LIST-P.)
