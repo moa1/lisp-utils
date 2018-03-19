@@ -108,8 +108,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; FORMS and Utility Functions
    :form :parent :form-parent :user
    :object-form :object :form-object :user
-   :var-reading :var :form-var
-   :var-writing :var :form-var
+   :var-reading :parent :form-parent :var :form-var
+   :var-writing :parent :form-parent :var :form-var
    :body-form :body :form-body
    :special-form
    :function-form :object :form-object
@@ -235,17 +235,17 @@ Note that symbols are always parsed in a lexical manner, regardless of whether t
 (defmethod print-object ((object sym) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "NAME:~S FREEP:~S MACROP:~S" (nso-name object) (nso-freep object) (nso-macrop object))
+	(format stream "NAME:~S FREEP:~S MACROP:~S USER:~S" (nso-name object) (nso-freep object) (nso-macrop object) (user object))
 	(format stream "NAME:~S" (nso-name object)))))
 (defmethod print-object ((object blo) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))
+	(format stream "NAME:~S FREEP:~S USER:~S" (nso-name object) (nso-freep object) (user object))
 	(format stream "NAME:~S" (nso-name object)))))
 (defmethod print-object ((object tag) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "NAME:~S FREEP:~S" (nso-name object) (nso-freep object))
+	(format stream "NAME:~S FREEP:~S USER:~S" (nso-name object) (nso-freep object) (user object))
 	(format stream "NAME:~S" (nso-name object)))))
 
 (defun valid-function-name-p (name)
