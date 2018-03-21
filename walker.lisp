@@ -55,6 +55,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :free-namespace
    :namespace-boundp
    :namespace-lookup
+   :copy-namespace
    :copy-deep-namespace
    :copy-deep-parser
    ;; PARSERS
@@ -297,8 +298,10 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defmethod print-object ((object namespace) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
-	(format stream "VARs:~S FUNs:~S BLOs:~S TAGs:~S" (namespace-var object) (namespace-fun object) (namespace-blo object) (namespace-tag object))
-	(format stream "number of VARs:~S number of FUNs:~S number of BLOs:~S number of TAGs:~S" (length (namespace-var object)) (length (namespace-fun object)) (length (namespace-blo object)) (length (namespace-tag object))))))
+	(format stream "~%VARs:~S~%FUNs:~S~%BLOs:~S~%TAGs:~S~%" (namespace-var object) (namespace-fun object) (namespace-blo object) (namespace-tag object))
+	(flet ((nso-names (namespace)
+		 (loop for acons in namespace collect (car acons))))
+	  (format stream "VARs:~S FUNs:~S BLOs:~S TAGs:~S" (nso-names (namespace-var object)) (nso-names (namespace-fun object)) (nso-names (namespace-blo object)) (nso-names (namespace-tag object)))))))
 
 (defgeneric namespace-boundp (symbol-type symbol namespace)
   (:documentation "Return non-NIL if SYMBOL is bound in NAMESPACE in the slot SYMBOL-TYPE, NIL otherwise."))
@@ -314,6 +317,15 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 	 (cons (assoc symbol alist :test #'equal))) ;#'EQUAL for functions named (SETF SYMBOL).
     (assert (not (null cons)) () "SYMBOL ~A with NSO-type ~S not bound in ~S" symbol symbol-type namespace)
     (cdr cons)))
+
+(defgeneric copy-namespace (namespace)
+  (:documentation "Make a shallow copy of NAMESPACE and return it."))
+
+(defmethod copy-namespace ((namespace namespace))
+  (make-instance (type-of namespace) :var (namespace-var namespace) :fun (namespace-fun namespace) :blo (namespace-blo namespace) :tag (namespace-tag namespace) :user (user namespace)))
+
+(defgeneric copy-deep-namespace (parse namespace-type)
+  (:documentation "Return a shallow copy of PARSER where all NAMESPACE-TYPE namespace slots are copied deeply, up to and including the aconses, but excluding the objects stored in the aconses."))
 
 (defgeneric copy-deep-parser (parser)
   (:documentation "Create a new instance of parser that has a deep-copied lexical and free namespace"))
@@ -347,17 +359,13 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defmethod make-ast ((parser parser) type &rest arguments)
   (apply #'make-instance type arguments))
 
-;;;; NAMESPACES again
-
 (defmethod copy-deep-namespace ((parser parser) namespace-type)
-  "Return a shallow copy of PARSER where all NAMESPACE-TYPE namespace slots are copied shallowly except slot VAR, which is copied deeply."
   (let ((namespace (slot-value parser namespace-type)))
     (make-ast parser namespace-type
-	      :var (loop for acons in (namespace-var namespace) collect
-			(cons (car acons) (cdr acons)))
-	      :fun (namespace-fun namespace)
-	      :blo (namespace-blo namespace)
-	      :tag (namespace-tag namespace))))
+	      :var (copy-alist (namespace-var namespace))
+	      :fun (copy-alist (namespace-fun namespace))
+	      :blo (copy-alist (namespace-blo namespace))
+	      :tag (copy-alist (namespace-tag namespace)))))
 
 (defmethod copy-deep-parser ((parser parser))
   (let* ((p (copy-parser parser))
@@ -367,16 +375,19 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
     (setf (parser-free-namespace p) fn)
     p))
 
+;;;; NAMESPACES again
+
 (defgeneric augment-lexical-namespace (nso-object parser)
-  (:documentation "Create a copy of the lexical namespace in PARSER, add the NSO-OBJECT (which must be a subtype of NSO) to the copy, and return the copy."))
+  (:documentation "Create a copy of the PARSER with a copy of the lexical namespace, augment the namespace copy with the NSO-OBJECT (which must be a subtype of NSO), and return the PARSER copy.
+The new parser copy shares namespace structure with the original PARSER."))
 (defmethod augment-lexical-namespace (nso-object (parser parser))
   (assert (not (nso-freep nso-object)) () "Cannot augment a lexical namespace with free namespace object ~S" nso-object)
-  (let* ((new-namespace (copy-deep-namespace parser 'lexical-namespace))
-	 (nso-type (type-of nso-object))
-	 (parser-copy (copy-parser parser)))
-    (setf (slot-value new-namespace nso-type)
-	  (acons (nso-name nso-object) nso-object (slot-value new-namespace nso-type)))
-    (setf (parser-lexical-namespace parser-copy) new-namespace)
+  (let* ((parser-copy (copy-parser parser))
+	 (namespace-copy (copy-namespace (parser-lexical-namespace parser-copy)))
+	 (nso-type (type-of nso-object)))
+    (setf (parser-lexical-namespace parser-copy) namespace-copy)
+    (setf (slot-value namespace-copy nso-type)
+	  (acons (nso-name nso-object) nso-object (slot-value namespace-copy nso-type)))
     parser-copy))
 
 (defgeneric augment-free-namespace (nso-object parser)
@@ -1814,7 +1825,7 @@ restart
 	   ((atom form)
 	    (assert (symbolp form) () "Cannot parse TAGBODY-form: it must only contain tags (which must be symbols) or conses, but contains ~S" form)
 	    (let ((tag (make-ast parser 'tag :name form :freep nil :definition current :sites nil))) ;:gopoint is defined below
-	      (setf parser (augment-lexical-namespace tag parser))
+	      (setf parser (augment-lexical-namespace tag parser)) ;after this, PARSER is a copy
 	      (push tag tags)))))
     (let ((parsed-body (loop for form in body collect
 			    (cond
