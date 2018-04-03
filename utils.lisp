@@ -1010,15 +1010,13 @@ Ex: (specializing-cond-let
     result))
 
 ;; remove-duplicates is a cl function, but has different options
-(defun unique (sequence &key only not countp (test #'eql) (key #'identity))
-  "Return a list with all but one duplicate elements in SEQUENCE removed. If KEY
-is non-NIL the result of calling KEY with an element is used in the comparison.
-Equality is tested with TEST and must be one of EQ, EQL, EQUAL, or EQUALP. The
-order of the returned elements is not specified.
-If ONLY is T, return only the unique elements.
-If NOT is T, return only the elements that have at least one duplicate.
-If COUNTP is non-NIL, return only the elements whose count satisfies COUNTP.
-Only one of ONLY, NOT, or COUNTP may be non-NIL."
+(defun unique (sequence &key only not countp (test #'eql) (key #'identity) (ordered nil))
+  "Return a list with all but one duplicate elements in SEQUENCE removed. This function has similar functionality to the UNIX tool uniq.
+If KEY is non-NIL the result of calling KEY with an element is used in the comparison.
+Equality is tested with TEST.
+Only one of ONLY, NOT, or COUNTP may be non-NIL. If ONLY is T, return only the unique elements. If NOT is T, return only the elements that have at least one duplicate. If COUNTP is non-NIL, return only the elements whose count satisfies COUNTP.
+If ORDERED is NIL, the order of the returned elements is not specified. Otherwise, the order of the elements in SEQUENCE is preserved.
+The run-time of this function is linear in the number of elements of SEQUENCE."
   (assert (>= 1 (count-if (complement #'null) (list only not countp))))
   (specializing-cond-let
       ((only ((countp (lambda (x) (= x 1)))))
@@ -1026,7 +1024,7 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
        ((not countp) ((countp (constantly t)) (only 'default)))
        (t ()))
     (specializing-case key (#'identity)
-      (labels ((update-f (x ht)
+      (labels ((update (x ht)
 		 (let ((hx (if (eq key #'identity) x (funcall key x))))
 		   (macrolet ((updatef (place)
 				`(if (eq only 'default)
@@ -1035,34 +1033,80 @@ Only one of ONLY, NOT, or COUNTP may be non-NIL."
 		     (if (eq key #'identity)
 			 #+sbcl (locally (declare (sb-ext:muffle-conditions
 						   style-warning))
-			   (updatef (gethash hx ht 0)))
+				  (updatef (gethash hx ht 0)))
+			 #-sbcl (updatef (gethash hx ht 0))
 			 (multiple-value-bind (hval h-p)
 			     (gethash hx ht)
 			   (if h-p
 			       (updatef (car hval))
 			       (setf (gethash hx ht) (cons 1 x))))))))
-	       (retrieve-f (k v)
+	       (retrieve (k v)
 		 (let ((count (if (eq key #'identity) v (car v)))
 		       (value (if (eq key #'identity) k (cdr v))))
 		   (declare (type fixnum count))
 		   (values (funcall countp count) value)))
 	       (uniq (sequence test)
-		 (let ((ht (make-hash-table :test test))
-		       (result))
-		   (map nil
-			(lambda (x) (update-f x ht))
-			sequence)
-		   ;; loop is faster for lists
-		   ;;(loop for s in sequence do (update-f s ht))
-		   (maphash (lambda (k v)
+		 (let* ((ht (make-hash-table :test test))
+			(result (if ordered (cons nil nil) nil))
+			(tail result))
+		   (if (typep sequence 'list)
+		       (loop for s in sequence do (update s ht))
+		       (loop for s across sequence do (update s ht)))
+		   (labels ((unordered-check (k v)
 			      (multiple-value-bind (include-p value)
-				  (retrieve-f k v)
-				(if include-p
-				    (setf result (cons value result)))))
-			    ht)
-		   result)))
-	(declare (inline uniq update-f retrieve-f))
+				  (retrieve k v)
+				(when include-p
+				  (setf result (cons value result)))))
+			    (unordered ()
+			      (loop for k being the hash-key of ht
+				 using (hash-value v) do
+				   (unordered-check k v))
+			      result)
+			    (ordered-check (k v)
+			      (multiple-value-bind (include-p value)
+				  (retrieve k v)
+				(when include-p
+				  (setf (cdr tail) (cons value nil) tail (cdr tail)))))
+			    (ordered ()
+			      (if (typep sequence 'list)
+				  (loop for k in sequence do
+				       (ordered-check k (gethash k ht)))
+				  (loop for k across sequence do
+				       (ordered-check k (gethash k ht))))
+			      (cdr result)))
+		     (declare (inline unordered-check unordered ordered-check ordered))
+		     (if ordered
+			 (ordered)
+			 (unordered))))))
+	(declare (inline uniq update retrieve))
 	(uniq sequence test)))))
+
+;; (The following comment is an artifact due to #'SXHASH, which seems to compute ordered hash-values for ordered integers: CL-USER> (LOOP FOR I BELOW 10 COLLECT (SXHASH I)): (361475658 361475674 361475691 361475707 361475592 361475608 361475625 361475641 361475790 361475806).) This function has a subset of the functionality of #'UNIQUE. I leave this function here, because for some reason, this function always preserves the order of elements, irrespective of the value of ORDERED. #'UNIQUE (above) doesn't do that. Demonstration: (LET ((LIST '(1 2 3 4 1 3 0))) (PRINT (UTILS:UNIQUE LIST :ONLY T)) (PRINT (UTILS:UNIQUE-HAE? LIST :ORDERED T)) (UTILS:UNIQUE-HAE? LIST :ORDERED NIL))
+(defun unique-hae? (list &key (test #'eql) (ordered nil))
+  "Return the list of elements that occur only once in LIST. The comparison of the elements is done using TEST.
+It computes the unique elements in linear time.
+If ORDERED is non-NIL, it preserves the order of the elements."
+  (let* ((ht (make-hash-table :test test))
+	 (result (cons nil nil))
+	 (tail result))
+    (flet ((insert-list (list)
+	     (loop for element in list do
+		  (incf (gethash element ht 0))))
+	   (build-result-ordered ()
+	     (loop for element in list do
+		  (when (= 1 (gethash element ht))
+		    (setf (cdr tail) (cons element nil)
+			  tail (cdr tail)))))
+	   (build-result-unordered ()
+	     (loop for element being the hash-key of ht do
+		  (when (= 1 (gethash element ht))
+		    (setf (cdr tail) (cons element nil)
+			  tail (cdr tail))))))
+      (insert-list list)
+      (if ordered
+	  (build-result-ordered)
+	  (build-result-unordered))
+      (cdr result))))
 
 (defun dump-to-file (file open-options item)
   (if (eq 0 (getf open-options :if-exists 0))
