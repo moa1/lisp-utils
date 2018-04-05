@@ -187,7 +187,7 @@
 ;;;; ARGUMENTS AND LAMBDA LISTS
 
 (defmethod arguments-assign-to-lambda-list ((parser walker:parser) (llist walker:ordinary-llist) arguments)
-  "LLIST is a parsed ordinary (TODO: or macro) lambda list. ARGUMENTS is the parsed list of arguments, i.e. (FORM-ARGUMENTS APPLICATION-FORM). PARSER is needed to allow multiple #'ARGUMENTS-ASSIGN-TO-LAMBDA-LIST, and for creating WALKER:OBJECT-FORMs NIL and T.
+  "LLIST is a parsed ordinary (TODO: or macro) lambda list. ARGUMENTS is the parsed list of arguments, i.e. (FORM-ARGUMENTS APPLICATION-FORM). PARSER is needed to allow subclassing multiple PARSERs and #'ARGUMENTS-ASSIGN-TO-LAMBDA-LIST for different purposes.
 Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMENTS) as values."
   ;; take the LLIST as scaffold and assign ARGUMENTS to it.
   (let ((result nil)
@@ -199,7 +199,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	   (init-form (arg)
 	     (if (walker:argument-init arg)
 		 (walker:argument-init arg)
-		 (walker:make-ast parser 'walker:object-form :object nil)))
+		 (walker:make-nil arg)))
 	   (set-result! (key datum)
 	     (setf result (acons key datum result))))
       (loop for arg in (walker:llist-required llist) do
@@ -210,11 +210,11 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	     ((null arguments)
 	      (set-result! (walker:argument-var arg) (init-form arg))
 	      (when (walker:argument-suppliedp arg)
-		(set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object nil))))
+		(set-result! (walker:argument-suppliedp arg) (walker:make-nil arg))))
 	     (t
 	      (set-result! (walker:argument-var arg) (pop arguments))
 	      (when (walker:argument-suppliedp arg)
-		(set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object t))))))
+		(set-result! (walker:argument-suppliedp arg) (walker:make-object t arg))))))
       (when (walker:llist-rest llist)
 	(set-result! (walker:argument-var (walker:llist-rest llist)) arguments))
       (assert (evenp (length arguments)) () "Odd number of arguments to &KEY: ~W" arguments)
@@ -231,11 +231,11 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 		 ((null cdr)
 		  (set-result! (walker:argument-var arg) (init-form arg))
 		  (when (walker:argument-suppliedp arg)
-		    (set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object nil))))
+		    (set-result! (walker:argument-suppliedp arg) (walker:make-nil arg))))
 		 (t
 		  (set-result! (walker:argument-var arg) (cadr cdr))
 		  (when (walker:argument-suppliedp arg)
-		    (set-result! (walker:argument-suppliedp arg) (walker:make-ast parser 'walker:object-form :object t)))))))
+		    (set-result! (walker:argument-suppliedp arg) (walker:make-nil arg)))))))
 	;; keyword argument checking is suppressed if &ALLOW-OTHER-KEYS is present
 	(unless (or (walker:llist-allow-other-keys llist)
 		    (cadr (find-name :allow-other-keys arguments)))
@@ -324,8 +324,6 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 		      (push form body)))
 	       (setf (walker:form-body ast) (nreverse body))
 	       dead))
-	   (no-code ()
-	     (make-instance 'walker:object-form :object nil))
 	   (remove-dead-let! ()
 	     (let ((dead nil)
 		   (bindings nil))
@@ -387,7 +385,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	 (loop for arg in (walker:form-arguments ast) do
 	      (when (prog1 dead ;if DEAD is NIL, do not remove code yet
 		      (or dead (setf dead (recurse! arg))))
-		(setf arg (no-code)))
+		(setf arg (walker:make-nil ast)))
 	      (push arg args))
 	 (setf (walker:form-arguments ast) (nreverse args))
 	 (let ((acons (assoc (walker:form-fun ast) live-functions)))
@@ -523,7 +521,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	 (loop for arg in init-args do
 	      (when (prog1 dead ;if DEAD is NIL, do not remove code yet
 		      (or dead (setf dead (recurse! (walker:argument-init arg)))))
-		(setf (walker:argument-init arg) (no-code))))
+		(setf (walker:argument-init arg) (walker:make-nil arg))))
 	 (let ((dead (remove-dead-body! dead)))
 	   ;; after the LLIST, one can (RETURN-FROM ,(WALKER:FORM-SYM AST))
 	   (cond
@@ -542,7 +540,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
   (flet ((assert-result (form expected)
 	   (let ((ast (walker:parse-with-namespace form :parser (walker:make-parser :type 'parser-plus))))
 	     (when (remove-dead-code! ast)
-	       (setf ast (make-instance 'walker:form-object :object nil)))
+	       (setf ast (walker:make-nil nil)))
 	     (let ((actual (walker:deparse (make-instance 'walker:deparser) ast)))
 	       (assert (equal actual expected) () "Remove dead code in ~S~%gave ~S,~%but should have been ~S" form actual expected)))))
     (assert-result '(block nil (+ 1 (return-from nil) 2)) '(block nil (+ 1 (return-from nil) nil)))

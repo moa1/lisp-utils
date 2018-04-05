@@ -155,6 +155,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form-body-1 :form-body-2 :form-body-3 :form-body-4 :form-body-5 :form-body-6 :form-body-7 :form-body-last
    :form-binding-1 :form-binding-2 :form-binding-3 :form-binding-4 :form-binding-5 :form-binding-6 :form-binding-7
    :form-argument-1 :form-argument-2 :form-argument-3 :form-argument-4 :form-argument-5 :form-argument-6 :form-argument-7
+   :make-nil
+   :make-object
    ;; END OF FORMs and Utility Functions
    :parse-and-set-functiondef
    :is-recursive
@@ -1432,6 +1434,11 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (setf (sixth (form-arguments ast)) value))
 (defun (setf form-argument-7) (value ast)
   (setf (seventh (form-arguments ast)) value))
+
+(defun make-nil (parent &key (user nil))
+  (make-instance 'walker:object-form :parent parent :object nil :user user))
+(defun make-object (object parent &key (user nil))
+  (make-instance 'walker:object-form :parent parent :object object :user user))
 
 ;;;; END OF FORMs and Utility Functions
 
