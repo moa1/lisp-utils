@@ -1107,7 +1107,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (:documentation "A self-evaluating object as described in 'CLHS 3.1.2.1.3 Self-Evaluating Objects'"))
 (defclass var-reading (form)
   ((var :initarg :var :accessor form-var :documentation "The VAR being read"))
-  (:documentation "VAR is being accessed for reading. CLHS 3.1.2.1.1 Symbols as Forms. Note that this form is not to be used for variable declarations."))
+  (:documentation "VAR is being accessed for reading. CLHS 3.1.2.1.1 Symbols as Forms. Note that this form is not to be used for variable declarations. This is a subclass of FORM, so that all elements of a correct Lisp form are a type of FORM."))
 (defclass var-writing ()
   ((parent :initarg :parent :accessor form-parent)
    (var :initarg :var :accessor form-var :documentation "The VAR being written")
@@ -1210,11 +1210,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass tagbody-form (special-form body-form)
   ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAGPOINT)") ;do not inherit from BODY-FORM, otherwise slot DOCUMENTATION would be allowed here
    (tags :initarg :tags :accessor form-tags :type list :documentation "The list of all tags defined in the TAGBODY.")))
-(defclass tagpoint ()
-  ((parent :initarg :parent :accessor form-parent)
-   (tag :initarg :tag :accessor form-tag :documentation "The TAG")
-   (user :initform nil :initarg :user :accessor user))
-  (:documentation "A TAG inside a TAGBODY-FORM. We encapsulate TAG inside a TAGPOINT instance so that it has slots PARENT and USER."))
+(defclass tagpoint (form)
+  ((tag :initarg :tag :accessor form-tag :documentation "The TAG"))
+  (:documentation "A TAG inside a TAGBODY-FORM. We encapsulate TAG inside a TAGPOINT instance, and make it a subclass of FORM, so that all elements of a correct Lisp form are a type of FORM, and so that it has slots PARENT and USER."))
 (defclass go-form (special-form)
   ((tag :initarg :tag :accessor form-tag :type tag)))
 
