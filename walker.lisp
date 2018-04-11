@@ -361,6 +361,7 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
 (defmethod make-ast ((parser parser) type &rest arguments)
   (apply #'make-instance type arguments))
 
+;; TODO: maybe remove #'COPY-DEEP-NAMESPACE and #'COPY-DEEP-PARSER, because they are false friends, because the free namespaces modified in the child parser copy is not changed in the parent parser copy (maybe only for debugging)
 (defmethod copy-deep-namespace ((parser parser) namespace-type)
   (let ((namespace (slot-value parser namespace-type)))
     (make-ast parser namespace-type
@@ -1705,9 +1706,8 @@ restart
 	 (else-form (if else-present (caddr rest) nil))
 	 (current (make-ast parser 'if-form :parent parent))
 	 (parsed-test (parse parser test-form current))
-	 ;;(COPY-DEEP-PARSER PARSER) instead of PARSER was used to parse THEN-FORM and ELSE-FORM so that changes made to the parser when parsing THEN-FORM does not induce changes when parsing ELSE-FORM. TODO: FIXME: maybe separate syntax and semantics more clearly.
-	 (parsed-then (parse (copy-deep-parser parser) then-form current))
-	 (parsed-else (if else-present (parse (copy-deep-parser parser) else-form current) nil)))
+	 (parsed-then (parse parser then-form current))
+	 (parsed-else (if else-present (parse parser else-form current) nil)))
     (setf (form-test current) parsed-test (form-then current) parsed-then (form-else current) parsed-else)
     current))
 
