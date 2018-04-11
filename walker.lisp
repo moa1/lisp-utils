@@ -42,7 +42,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :proper-list-p
    :remove-from-key-list
    ;; NAMESPACES
-   :nso :name :nso-name :freep :nso-freep :definition :nso-definition :sites :nso-sites :user
+   :nso :name :nso-name :freep :nso-freep :definition :nso-definition :sites :nso-sites :nso-source :source :user
    :sym :declspecs :nso-declspecs :macrop :nso-macrop
    :var
    :fun
@@ -107,7 +107,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-ordinary-lambda-list
    :parse-macro-lambda-list
    ;; FORMS and Utility Functions
-   :form :parent :form-parent :user
+   :form :parent :form-parent :source :form-source :user
    :object-form :object :form-object :user
    :var-reading :parent :form-parent :var :form-var
    :var-writing :parent :form-parent :var :form-var
@@ -210,6 +210,7 @@ for BLOs it is an instance of a subclass of BLOCK-NAMING-FORM),
 for TAGs it is an instance of class TAGBODY-FORM (or a subclass of that).")
    (sites :initform nil :initarg :sites :accessor nso-sites :type list
 	  :documentation "List of forms where this NSO is used, excluding the definition. For example, for FUN-nsos it is the list of APPLICATION-FORMs and FUNCTION-forms. For TAG-nsos, it is the list of GO-FORMs.")
+   (source :initarg :source :accessor nso-source :type list :documentation "The source of the NSO.")
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot."))
   (:documentation "a namespace-object (NSO) containing a name and information whether it is free or bound"))
@@ -359,6 +360,7 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (:documentation "This method is called to create an instance or part of an AST. Override to set e.g. a custom USER slot."))
 
 (defmethod make-ast ((parser parser) type &rest arguments)
+  (assert (let ((cdr (member :source arguments))) (and (consp cdr) (consp (cdr cdr)))) () "MAKE-AST requires a :SOURCE slot.")
   (apply #'make-instance type arguments))
 
 ;; TODO: maybe remove #'COPY-DEEP-NAMESPACE and #'COPY-DEEP-PARSER, because they are false friends, because the free namespaces modified in the child parser copy is not changed in the parent parser copy (maybe only for debugging)
@@ -417,16 +419,16 @@ The new parser copy shares namespace structure with the original PARSER."))
        new-nso))))
 (defmethod namespace-lookup/create ((symbol-type (eql 'var)) symbol (parser parser))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'var :name symbol :freep t :declspecs nil :sites nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'var :name symbol :freep t :declspecs nil :sites nil :source symbol))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'fun)) symbol (parser parser))
   (assert (not (null (valid-function-name-p symbol))) () "Invalid function name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'fun :name symbol :freep t :declspecs nil :sites nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'fun :name symbol :freep t :declspecs nil :sites nil :source symbol))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'blo)) symbol (parser parser))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'blo :name symbol :freep t :sites nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'blo :name symbol :freep t :sites nil :source symbol))) ;do not bind :DEFINITION
 (defmethod namespace-lookup/create ((symbol-type (eql 'tag)) symbol (parser parser))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
-  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'tag :name symbol :freep t :sites nil))) ;do not bind :DEFINITION
+  (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'tag :name symbol :freep t :sites nil :source symbol))) ;do not bind :DEFINITION
 
 (let ((parser (make-instance 'parser-copy)))
   (setf parser (augment-lexical-namespace (make-instance 'var :name 'a :freep nil :sites nil) parser))
@@ -457,17 +459,18 @@ You may pass any keyword option accepted by (MAKE-INSTANCE TYPE ...)."
 	 (parser (apply #'make-instance type rest-filtered)))
     ;; do not bind the :DEFINITION slots.
     (loop for variable in variables do
-	 (augment-free-namespace (make-ast parser 'var :name variable :freep t :declspecs nil :macrop nil :sites nil) parser))
+	 (augment-free-namespace (make-ast parser 'var :name variable :freep t :declspecs nil :macrop nil :sites nil :source variable) parser))
     (loop for function in functions do
-	 (augment-free-namespace (make-ast parser 'fun :name function :freep t :declspecs nil :macrop nil :sites nil) parser))
+	 (augment-free-namespace (make-ast parser 'fun :name function :freep t :declspecs nil :macrop nil :sites nil :source function) parser))
     (loop for macro in macros do
-	 (augment-free-namespace (make-ast parser 'fun :name macro :freep t :declspecs nil :macrop t :sites nil) parser))
+	 (augment-free-namespace (make-ast parser 'fun :name macro :freep t :declspecs nil :macrop t :sites nil :source macro) parser))
     parser))
 
 ;;;; DECLARATIONS
 
 (defclass declspec ()
   ((parent :initarg :parent :accessor declspec-parent)
+   (source :initarg :source :accessor nso-source :type list :documentation "The source of the declspec.")
    (user :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
 (defmethod form-parent ((ast declspec))
@@ -528,14 +531,14 @@ Note that this function does not do recursive parsing when an argument or return
 
 (defgeneric parse-declspec-expr (parser expr parent)
   (:documentation "Parse the declaration expression EXPR using PARSER with PARENT as enclosing form."))
-(defgeneric parse-declspec (parser identifier body parent)
+(defgeneric parse-declspec (parser identifier body parent source)
   (:documentation "Parse the declaration expression (CONS IDENTIFIER BODY) using PARSER with PARENT as enclosing form."))
 
 (defmethod parse-declspec-expr ((parser parser) (expr cons) parent)
   (let ((identifier (car expr))
 	(body (cdr expr)))
     (assert (symbolp identifier) () "Malformed declaration identifier ~W" identifier)
-    (parse-declspec parser identifier body parent)))
+    (parse-declspec parser identifier body parent expr)))
 
 (defmethod parse-declspec-expr ((parser parser) (expr null) parent)
   nil)
@@ -543,7 +546,7 @@ Note that this function does not do recursive parsing when an argument or return
 (defmethod parse-declspec-expr ((parser parser) expr parent)
   (error "Malformed declaration specification ~W" expr))
 
-(defun parse-declspec-type-ftype (parser identifier body parent)
+(defun parse-declspec-type-ftype (parser identifier body parent source)
   (assert (and (listp body) (listp (cdr body))) () "Malformed ~W declaration ~W" identifier body)
   (let* ((typespec (car body))
 	 (syms (cdr body)))
@@ -551,18 +554,18 @@ Note that this function does not do recursive parsing when an argument or return
     (assert (proper-list-p syms) () "Not a proper list in ~W declaration ~W" identifier body)
     (let* ((parsed-syms (loop for sym in syms collect (namespace-lookup/create (ecase identifier ((type) 'var) ((ftype) 'fun)) sym parser)))
 	   (parsed-declspec (ecase identifier
-			      ((type) (make-ast parser 'declspec-type :parent parent :type typespec :vars parsed-syms))
-			      ((ftype) (make-ast parser 'declspec-ftype :parent parent :type typespec :funs parsed-syms)))))
+			      ((type) (make-ast parser 'declspec-type :parent parent :type typespec :vars parsed-syms :source source))
+			      ((ftype) (make-ast parser 'declspec-ftype :parent parent :type typespec :funs parsed-syms :source source)))))
       (loop for sym in parsed-syms do
 	   (push parsed-declspec (nso-declspecs sym)) (push parsed-declspec (nso-sites sym)))
       parsed-declspec)))
 
-(defmethod parse-declspec ((parser parser) (identifier (eql 'type)) body parent)
-  (parse-declspec-type-ftype parser identifier body parent))
-(defmethod parse-declspec ((parser parser) (identifier (eql 'ftype)) body parent)
-  (parse-declspec-type-ftype parser identifier body parent))
+(defmethod parse-declspec ((parser parser) (identifier (eql 'type)) body parent source)
+  (parse-declspec-type-ftype parser identifier body parent source))
+(defmethod parse-declspec ((parser parser) (identifier (eql 'ftype)) body parent source)
+  (parse-declspec-type-ftype parser identifier body parent source))
 
-(defmethod parse-declspec ((parser parser) (identifier (eql 'optimize)) body parent)
+(defmethod parse-declspec ((parser parser) (identifier (eql 'optimize)) body parent source)
   (assert (proper-list-p body) () "~W declaration is not a proper list ~W" identifier body)
   (let ((qualities (loop for quality-value in body collect
 			(if (consp quality-value)
@@ -573,9 +576,9 @@ Note that this function does not do recursive parsing when an argument or return
 			    (let ((quality quality-value))
 			      (assert (symbolp quality) () "Malformed ~W in ~W" body identifier)
 			      (cons quality nil))))))
-    (make-ast parser 'declspec-optimize :parent parent :qualities qualities)))
+    (make-ast parser 'declspec-optimize :parent parent :qualities qualities :source source)))
 
-(defun parse-declspec-ignore-ignorable-dynamic-extent (parser identifier body parent)
+(defun parse-declspec-ignore-ignorable-dynamic-extent (parser identifier body parent source)
   (assert (listp body) () "Malformed ~W declaration ~W" identifier body)
   (let* ((syms body))
     (assert (proper-list-p syms) () "Not a proper list in ~W declaration ~W" identifier body)
@@ -587,21 +590,21 @@ Note that this function does not do recursive parsing when an argument or return
 				(namespace-lookup/create 'fun (cadr sym) parser))
 			       (t
 				(error "Symbol in ~W declaration must be either a SYMBOL or a function name, but is ~W" identifier sym)))))
-	   (parsed-declspec (make-ast parser (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms)))
+	   (parsed-declspec (make-ast parser (ecase identifier ((ignore) 'declspec-ignore) ((ignorable) 'declspec-ignorable) ((dynamic-extent) 'declspec-dynamic-extent)) :parent parent :syms parsed-syms :source source)))
       (loop for sym in parsed-syms do
 	   (push parsed-declspec (nso-declspecs sym)) (push parsed-declspec (nso-sites sym)))
       parsed-declspec)))
 
-(defmethod parse-declspec ((parser parser) (identifier (eql 'ignore)) body parent)
-  (parse-declspec-ignore-ignorable-dynamic-extent parser identifier body parent))
-(defmethod parse-declspec ((parser parser) (identifier (eql 'ignorable)) body parent)
-  (parse-declspec-ignore-ignorable-dynamic-extent parser identifier body parent))
-(defmethod parse-declspec ((parser parser) (identifier (eql 'dynamic-extent)) body parent)
-  (parse-declspec-ignore-ignorable-dynamic-extent parser identifier body parent))
+(defmethod parse-declspec ((parser parser) (identifier (eql 'ignore)) body parent source)
+  (parse-declspec-ignore-ignorable-dynamic-extent parser identifier body parent source))
+(defmethod parse-declspec ((parser parser) (identifier (eql 'ignorable)) body parent source)
+  (parse-declspec-ignore-ignorable-dynamic-extent parser identifier body parent source))
+(defmethod parse-declspec ((parser parser) (identifier (eql 'dynamic-extent)) body parent source)
+  (parse-declspec-ignore-ignorable-dynamic-extent parser identifier body parent source))
 
 ;; probably not TODO (since the parser should contain as little semantics as possible): when adding DYNAMIC-EXTENT and SPECIAL, add an assertion that, as defined in CLHS on DYNAMIC-EXTENT, "The vars and fns named in a dynamic-extent declaration must not refer to symbol macro or macro bindings." and an assertion that, as defined in CLHS on SYMBOL-MACROLET, "Exactly the same declarations are allowed as for let with one exception: symbol-macrolet signals an error if a special declaration names one of the symbols being defined by symbol-macrolet."
 
-(defun parse-declspec-inline-notinline (parser identifier body parent)
+(defun parse-declspec-inline-notinline (parser identifier body parent source)
   (assert (listp body) () "Malformed ~W declaration ~W" identifier body)
   (let* ((funs body))
     (assert (proper-list-p funs) () "Not a proper list in ~W declaration ~W" identifier body)
@@ -609,28 +612,28 @@ Note that this function does not do recursive parsing when an argument or return
 			     (progn
 			       (assert (valid-function-name-p fun))
 			       (namespace-lookup/create 'fun fun parser))))
-	   (parsed-declspec (make-ast parser (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs)))
+	   (parsed-declspec (make-ast parser (ecase identifier ((inline) 'declspec-inline) ((notinline) 'declspec-notinline)) :parent parent :funs parsed-funs :source source)))
       (loop for fun in parsed-funs do
 	   (push parsed-declspec (nso-declspecs fun)) (push parsed-declspec (nso-sites fun)))
       parsed-declspec)))
 
-(defmethod parse-declspec ((parser parser) (identifier (eql 'inline)) body parent)
-  (parse-declspec-inline-notinline parser identifier body parent))
-(defmethod parse-declspec ((parser parser) (identifier (eql 'notinline)) body parent)
-  (parse-declspec-inline-notinline parser identifier body parent))
+(defmethod parse-declspec ((parser parser) (identifier (eql 'inline)) body parent source)
+  (parse-declspec-inline-notinline parser identifier body parent source))
+(defmethod parse-declspec ((parser parser) (identifier (eql 'notinline)) body parent source)
+  (parse-declspec-inline-notinline parser identifier body parent source))
 
-(defmethod parse-declspec ((parser parser) (identifier (eql 'special)) body parent)
+(defmethod parse-declspec ((parser parser) (identifier (eql 'special)) body parent source)
   (assert (listp body) () "Malformed ~W declaration ~W" identifier body)
   (let* ((vars body))
     (assert (proper-list-p vars) () "Not a proper list in ~W declaration ~W" identifier body)
     (let* ((parsed-vars (loop for var in vars collect (namespace-lookup/create 'var var parser)))
-	   (parsed-declspec (make-ast parser 'declspec-special :parent parent :vars parsed-vars)))
+	   (parsed-declspec (make-ast parser 'declspec-special :parent parent :vars parsed-vars :source source)))
       (loop for var in parsed-vars do
 	   (setf (nso-freep var) t) ;mark all PARSED-VARS as special
 	   (push parsed-declspec (nso-declspecs var)) (push parsed-declspec (nso-sites var)))
       parsed-declspec)))
 
-(defmethod parse-declspec ((parser parser) identifier body parent)
+(defmethod parse-declspec ((parser parser) identifier body parent source)
   (error "Unknown declaration identifier ~W" identifier))
 
 (defgeneric parse-declspecs (parser declspecs parent)
@@ -778,7 +781,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 PARSE parses the FORM and the elements in it recursively and constructs an AST, i.e. an instance of one of the -FORM classes.
 Return the parsed abstract syntax tree (AST)."))
 
-(defgeneric parse-form (parser head rest parent)
+(defgeneric parse-form (parser head rest parent source)
   (:documentation "Helper for #'PARSE"))
 
 ;;;; LAMBDA LISTS
@@ -786,6 +789,7 @@ Return the parsed abstract syntax tree (AST)."))
 
 (defclass argument ()
   ((parent :initarg :parent :accessor argument-parent :type functiondef)
+   (source :initarg :source :accessor form-source :documentation "The source of the argument.")
    (var :initarg :var :accessor argument-var :type var)
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
@@ -814,6 +818,7 @@ Return the parsed abstract syntax tree (AST)."))
 (defclass llist ()
   ((parent :initarg :parent :accessor llist-parent
 	   :documentation "The FUNCTIONDEF this LLIST is defined in.")
+   (source :initarg :source :accessor nso-source :type list :documentation "The source of the lambda list.")
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
 (defmethod form-parent ((ast llist))
@@ -910,51 +915,51 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ;; TODO: rewrite so that parsing the following is possible: Allow user-defined Lambda Lists (i.e. user-defined subclasses of 'llist), 3.4.1 Ordinary Lambda Lists, 3.4.2 Generic Function Lambda Lists, 3.4.3 Specialized Lambda Lists, 3.4.4 Macro Lambda Lists, 3.4.5 Destructuring Lambda Lists, 3.4.6 Boa Lambda Lists, 3.4.7 Defsetf Lambda Lists, 3.4.8 Deftype Lambda Lists, 3.4.9 Define-modify-macro Lambda Lists, 3.4.10 Define-method-combination Arguments Lambda Lists
   ;; "CLHS 3.4.1 Ordinary Lambda Lists" says: "An init-form can be any form. Whenever any init-form is evaluated for any parameter specifier, that form may refer to any parameter variable to the left of the specifier in which the init-form appears, including any supplied-p-parameter variables, and may rely on the fact that no other parameter variable has yet been bound (including its own parameter variable)." But luckily the order of allowed keywords is fixed for both normal lambda-lists and macro lambda-lists, and a normal lambda-list allows a subset of macro lambda-lists. Maybe I'll have to rewrite this for other lambda-lists.
   (let* ((llist-type (if allow-macro-lambda-list 'macro-llist 'ordinary-llist)) ;TODO: when making this function modular: probably allow passing LLIST-TYPE.
-	 (new-llist (make-ast parser llist-type :parent parent)))
+	 (new-llist (make-ast parser llist-type :parent parent :source lambda-list)))
     (labels ((add-argument (varname argument-type)
-	       (let* ((new-argument (make-ast parser argument-type :parent new-llist))
-		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser argument-type :parent new-llist :source varname))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil :source varname)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 new-argument))
 	     (add-required-argument (varname)
-	       (let* ((new-argument (make-ast parser 'required-argument :parent new-llist))
-		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'required-argument :parent new-llist :source varname))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil :source varname)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 new-argument))
-	     (add-optional-argument (varname init-form-p init-form suppliedp suppliedp-name)
+	     (add-optional-argument (varname init-form-p init-form suppliedp suppliedp-name source)
 	       "If INIT-FORM is not given for the &OPTIONAL argument, pass NIL for it. If SUPPLIEDP is non-NIL, INIT-FORM must be non-NIL as well."
 	       (assert (if suppliedp (not (null init-form)) t))
-	       (let* ((new-argument (make-ast parser 'optional-argument :parent new-llist))
-		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'optional-argument :parent new-llist :source source))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil :source varname)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 (let ((parsed-init-form (if init-form-p (parse parser init-form new-argument) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
-		   (let ((new-supplied-var (if suppliedp (make-ast parser 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil) nil)))
+		   (let ((new-supplied-var (if suppliedp (make-ast parser 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil :source suppliedp-name) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
 		     (when new-supplied-var
 		       (setf parser (augment-lexical-namespace new-supplied-var parser)))
 		     new-argument))))
-	     (add-key-argument (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name)
+	     (add-key-argument (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name source)
 	       "If KEYWORDNAME or INIT-FORM is not given for the &KEY argument, pass NIL for it. If SUPPLIEDP is non-NIL, INIT-FORM must be non-NIL as well."
 	       (assert (if suppliedp (not (null init-form)) t))
-	       (let* ((new-argument (make-ast parser 'key-argument :parent new-llist :keywordp keywordp :keyword keyword))
-		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'key-argument :parent new-llist :keywordp keywordp :keyword keyword :source source))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil :source varname)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 (let ((parsed-init-form (if init-form-p (parse parser init-form new-argument) nil)))
 		   (setf (argument-init new-argument) parsed-init-form)
-		   (let ((new-supplied-var (if suppliedp (make-ast parser 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil) nil)))
+		   (let ((new-supplied-var (if suppliedp (make-ast parser 'var :name suppliedp-name :freep nil :definition new-argument :declspecs nil :sites nil :source suppliedp-name) nil)))
 		     (setf (argument-suppliedp new-argument) new-supplied-var)
 		     (when new-supplied-var
 		       (setf parser (augment-lexical-namespace new-supplied-var parser)))
 		     new-argument))))
-	     (add-aux-argument (varname init-form-p init-form)
+	     (add-aux-argument (varname init-form-p init-form source)
 	       "If INIT-FORM is not given for the &KEY argument, pass NIL for it."
-	       (let* ((new-argument (make-ast parser 'aux-argument :parent new-llist))
-		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil)))
+	       (let* ((new-argument (make-ast parser 'aux-argument :parent new-llist :source source))
+		      (new-var (make-ast parser 'var :name varname :freep nil :definition new-argument :declspecs nil :sites nil :source varname)))
 		 (setf (argument-var new-argument) new-var)
 		 (setf parser (augment-lexical-namespace new-var parser))
 		 (let ((parsed-init-form (if init-form-p (parse parser init-form new-argument) nil)))
@@ -1003,7 +1008,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		  (push (multiple-value-bind (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name)
 			    (parse-optional-or-key-or-aux-argument head '&optional)
 			  (declare (ignore keywordp keyword))
-			  (add-optional-argument varname init-form-p init-form suppliedp suppliedp-name))
+			  (add-optional-argument varname init-form-p init-form suppliedp suppliedp-name head))
 			optional))
 		 ;; TODO: in macro lambda lists, allow &REST to be specified as the (CDR (LAST LAMBDA-LIST)), as in '(A &OPTIONAL B . R).
 		 ((find current-keyword '(&rest &body)) ;TODO: allow recursive lambda-list parsing, see CLHS 3.4.4.1.2 Lambda-list-directed Destructuring by Lambda Lists
@@ -1017,13 +1022,13 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 		  (assert (null aux) () "&KEY keyword must be before &AUX in lambda list ~S" lambda-list)
 		  (push (multiple-value-bind (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name)
 			    (parse-optional-or-key-or-aux-argument head '&key)
-			  (add-key-argument keywordp keyword varname init-form-p init-form suppliedp suppliedp-name))
+			  (add-key-argument keywordp keyword varname init-form-p init-form suppliedp suppliedp-name head))
 			key))
 		 ((eq current-keyword '&aux)
 		  (push (multiple-value-bind (keywordp keyword varname init-form-p init-form suppliedp suppliedp-name)
 			    (parse-optional-or-key-or-aux-argument head '&aux)
 			  (declare (ignore keywordp keyword suppliedp suppliedp-name))
-			  (add-aux-argument varname init-form-p init-form))
+			  (add-aux-argument varname init-form-p init-form head))
 			aux))
 		 (t (error "Unhandled argument ~S in lambda-list ~S" head lambda-list))))
 	     (setf remaining (cdr remaining)))
@@ -1100,6 +1105,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 (defclass form ()
   ((parent :initarg :parent :accessor form-parent)
+   (source :initarg :source :accessor form-source :documentation "The source of the form.")
    (user :initform nil :initarg :user :accessor user))
   (:documentation "A cons form as described in 'CLHS 3.1.2.1.2 Conses as Forms'"))
 (defclass object-form (form)
@@ -1110,6 +1116,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (:documentation "VAR is being accessed for reading. CLHS 3.1.2.1.1 Symbols as Forms. Note that this form is not to be used for variable declarations. This is a subclass of FORM, so that all elements of a correct Lisp form are a type of FORM."))
 (defclass var-writing ()
   ((parent :initarg :parent :accessor form-parent)
+   (source :initarg :source :accessor form-source :documentation "The source of the VAR-WRITING.")
    (var :initarg :var :accessor form-var :documentation "The VAR being written")
    (user :initform nil :initarg :user :accessor user))
   (:documentation "VAR is being accessed for writing. CLHS 3.1.2.1.1 Symbols as Forms"))
@@ -1124,6 +1131,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ())
 (defclass binding ()
   ((parent :initarg :parent :accessor form-parent :documentation "the LET-FORM, LET*-FORM, FLET-FORM, LABELS-FORM, SYMBOL-MACROLET-FORM, or MACROLET-FORM in which the binding is defined.")
+   (source :initarg :source :accessor nso-source :type list :documentation "The source of the binding.")
    (sym :initarg :sym :accessor form-sym :type sym)
    (user :initform nil :initarg :user :accessor user)))
 (defclass var-binding (binding)
@@ -1435,9 +1443,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (setf (seventh (form-arguments ast)) value))
 
 (defun make-nil (parent &key (user nil))
-  (make-instance 'walker:object-form :parent parent :object nil :user user))
+  (make-instance 'walker:object-form :parent parent :object nil :user user :source nil))
 (defun make-object (object parent &key (user nil))
-  (make-instance 'walker:object-form :parent parent :object object :user user))
+  (make-instance 'walker:object-form :parent parent :object object :user user :source object))
 
 ;;;; END OF FORMs and Utility Functions
 
@@ -1496,23 +1504,23 @@ If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
        (parse parser form current)))
 
 (defmethod parse ((parser parser) (form (eql nil)) parent)
-  (make-ast parser 'object-form :parent parent :object form))
+  (make-ast parser 'object-form :parent parent :source form :object form))
 
 (defmethod parse ((parser parser) (form (eql t)) parent)
-  (make-ast parser 'object-form :parent parent :object form))
+  (make-ast parser 'object-form :parent parent :source form :object form))
 
 (defmethod parse ((parser parser) (form symbol) parent)
   (let* ((var (namespace-lookup/create 'var form parser))
-	 (read-var (make-ast parser 'var-reading :parent parent :var var)))
+	 (read-var (make-ast parser 'var-reading :parent parent :source form :var var)))
     (push read-var (nso-sites var))
     read-var))
 
 (defmethod parse ((parser parser) (form cons) parent)
-  (parse-form parser (car form) (cdr form) parent))
+  (parse-form parser (car form) (cdr form) parent form))
 
 (defmethod parse ((parser parser) form parent)
   (assert (atom form))
-  (make-ast parser 'object-form :parent parent :object form))
+  (make-ast parser 'object-form :parent parent :source form :object form))
 
 #|
 ;; The following types are atoms: taken from CLHS 4.2.2 first star.
@@ -1529,10 +1537,10 @@ condition
 restart
 |#
 
-(defmethod parse-form ((parser parser) (head (eql 'function)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'function)) rest parent source)
   (assert (and (consp rest) (null (cdr rest))) () "Invalid FUNCTION-form ~S" (cons head rest))
   (let* ((name (car rest))
-	 (current (make-ast parser 'function-form :parent parent)))
+	 (current (make-ast parser 'function-form :parent parent :source source)))
     (setf (form-object current) (cond
 				  ((valid-function-name-p name)
 				   (let ((fun (namespace-lookup/create 'fun name parser)))
@@ -1540,23 +1548,23 @@ restart
 				     fun))
 				  ((and (consp name) (eql (car name) 'lambda))
 				   (parse parser name current))
-				  (t (error "Invalid FUNCTION-form ~S" (cons head rest)))))
+				  (t (error "Invalid FUNCTION-form ~S" source))))
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'progn)) rest parent)
-  (let* ((current (make-ast parser 'progn-form :parent parent :body nil))
+(defmethod parse-form ((parser parser) (head (eql 'progn)) rest parent source)
+  (let* ((current (make-ast parser 'progn-form :parent parent :source source :body nil))
 	 (body rest)
 	 (parsed-body (parse-body parser body current)))
     (setf (form-body current) parsed-body)
     current))
 
 ;; TODO: FIXME: maybe I have to handle something specially in FLET and LABELS. The CLHS on FLET and LABELS says: "Also, within the scope of flet, global setf expander definitions of the function-name defined by flet do not apply. Note that this applies to (defsetf f ...), not (defmethod (setf f) ...)." What does that mean?
-(defun parse-let*-flet-labels-symbol-macrolet-macrolet (parser head rest parent)
+(defun parse-let*-flet-labels-symbol-macrolet-macrolet (parser head rest parent source)
   (assert (and (consp rest) (listp (car rest))) () "cannot parse ~S-form:~%~S" head (cons head rest))
   (let* ((definitions (car rest))
 	 (body (cdr rest))
 	 (form-type (ecase head ((let) 'let-form) ((let*) 'let*-form) ((flet) 'flet-form) ((labels) 'labels-form) ((symbol-macrolet) 'symbol-macrolet-form) ((macrolet) 'macrolet-form)))
-	 (current (make-ast parser form-type :parent parent :body nil))) ;:BINDINGS and :DECLSPECS are defined below
+	 (current (make-ast parser form-type :source (cons head rest) :parent parent :source source :body nil))) ;:BINDINGS and :DECLSPECS are defined below
     (assert (proper-list-p definitions) () "Not a proper list: ~S" definitions)
     (labels ((make-var-binding (def parser)
 	       (ecase head
@@ -1567,10 +1575,10 @@ restart
 	       (let* ((name (if (consp def) (car def) def))
 		      (value-form-present-p (consp def))
 		      (value-form (if (consp def) (cadr def) nil))
-		      (binding (make-ast parser 'var-binding :parent current))
+		      (binding (make-ast parser 'var-binding :parent current :source def))
 		      (parsed-value (ecase head ((let* let) (if value-form-present-p (parse parser value-form binding) nil)) ((symbol-macrolet) value-form)))
 		      (macrop (ecase head ((let* let) nil) ((symbol-macrolet) t)))
-		      (sym (make-ast parser 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil)))
+		      (sym (make-ast parser 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil :source name)))
 		 (setf (form-sym binding) sym
 		       (form-value binding) parsed-value)
 		 binding))
@@ -1580,13 +1588,13 @@ restart
 		 (assert (or (not (eq head 'macrolet)) (symbolp name)) () "macro function name in ~S-definition must be a SYMBOL, but is ~S" head (car def))
 		 (let* ((body-form (cdr def))
 			(block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-			(blo (make-ast parser 'blo :name block-name :freep nil :sites nil))
-			(binding (make-ast parser 'fun-binding :parent current :blo blo))
+			(blo (make-ast parser 'blo :name block-name :freep nil :sites nil :source block-name))
+			(binding (make-ast parser 'fun-binding :parent current :source def :blo blo))
 			(macrop (ecase head ((flet labels) nil) ((macrolet) t)))
 			(parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 			(sym (if (eq head 'labels)
 				 (namespace-lookup 'fun name (parser-lexical-namespace parser))
-				 (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil)))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake SYM, and we want to have it when parsing the body.
+				 (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil :source def)))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake SYM, and we want to have it when parsing the body.
 		   (setf (form-sym binding) sym)
 		   (setf (nso-definition sym) binding)
 		   (setf (nso-definition blo) binding)
@@ -1615,8 +1623,9 @@ restart
 	      ((eq head 'labels)
 	       (loop for def in definitions do
 		    (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def))
-	       (let* ((function-names (loop for def in definitions collect (nth-value 1 (valid-function-name-p (car def)))))
-		      (fake-syms (loop for name in function-names collect (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil))) ;:DEFINITION will be set in #'MAKE-FUN-BINDING
+	       (let* ((fake-syms (loop for def in definitions collect
+				      (let ((name (nth-value 1 (valid-function-name-p (car def)))))
+					(make-ast parser 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil :source def)))) ;:DEFINITION will be set in #'MAKE-FUN-BINDING
 		      (new-parser (let ((parser parser))
 				    (loop for sym in fake-syms do
 					 (setf parser (augment-lexical-namespace sym parser)))
@@ -1635,91 +1644,91 @@ restart
 	  (setf (form-body current) (parse-body new-parser body current))
 	  current)))))
 
-(defmethod parse-form ((parser parser) (head (eql 'let)) rest parent)
-  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent))
-(defmethod parse-form ((parser parser) (head (eql 'let*)) rest parent)
-  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent))
-(defmethod parse-form ((parser parser) (head (eql 'flet)) rest parent)
-  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent))
-(defmethod parse-form ((parser parser) (head (eql 'labels)) rest parent)
-  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent))
-(defmethod parse-form ((parser parser) (head (eql 'symbol-macrolet)) rest parent)
-  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent))
-(defmethod parse-form ((parser parser) (head (eql 'macrolet)) rest parent)
-  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent))
+(defmethod parse-form ((parser parser) (head (eql 'let)) rest parent source)
+  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent source))
+(defmethod parse-form ((parser parser) (head (eql 'let*)) rest parent source)
+  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent source))
+(defmethod parse-form ((parser parser) (head (eql 'flet)) rest parent source)
+  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent source))
+(defmethod parse-form ((parser parser) (head (eql 'labels)) rest parent source)
+  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent source))
+(defmethod parse-form ((parser parser) (head (eql 'symbol-macrolet)) rest parent source)
+  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent source))
+(defmethod parse-form ((parser parser) (head (eql 'macrolet)) rest parent source)
+  (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent source))
 
-(defmethod parse-form ((parser parser) (head (eql 'lambda)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'lambda)) rest parent source)
   (let* ((lambda-list-and-body rest)
-	 (current (make-ast parser 'lambda-form :parent parent)))
+	 (current (make-ast parser 'lambda-form :parent parent :source source)))
     (parse-and-set-functiondef parser lambda-list-and-body #'parse-ordinary-lambda-list current)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'block)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'block)) rest parent source)
   (assert (and (consp rest) (symbolp (car rest)) (listp (cdr rest))) () "Cannot parse BLOCK-form ~S" (cons head rest))
   (let* ((name (car rest))
 	 (body (cdr rest))
-	 (blo (make-ast parser 'blo :name name :freep nil :sites nil))
-	 (current (make-ast parser 'block-form :parent parent :blo blo))
+	 (blo (make-ast parser 'blo :name name :freep nil :sites nil :source name))
+	 (current (make-ast parser 'block-form :parent parent :source source :blo blo))
 	 (parsed-body (parse-body (augment-lexical-namespace blo parser) body current)))
     (setf (nso-definition blo) current)
     (setf (form-body current) parsed-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'return-from)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'return-from)) rest parent source)
   (assert (and (consp rest) (symbolp (car rest)) (or (null (cdr rest)) (and (consp (cdr rest)) (null (cddr rest))))) () "Cannot parse RETURN-FROM-form ~S" (cons head rest))
   (let* ((name (car rest))
 	 (value-form-p (not (null (cdr rest))))
 	 (value-form (cadr rest))
 	 (blo (namespace-lookup/create 'blo name parser))
-	 (current (make-ast parser 'return-from-form :parent parent :blo blo))
+	 (current (make-ast parser 'return-from-form :parent parent :source source :blo blo))
 	 (parsed-value (if value-form-p (parse parser value-form current) nil)))
     (setf (form-value current) parsed-value)
     (push current (nso-sites blo))
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'locally)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'locally)) rest parent source)
   (assert (and (consp rest) (consp (car rest))) () "Cannot parse LOCALLY-form ~S" (cons head rest))
   (let ((body rest)
-	(current (make-ast parser 'locally-form :parent parent)))
+	(current (make-ast parser 'locally-form :parent parent :source source)))
     (multiple-value-bind (body parsed-declspecs)
 	(parse-declaration-in-body parser body current)
       (setf (form-declspecs current) parsed-declspecs)
       (setf (form-body current) (parse-body parser body current)))
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'the)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'the)) rest parent source)
   (assert (and (consp rest) (or (symbolp (car rest)) (consp (car rest))) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse THE-form ~S" (cons head rest))
   (let* ((value-type-form (car rest))
 	 (value-form (cadr rest))
-	 (current (make-ast parser 'the-form :parent parent :type value-type-form))
+	 (current (make-ast parser 'the-form :parent parent :source source :type value-type-form))
 	 (parsed-value (parse parser value-form current)))
     (setf (form-value current) parsed-value)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'if)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'if)) rest parent source)
   (assert (and (consp rest) (consp (cdr rest)) (or (null (cddr rest)) (and (consp (cddr rest)) (null (cdddr rest))))) () "Cannot parse IF-form ~S" (cons head rest))
   (let* ((test-form (car rest))
 	 (then-form (cadr rest))
 	 (else-present (not (null (cddr rest))))
 	 (else-form (if else-present (caddr rest) nil))
-	 (current (make-ast parser 'if-form :parent parent))
+	 (current (make-ast parser 'if-form :parent parent :source source))
 	 (parsed-test (parse parser test-form current))
 	 (parsed-then (parse parser then-form current))
 	 (parsed-else (if else-present (parse parser else-form current) nil)))
     (setf (form-test current) parsed-test (form-then current) parsed-then (form-else current) parsed-else)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'setq)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'setq)) rest parent source)
   (let ((vars nil)
 	(values nil)
-	(current (make-ast parser 'setq-form :parent parent)))
+	(current (make-ast parser 'setq-form :parent parent :source source)))
     (loop do
 	 (when (null rest) (return))
 	 (assert (and (consp rest) (symbolp (car rest)) (consp (cdr rest))) () "Cannot parse SETQ-form part ~S" rest)
 	 (let* ((name (car rest))
 		(value-form (cadr rest))
 		(var (namespace-lookup/create 'var name parser))
-		(write-var (make-ast parser 'var-writing :parent current :var var))
+		(write-var (make-ast parser 'var-writing :parent current :var var :source var))
 		(parsed-value (parse parser value-form current)))
 	   (push write-var vars)
 	   (push parsed-value values)
@@ -1729,96 +1738,96 @@ restart
     (setf (form-values current) (nreverse values))
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'catch)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'catch)) rest parent source)
   (assert (consp rest) () "Cannot parse CATCH-form ~S" (cons head rest))
   (let* ((tag (car rest))
 	 (body (cdr rest))
-	 (current (make-ast parser 'catch-form :parent parent))
+	 (current (make-ast parser 'catch-form :parent parent :source source))
 	 (parsed-tag (parse parser tag current))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-tag current) parsed-tag (form-body current) parsed-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'throw)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'throw)) rest parent source)
   (assert (and (consp rest) (consp (cdr rest)) (null (cddr rest))) () "Cannot parse THROW-form ~S" (cons head rest))
   (let* ((tag (car rest))
 	 (result-form (cadr rest))
-	 (current (make-ast parser 'throw-form :parent parent))
+	 (current (make-ast parser 'throw-form :parent parent :source source))
 	 (parsed-tag (parse parser tag current))
 	 (parsed-value (parse parser result-form current)))
     (setf (form-tag current) parsed-tag (form-value current) parsed-value)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'eval-when)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'eval-when)) rest parent source)
   (assert (and (consp rest) (listp (car rest))) () "Cannot parse EVAL-WHEN-form ~S" (cons head rest))
   (let* ((situations-form (car rest))
 	 (body (cdr rest))
-	 (current (make-ast parser 'eval-when-form :parent parent :situations situations-form))
+	 (current (make-ast parser 'eval-when-form :parent parent :source source :situations situations-form))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-body current) parsed-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'load-time-value)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'load-time-value)) rest parent source)
   (assert (and (consp rest) (or (null (cdr rest)) (and (consp (cdr rest)) (null (cddr rest))))) () "Cannot parse LOAD-TIME-VALUE-form ~S" (cons head rest))
   (let* ((value-form (car rest))
 	 (readonly (cadr rest)))
     (assert (position (cadr rest) '(nil t)) () "READ-ONLY-P in LOAD-TIME-VALUE-form ~S must be either NIL or T, but is ~S" (cons head rest) readonly)
-	      (let* ((current (make-ast parser 'load-time-value-form :parent parent :readonly readonly))
+	      (let* ((current (make-ast parser 'load-time-value-form :parent parent :source source :readonly readonly))
 		     (parsed-value (parse (make-instance 'parser-copy :free-namespace (parser-free-namespace parser)) value-form current))) ;Note that dynamic variables must be parsed: in the form (LOAD-TIME-VALUE *A*), *A* must refer to the global *A*.
 		(setf (form-value current) parsed-value)
 		current)))
 
-(defmethod parse-form ((parser parser) (head (eql 'quote)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'quote)) rest parent source)
   (assert (and (consp rest) (null (cdr rest))) () "Cannot parse QUOTE-form ~S" (cons head rest))
   (let* ((object (car rest)))
-    (make-ast parser 'quote-form :parent parent :object object)))
+    (make-ast parser 'quote-form :parent parent :source source :object object)))
 
-(defmethod parse-form ((parser parser) (head (eql 'multiple-value-call)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'multiple-value-call)) rest parent source)
   (assert (and (consp rest) (listp (cdr rest))) () "Cannot parse ~S-form ~S" head (cons head rest))
   (let* ((function-form (car rest))
 	 (body (cdr rest))
-	 (current (make-ast parser 'multiple-value-call-form :parent parent))
+	 (current (make-ast parser 'multiple-value-call-form :parent parent :source source))
 	 (parsed-function (parse parser function-form current))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-function current) parsed-function (form-body current) parsed-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'multiple-value-prog1)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'multiple-value-prog1)) rest parent source)
   (assert (and (consp rest) (listp (cdr rest))) () "Cannot parse ~S-form ~S" head (cons head rest))
   (let* ((function-form (car rest))
 	 (body (cdr rest))
-	 (current (make-ast parser 'multiple-value-prog1-form :parent parent))
+	 (current (make-ast parser 'multiple-value-prog1-form :parent parent :source source))
 	 (parsed-function (parse parser function-form current))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-values current) parsed-function (form-body current) parsed-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'progv)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'progv)) rest parent source)
   (assert (and (consp rest) (consp (cdr rest))) () "Cannot parse PROGV-form ~S" (cons head rest))
   ;; Note that in (PROGV SYMBOLS VALUES . BODY), both SYMBOLS and VALUES are evaluated, and thus the dynamic variable names are not known at compile- and load-time, only at run-time.
   (let* ((symbols-form (car rest))
 	 (values-form (cadr rest))
 	 (body (cddr rest))
-	 (current (make-ast parser 'progv-form :parent parent))
+	 (current (make-ast parser 'progv-form :parent parent :source source))
 	 (parsed-symbols (parse parser symbols-form current))
 	 (parsed-values (parse parser values-form current))
 	 (parsed-body (parse-body parser body current)))
     (setf (form-symbols current) parsed-symbols (form-values current) parsed-values (form-body current) parsed-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'unwind-protect)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'unwind-protect)) rest parent source)
   (assert (consp rest) () "Cannot parse UNWIND-PROTECT-form ~S" (cons head rest))
   (let* ((protected-form (car rest))
 	 (cleanup-body (cdr rest))
-	 (current (make-ast parser 'unwind-protect-form :parent parent))
+	 (current (make-ast parser 'unwind-protect-form :parent parent :source source))
 	 (parsed-protected (parse parser protected-form current))
 	 (parsed-cleanup-body (parse-body parser cleanup-body current)))
     (setf (form-protected current) parsed-protected (form-body current) parsed-cleanup-body)
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'tagbody)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'tagbody)) rest parent source)
   (let ((body rest)
-	(current (make-ast parser 'tagbody-form :parent parent))
+	(current (make-ast parser 'tagbody-form :parent parent :source source))
 	(tags nil))
     (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
     ;; pass over BODY thrice: in the first pass, establish lexical TAGs, because a GO-form referencing a tag defined after the GO would not know about the tag; in the second, create the parsed body (containing GO-FORMs); in the third, set slot :GOPOINT of the TAGs to the correct position in the parsed body list.
@@ -1827,13 +1836,13 @@ restart
 	   ;; The CLHS for TAGBODY says "The determination of which elements of the body are tags and which are statements is made prior to any macro expansion of that element. If a statement is a macro form and its macro expansion is an atom, that atom is treated as a statement, not a tag.". So we know symbols in the body are always tags, and that later in macro-expansion we cannot ever produce a tag.
 	   ((atom form)
 	    (assert (symbolp form) () "Cannot parse TAGBODY-form: it must only contain tags (which must be symbols) or conses, but contains ~S" form)
-	    (let ((tag (make-ast parser 'tag :name form :freep nil :definition current :sites nil))) ;:gopoint is defined below
+	    (let ((tag (make-ast parser 'tag :name form :freep nil :definition current :sites nil :source form))) ;:gopoint is defined below
 	      (setf parser (augment-lexical-namespace tag parser)) ;after this, PARSER is a copy
 	      (push tag tags)))))
     (let ((parsed-body (loop for form in body collect
 			    (cond
 			      ((atom form)
-			       (make-ast parser 'tagpoint :parent current :tag (namespace-lookup 'tag form (parser-lexical-namespace parser))))
+			       (make-ast parser 'tagpoint :parent current :source form :tag (namespace-lookup 'tag form (parser-lexical-namespace parser))))
 			      (t
 			       (parse parser form current))))))
       (loop for parsed-form-rest on parsed-body do
@@ -1846,18 +1855,18 @@ restart
       (setf (form-tags current) (nreverse tags)))
     current))
 
-(defmethod parse-form ((parser parser) (head (eql 'go)) rest parent)
+(defmethod parse-form ((parser parser) (head (eql 'go)) rest parent source)
   (assert (and (consp rest) (symbolp (car rest)) (null (cdr rest))) () "Cannot parse GO-form ~S" (cons head rest))
   (let ((tag-name (car rest)))
     (let* ((tag (namespace-lookup/create 'tag tag-name parser))
-	   (current (make-ast parser 'go-form :parent parent :tag tag)))
+	   (current (make-ast parser 'go-form :parent parent :source source :tag tag)))
       (push current (nso-sites tag))
       current)))
 
-(defun parse-macro-or-function-application (parser macrop fun arg-forms parent)
+(defun parse-macro-or-function-application (parser macrop fun arg-forms parent source)
   (let* ((current (if macrop
-		      (make-ast parser 'macroapplication-form :parent parent :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
-		      (make-ast parser 'application-form :parent parent :fun fun :recursivep (is-recursive fun parent))))
+		      (make-ast parser 'macroapplication-form :parent parent :source source :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
+		      (make-ast parser 'application-form :parent parent :source source :fun fun :recursivep (is-recursive fun parent))))
 	 (funobj (function-object fun)))
     (unless (typep funobj 'lambda-form)
       (push current (nso-sites funobj)))
@@ -1867,22 +1876,22 @@ restart
       (setf (form-arguments current) parsed-arguments))
     current))
 
-(defmethod parse-form ((parser parser) (head symbol) rest parent)
+(defmethod parse-form ((parser parser) (head symbol) rest parent source)
   (let* ((fun-name head)
 	 (arg-forms rest)
 	 (fun (namespace-lookup/create 'fun fun-name parser))
 	 (macrop (nso-macrop fun)))
-    (parse-macro-or-function-application parser macrop fun arg-forms parent)))
+    (parse-macro-or-function-application parser macrop fun arg-forms parent source)))
 
-(defmethod parse-form ((parser parser) head rest parent)
+(defmethod parse-form ((parser parser) head rest parent source)
   (cond
     ;; allow '((LAMBDA (X) X) 1), which is legal Common Lisp.
     ((and (consp head) (eql (car head) 'lambda))
      (let ((fun (parse parser head parent))
 	   (arg-forms rest))
-       (parse-macro-or-function-application parser nil fun arg-forms parent)))
+       (parse-macro-or-function-application parser nil fun arg-forms parent source)))
     (t
-     (error "Function or macro application must start with a symbol, but is~%~W" (cons head rest)))))
+     (error "Function or macro application must start with a symbol, but is~%~W" source))))
 
 (defun parse-with-namespace (form &key (parser (make-parser :variables nil :functions nil :macros nil)))
   "Parse FORM using the PARSER, and any occurring declarations using DECLSPEC-PARSER. Use FREE-NAMESPACE as the free namespace.
