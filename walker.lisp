@@ -1118,6 +1118,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((parent :initarg :parent :accessor form-parent)
    (source :initarg :source :accessor form-source :documentation "The source of the VAR-WRITING.")
    (var :initarg :var :accessor form-var :documentation "The VAR being written")
+   ;; do not add a slot VALUE, since we could add a form for which the value is not known at compile-time.
    (user :initform nil :initarg :user :accessor user))
   (:documentation "VAR is being accessed for writing. CLHS 3.1.2.1.1 Symbols as Forms"))
 (defclass body-form ()
