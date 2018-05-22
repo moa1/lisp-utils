@@ -360,7 +360,8 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (:documentation "This method is called to create an instance or part of an AST. Override to set e.g. a custom USER slot."))
 
 (defmethod make-ast ((parser parser) type &rest arguments)
-  (assert (let ((cdr (member :source arguments))) (and (consp cdr) (consp (cdr cdr)))) () "MAKE-AST requires a :SOURCE slot.")
+  (and (subtypep type '(or walker:nso walker:form))
+       (assert (let ((cdr (member :source arguments))) (and (consp cdr) (consp (cdr cdr)))) () "MAKE-AST requires a :SOURCE slot."))
   (apply #'make-instance type arguments))
 
 ;; TODO: maybe remove #'COPY-DEEP-NAMESPACE and #'COPY-DEEP-PARSER, because they are false friends, because the free namespaces modified in the child parser copy is not changed in the parent parser copy (maybe only for debugging)
