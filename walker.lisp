@@ -113,7 +113,6 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form :parent :form-parent :source :form-source :user
    :object-form :object :form-object
    :var-reading :var :form-var
-   :var-writing :parent :form-parent :source :form-source :var :form-var :user
    :body-form :body :form-body
    :special-form
    :function-form :object :form-object
@@ -136,7 +135,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :locally-form :declspecs :form-declspecs
    :the-form :type :form-type :value :form-value
    :if-form :test :form-test :then :form-then :else :form-else
-   :setq-form :vars :form-vars :values :form-values
+   :var-writing :parent :form-parent :source :form-source :var :form-var :value :form-value :user
+   :setq-form :vars :form-vars
    :catch-form :tag :form-tag
    :throw-form :tag :form-tag :value :form-value
    :eval-when-form :situations :form-situations
@@ -1130,13 +1130,6 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass var-reading (form)
   ((var :initarg :var :accessor form-var :documentation "The VAR being read"))
   (:documentation "VAR is being accessed for reading. CLHS 3.1.2.1.1 Symbols as Forms. Note that this form is not to be used for variable declarations. This is a subclass of FORM, so that all elements of a correct Lisp form are a type of FORM."))
-(defclass var-writing ()
-  ((parent :initarg :parent :accessor form-parent)
-   (source :initarg :source :accessor form-source :documentation "The source of the VAR-WRITING.")
-   (var :initarg :var :accessor form-var :documentation "The VAR being written")
-   ;; do not add a slot VALUE, since we could add a form for which the value is not known at compile-time.
-   (user :initform nil :initarg :user :accessor user))
-  (:documentation "VAR is being accessed for writing. CLHS 3.1.2.1.1 Symbols as Forms"))
 (defclass body-form ()
   ((body :initarg :body :accessor form-body :type list :documentation "list of FORMs"))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
@@ -1196,9 +1189,15 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ((test :initarg :test :accessor form-test :type form)
    (then :initarg :then :accessor form-then :type form)
    (else :initarg :else :accessor form-else :type (or null form))))
+(defclass var-writing ()
+  ((parent :initarg :parent :accessor form-parent)
+   (source :initarg :source :accessor form-source :documentation "The source of the VAR-WRITING.")
+   (var :initarg :var :accessor form-var :documentation "The VAR being written")
+   (value :initarg :value :accessor form-value :documentation "The value being written to VAR")
+   (user :initform nil :initarg :user :accessor user))
+  (:documentation "VAR is being accessed for writing. CLHS 3.1.2.1.1 Symbols as Forms"))
 (defclass setq-form (special-form)
-  ((vars :initarg :vars :accessor form-vars :type list :documentation "list of VAR-WRITINGs")
-   (values :initarg :values :accessor form-values :type list :documentation "list of FORMs")))
+  ((vars :initarg :vars :accessor form-vars :type list :documentation "list of VAR-WRITINGs")))
 (defclass catch-form (special-form body-form)
   ((tag :initarg :tag :accessor form-tag :type form)))
 (defclass throw-form (special-form)
@@ -1245,9 +1244,6 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (form-object object))))
 (defmethod print-object ((object var-reading) stream)
-  (print-unreadable-object (object stream :type t)
-    (format stream "~S" (form-var object))))
-(defmethod print-object ((object var-writing) stream)
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (form-var object))))
 (defmethod print-object ((object function-form) stream)
@@ -1299,12 +1295,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (if (null (form-else object))
 	(format stream "~S ~S" (form-test object) (form-then object))
 	(format stream "~S ~S ~S" (form-test object) (form-then object) (form-else object)))))
+(defmethod print-object ((object var-writing) stream)
+  (print-unreadable-object (object stream :type t)
+    (format stream "~S ~S" (form-var object) (form-value object))))
 (defmethod print-object ((object setq-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (when (not (null (form-vars object)))
-      (format stream "~S ~S" (car (form-vars object)) (car (form-values object)))
-      (loop for var in (cdr (form-vars object)) for value in (cdr (form-values object)) do
-	   (format stream " ~S ~S" var value)))))
+    (format stream "vars:~S" (form-vars object))))
 (defmethod print-object ((object catch-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S body:~S" (form-tag object) (form-body object))))
@@ -1737,7 +1733,6 @@ restart
 
 (defmethod parse-form ((parser parser) (head (eql 'setq)) rest parent source)
   (let ((vars nil)
-	(values nil)
 	(current (make-ast parser 'setq-form :parent parent :source source)))
     (loop do
 	 (when (null rest) (return))
@@ -1745,14 +1740,12 @@ restart
 	 (let* ((name (car rest))
 		(value-form (cadr rest))
 		(var (namespace-lookup/create 'var name parser))
-		(write-var (make-ast parser 'var-writing :parent current :var var :source var))
-		(parsed-value (parse parser value-form current)))
+		(parsed-value (parse parser value-form current))
+		(write-var (make-ast parser 'var-writing :parent current :var var :value parsed-value :source (subseq rest 0 2))))
 	   (push write-var vars)
-	   (push parsed-value values)
 	   (push write-var (nso-sites var)))
 	 (setf rest (cddr rest)))
     (setf (form-vars current) (nreverse vars))
-    (setf (form-values current) (nreverse values))
     current))
 
 (defmethod parse-form ((parser parser) (head (eql 'catch)) rest parent source)
@@ -2445,8 +2438,6 @@ Returns three values: a list containing the lexical namespaces, a list containin
   (form-object ast))
 (defmethod deparse ((deparser deparser) (ast var-reading))
   (nso-name (form-var ast)))
-(defmethod deparse ((deparser deparser) (ast var-writing))
-  (nso-name (form-var ast)))
 (defmethod deparse ((deparser deparser) (ast function-form))
   (list 'function
 	(deparse deparser (form-object ast))))
@@ -2507,11 +2498,11 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	 (deparse deparser (form-then ast))
 	 (when (form-else ast)
 	   (list (deparse deparser (form-else ast))))))
+(defmethod deparse ((deparser deparser) (ast var-writing))
+  (list (nso-name (form-var ast)) (deparse deparser (form-value ast))))
 (defmethod deparse ((deparser deparser) (ast setq-form))
   (list* 'setq
-	 (apply #'nconc (loop for var in (form-vars ast) for value in (form-values ast) collect
-			     (list (deparse deparser var)
-				   (deparse deparser value))))))
+	 (apply #'nconc (loop for var in (form-vars ast) collect (deparse deparser var)))))
 (defmethod deparse ((deparser deparser) (ast catch-form))
   (list* 'catch
 	 (deparse deparser (form-tag ast))

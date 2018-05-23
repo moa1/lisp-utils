@@ -396,14 +396,13 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	       (find-abort-form-or dead-args dead-fun))))))
       (walker:setq-form
        (let ((dead nil)
-	     (values nil))
-	 (loop for value in (walker:form-values ast) do
+	     (vars nil))
+	 (loop for var in (walker:form-vars ast) do
 	      (when (prog1 dead ;if DEAD is NIL, do not remove code yet
-		      (or dead (setf dead (recurse! value))))
+		      (or dead (setf dead (recurse! (walker:form-value var)))))
 		(return))
-	      (push value values))
-	 (setf (walker:form-vars ast) (subseq (walker:form-vars ast) 0 (length values)))
-	 (setf (walker:form-values ast) (nreverse values))
+	      (push var vars))
+	 (setf (walker:form-vars ast) (subseq (walker:form-vars ast) 0 (length vars)))
 	 dead))
       (walker:if-form
        (let ((test-dead (recurse! (walker:form-test ast))))
