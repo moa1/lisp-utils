@@ -160,34 +160,40 @@
 
 ;;;; DEPARSER
 
-(defmethod walker:deparse ((deparser walker:deparser) (ast multiple-value-bind-form))
+(defmethod walker:deparse ((deparser walker:deparser) (ast multiple-value-bind-form) path)
   (list* 'multiple-value-bind
-	 (mapcar (lambda (var) (walker:deparse deparser var)) (walker:form-vars ast))
-	 (walker:deparse deparser (walker:form-values ast))
-	 (walker:deparse-body deparser ast t nil)))
-(defmethod walker:deparse ((deparser walker:deparser) (ast values-form))
-  (list* 'values (loop for value in (walker:form-values ast) collect
-		      (walker:deparse deparser value))))
-(defmethod walker:deparse ((deparser walker:deparser) (ast nth-value-form))
+	 (walker:deparse-path-list deparser (walker:form-vars ast) path)
+	 (walker:deparse-path deparser (walker:form-values ast) path)
+	 (walker:deparse-body deparser ast path t nil)))
+
+(defmethod walker:deparse ((deparser walker:deparser) (ast values-form) path)
+  (list* 'values
+	 (walker:deparse-path-list deparser (walker:form-values ast) path)))
+
+(defmethod walker:deparse ((deparser walker:deparser) (ast nth-value-form) path)
   (list* 'nth-value
-	 (walker:deparse deparser (walker:form-value ast))
-	 (walker:deparse deparser (walker:form-values ast))))
-(defmethod walker:deparse ((deparser walker:deparser) (ast defun-form))
+	 (walker:deparse-path deparser (walker:form-value ast) path)
+	 (walker:deparse-path deparser (walker:form-values ast) path)))
+
+(defmethod walker:deparse ((deparser walker:deparser) (ast defun-form) path)
   (list* 'defun
-	 (walker:deparse deparser (walker:form-sym ast))
-	 (walker:deparse deparser (walker:form-llist ast))
-	 (walker:deparse-body deparser ast t t)))
-(defmethod walker:deparse ((deparser walker:deparser) (ast declaim-form))
+	 (walker:deparse-path deparser (walker:form-sym ast) path)
+	 (walker:deparse-path deparser (walker:form-llist ast) path)
+	 (walker:deparse-body deparser ast path t t)))
+
+(defmethod walker:deparse ((deparser walker:deparser) (ast declaim-form) path)
   (list* 'declaim
-	 (walker:deparse deparser (walker:form-declspecs ast))))
-(defmethod walker:deparse ((deparser walker:deparser) (ast funcall-form))
+	 (walker:deparse-path deparser (walker:form-declspecs ast) path)))
+
+(defmethod walker:deparse ((deparser walker:deparser) (ast funcall-form) path)
   (list* 'funcall
-	 (walker:deparse deparser (walker:form-var ast))
-	 (mapcar (lambda (arg) (walker:deparse deparser arg)) (walker:form-arguments ast))))
-(defmethod walker:deparse ((deparser walker:deparser) (ast assert-form))
+	 (walker:deparse-path deparser (walker:form-var ast) path)
+	 (walker:deparse-path-list deparser (walker:form-arguments ast) path)))
+
+(defmethod walker:deparse ((deparser walker:deparser) (ast assert-form) path)
   ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
   (list 'assert
-	(walker:deparse deparser (walker:form-test ast))))
+	(walker:deparse-path deparser (walker:form-test ast) path)))
 
 ;;;; ARGUMENTS AND LAMBDA LISTS
 
@@ -546,7 +552,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	   (let ((ast (walker:parse-with-namespace form :parser (walker:make-parser :type 'parser-plus))))
 	     (when (remove-dead-code! ast)
 	       (setf ast (walker:make-nil nil)))
-	     (let ((actual (walker:deparse (make-instance 'walker:deparser) ast)))
+	     (let ((actual (walker:deparse (make-instance 'walker:deparser) ast nil)))
 	       (assert (equal actual expected) () "Remove dead code in ~S~%gave ~S,~%but should have been ~S" form actual expected)))))
     (assert-result '(block nil (+ 1 (return-from nil) 2)) '(block nil (+ 1 (return-from nil) nil)))
     (assert-result '(block nil (progn 1 (return-from nil) 2) 3) '(block nil (progn 1 (return-from nil))))
@@ -578,7 +584,8 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
   (or (walker:nso-freep nso)
       (let ((definition (walker:nso-definition nso))) ;the AST that the NSO is defined in
 	(block search-definition
-	  (walker:map-ast (lambda (ast)
+	  (walker:map-ast (lambda (ast path)
+			    (declare (ignore path))
 			    (when (eq definition ast)
 			      (return-from search-definition nil)))
 			  ast)
@@ -589,13 +596,13 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
   (let ((accessed (make-hash-table))
 	(written (make-hash-table))
 	(defined (make-hash-table)))
-    (walker:map-ast (lambda (ast)
+    (walker:map-ast (lambda (ast path)
+		      (declare (ignore path))
 		      (cond
 			((typep ast 'walker:var-reading)
 			 (incf (gethash (walker:form-var ast) accessed 0)))
 			((typep ast 'walker:var-writing)
-			 (incf (gethash (walker:form-var ast) written 0))
-			 (incf (gethash (walker:form-var ast) accessed 0)))
+			 (incf (gethash (walker:form-var ast) written 0)))
 			((typep ast 'walker:nso)
 			 (incf (gethash ast accessed 0)))
 			((or (typep ast 'walker:let-form) (typep ast 'walker:let*-form) (typep ast 'walker:flet-form) (typep ast 'walker:labels-form))

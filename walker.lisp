@@ -173,8 +173,11 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; DEPARSER
    :deparser
    :deparse
+   :deparse-path
+   :deparse-path-list
    :deparse-body
-   :deparser-map-ast :function :deparser-function
+   :deparser-map-ast-before :function :deparser-function :result :deparser-result
+   :deparser-map-ast-after :function :deparser-function :result :deparser-result
    :map-ast
    ))
 
@@ -2326,256 +2329,340 @@ Returns three values: a list containing the lexical namespaces, a list containin
   ()
   (:documentation "An instance of this class is the first argument to every #'DEPARSE method. Inherit from it if you want to customize the deparsing process."))
 
-(defgeneric deparse (deparser ast)
-  (:documentation "Generate from the abstract syntax tree AST the corresponding Lisp forms with DEPARSER."))
+(defgeneric deparse (deparser ast path)
+  (:documentation "Generate from the abstract syntax tree AST the corresponding Lisp forms with DEPARSER. PATH is a list describing the position of AST in the abstract syntax tree, whose root form is NIL."))
 
-(defmethod deparse ((deparser deparser) (nso nso))
+(defmacro deparse-path (deparser form path)
+  "Deparse the form FORM, i.e. call (DEPARSE ,DEPARSER ,FORM ,PATH) with an appropriate PATH."
+  (let ((form-path (car form))
+	(ast (cadr form)))
+    (assert (symbolp form-path))
+    ;;(assert (typep ast '(member declspec argument llist ast)))
+    (assert (symbolp ast))
+    (assert (symbolp path))
+    `(deparse ,deparser ,form (cons ',form-path ,path))))
+
+(defmacro deparse-path-list (deparser form-list path)
+  "Deparse the list of forms FORMS-LIST, i.e. call (MAPCAR (LAMBDA (X) (DEPARSE ,DEPARSER X ,PATH)) ,FORM-LIST), and pass a PATH describing the position of X in the AST (abstract syntax tree)."
+  (let ((form-path (car form-list))
+	(ast (cadr form-list)))
+    (assert (symbolp form-path))
+    ;;(assert (typep ast '(member declspec argument llist ast)))
+    (assert (symbolp ast))
+    (assert (symbolp path))
+    `(loop for i from 0 for form in ,form-list collect
+	  (deparse ,deparser form (cons (list ',form-path i) ,path)))))
+
+;; NSOs
+
+(defmethod deparse ((deparser deparser) (nso nso) path)
   (nso-name nso))
 
-(defmethod deparse ((deparser deparser) (declspec declspec-type))
+;; DECLSPECs
+
+(defmethod deparse ((deparser deparser) (declspec declspec-type) path)
   (list* 'type
 	 (declspec-type declspec) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-	 (mapcar (lambda (var) (deparse deparser var))
-		 (declspec-vars declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-ftype))
+	 (deparse-path-list deparser (declspec-vars declspec) path)))
+
+(defmethod deparse ((deparser deparser) (declspec declspec-ftype) path)
   (list* 'ftype
 	 (declspec-type declspec) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-	 (mapcar (lambda (fun) (deparse deparser fun))
-		 (declspec-funs declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-optimize))
+	 (deparse-path-list deparser (declspec-funs declspec) path)))
+
+(defmethod deparse ((deparser deparser) (declspec declspec-optimize) path)
   (list* 'optimize
 	 (mapcar (lambda (acons)
 		   (let ((quality (car acons)) (value (cdr acons)))
 		     (if (null value) quality (list quality value)))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
 		 (declspec-qualities declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-ignore))
-  (list* 'ignore
-	 (mapcar (lambda (sym) (deparse deparser sym))
-		 (declspec-syms declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-ignorable))
-  (list* 'ignorable
-	 (mapcar (lambda (sym) (deparse deparser sym))
-		 (declspec-syms declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-dynamic-extent))
-  (list* 'dynamic-extent
-	 (mapcar (lambda (sym) (deparse deparser sym))
-		 (declspec-syms declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-inline))
-  (list* 'inline
-	 (mapcar (lambda (fun) (deparse deparser fun))
-		 (declspec-funs declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-notinline))
-  (list* 'notinline
-	 (mapcar (lambda (fun) (deparse deparser fun))
-		 (declspec-funs declspec))))
-(defmethod deparse ((deparser deparser) (declspec declspec-special))
-  (list* 'special
-	 (mapcar (lambda (var) (deparse deparser var))
-		 (declspec-vars declspec))))
 
-(defmethod deparse ((deparser deparser) (argument required-argument))
-  (deparse deparser (argument-var argument)))
-(defmethod deparse ((deparser deparser) (argument optional-argument))
-  (cons (deparse deparser (argument-var argument))
+(defmethod deparse ((deparser deparser) (declspec declspec-ignore) path)
+  (list* 'ignore
+	 (deparse-path-list deparser (declspec-syms declspec) path)))
+
+(defmethod deparse ((deparser deparser) (declspec declspec-ignorable) path)
+  (list* 'ignorable
+	 (deparse-path-list deparser (declspec-syms declspec) path)))
+
+(defmethod deparse ((deparser deparser) (declspec declspec-dynamic-extent) path)
+  (list* 'dynamic-extent
+	 (deparse-path-list deparser (declspec-syms declspec) path)))
+
+(defmethod deparse ((deparser deparser) (declspec declspec-inline) path)
+  (list* 'inline
+	 (deparse-path-list deparser (declspec-funs declspec) path)))
+
+(defmethod deparse ((deparser deparser) (declspec declspec-notinline) path)
+  (list* 'notinline
+	 (deparse-path-list deparser (declspec-funs declspec) path)))
+
+(defmethod deparse ((deparser deparser) (declspec declspec-special) path)
+  (list* 'special
+	 (deparse-path-list deparser (declspec-vars declspec) path)))
+
+;; ARGUMENTs and LLISTs
+
+(defmethod deparse ((deparser deparser) (argument required-argument) path)
+  (deparse-path deparser (argument-var argument) path))
+
+(defmethod deparse ((deparser deparser) (argument optional-argument) path)
+  (cons (deparse deparser (argument-var argument) path)
 	(when (argument-init argument)
-	  (cons (deparse deparser (argument-init argument))
+	  (cons (deparse-path deparser (argument-init argument) path)
 		(when (argument-suppliedp argument)
-		  (list (deparse deparser (argument-suppliedp argument))))))))
-(defmethod deparse ((deparser deparser) (argument rest-argument))
-  (deparse deparser (argument-var argument)))
-(defmethod deparse ((deparser deparser) (argument body-argument))
-  (deparse deparser (argument-var argument)))
-(defmethod deparse ((deparser deparser) (argument key-argument))
+		  (list (deparse-path deparser (argument-suppliedp argument) path)))))))
+
+(defmethod deparse ((deparser deparser) (argument rest-argument) path)
+  (deparse-path deparser (argument-var argument) path))
+
+(defmethod deparse ((deparser deparser) (argument body-argument) path)
+  (deparse-path deparser (argument-var argument) path))
+
+(defmethod deparse ((deparser deparser) (argument key-argument) path)
   (cons (if (argument-keywordp argument)
 	    (list (argument-keyword argument)
-		  (deparse deparser (argument-var argument)))
-	    (deparse deparser (argument-var argument)))
+		  (deparse-path deparser (argument-var argument) path))
+	    (deparse-path deparser (argument-var argument) path))
 	(when (argument-init argument)
-	  (cons (deparse deparser (argument-init argument))
+	  (cons (deparse-path deparser (argument-init argument) path)
 		(when (argument-suppliedp argument)
-		  (cons (deparse deparser (argument-suppliedp argument))
+		  (cons (deparse-path deparser (argument-suppliedp argument) path)
 			nil))))))
-(defmethod deparse ((deparser deparser) (argument aux-argument))
-  (cons (deparse deparser (argument-var argument))
-	(when (argument-init argument)
-	  (deparse deparser (argument-init argument)))))
-(defmethod deparse ((deparser deparser) (llist ordinary-llist))
-  (nconc
-   (mapcar (lambda (x) (deparse deparser x)) (llist-required llist))
-   (let ((it (llist-optional llist))) (when it (cons '&optional (mapcar (lambda (x) (deparse deparser x)) it))))
-   (let ((it (llist-rest llist))) (when it (list '&rest (deparse deparser it))))
-   (let ((it (llist-key llist))) (when it (cons '&key (mapcar (lambda (x) (deparse deparser x)) it))))
-   (let ((it (llist-allow-other-keys llist))) (when it (list '&allow-other-keys)))
-   (let ((it (llist-aux llist))) (when it (cons '&aux (mapcar (lambda (x) (deparse deparser x)) it))))))
-(defmethod deparse ((deparser deparser) (llist macro-llist))
-  (nconc
-   (let ((it (llist-whole llist))) (when it (list '&whole (deparse deparser it))))
-   (let ((it (llist-environment llist))) (when it (list '&environment (deparse deparser it))))
-   (mapcar (lambda (x) (deparse deparser x)) (llist-required llist))
-   (let ((it (llist-optional llist))) (when it (cons '&optional (mapcar (lambda (x) (deparse deparser x)) it))))
-   (let ((it (llist-rest llist))) (when it (list '&rest (deparse deparser it))))
-   (let ((it (llist-body llist))) (when it (list '&body (deparse deparser it))))
-   (let ((it (llist-key llist))) (when it (cons '&key (mapcar (lambda (x) (deparse deparser x)) it))))
-   (let ((it (llist-allow-other-keys llist))) (when it (list '&allow-other-keys)))
-   (let ((it (llist-aux llist))) (when it (cons '&aux (mapcar (lambda (x) (deparse deparser x)) it))))))
 
-(defun deparse-body (deparser ast declspecsp documentationp)
-  (flet ((rec (list)
-	   (mapcar (lambda (x) (deparse deparser x)) list)))
+(defmethod deparse ((deparser deparser) (argument aux-argument) path)
+  (cons (deparse-path deparser (argument-var argument) path)
+	(when (argument-init argument)
+	  (deparse-path deparser (argument-init argument) path))))
+
+(defmethod deparse ((deparser deparser) (llist ordinary-llist) path)
+  (nconc
+   (deparse-path-list deparser (llist-required llist) path)
+   (when (llist-optional llist) (cons '&optional (deparse-path-list deparser (llist-optional llist) path)))
+   (when (llist-rest llist) (list '&rest (deparse-path deparser (llist-rest llist) path)))
+   (when (llist-key llist) (cons '&key (deparse-path-list deparser (llist-key llist) path)))
+   (when (llist-allow-other-keys llist) (list '&allow-other-keys))
+   (when (llist-aux llist) (cons '&aux (deparse-path-list deparser (llist-aux llist) path)))))
+
+(defmethod deparse ((deparser deparser) (llist macro-llist) path)
+  (nconc
+   (when (llist-whole llist) (list '&whole (deparse-path deparser (llist-whole llist) path)))
+   (when (llist-environment llist) (list '&environment (deparse-path deparser (llist-environment llist) path)))
+   (deparse-path-list deparser (llist-required llist) path)
+   (when (llist-optional llist) (cons '&optional (deparse-path-list deparser (llist-optional llist) path)))
+   (when (llist-rest llist) (list '&rest (deparse-path deparser (llist-rest llist) path)))
+   (when (llist-body llist) (list '&body (deparse-path deparser (llist-body llist) path)))
+   (when (llist-key llist) (cons '&key (deparse-path-list deparser (llist-key llist) path)))
+   (when (llist-allow-other-keys llist) (list '&allow-other-keys))
+   (when (llist-aux llist) (cons '&aux (deparse-path-list deparser (llist-aux llist) path)))))
+
+;; FORMS
+(defun deparse-body (deparser ast path declspecsp documentationp)
+  (flet ((debody (ast)
+	   (deparse-path-list deparser (form-body ast) path))
+	 (dedeclspecs (ast)
+	   (deparse-path-list deparser (form-declspecs ast) path)))
     (if (and documentationp (form-documentation ast))
 	(if (and declspecsp (form-declspecs ast))
 	    (list* (form-documentation ast) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-		   (cons 'declare (rec (form-declspecs ast)))
-		   (rec (form-body ast)))
+		   (cons 'declare (dedeclspecs ast))
+		   (debody ast))
 	    (list* (form-documentation ast)
-		   (rec (form-body ast))))
+		   (debody ast)))
 	(if (and declspecsp (form-declspecs ast))
-	    (list* (cons 'declare (rec (form-declspecs ast)))
-		   (rec (form-body ast)))
-	    (rec (form-body ast))))))
+	    (list* (cons 'declare (dedeclspecs ast))
+		   (debody ast))
+	    (debody ast)))))
 
-(defmethod deparse ((deparser deparser) (ast object-form))
+(defmethod deparse ((deparser deparser) (ast object-form) path)
   (form-object ast))
-(defmethod deparse ((deparser deparser) (ast var-reading))
+
+(defmethod deparse ((deparser deparser) (ast var-reading) path)
   (nso-name (form-var ast)))
-(defmethod deparse ((deparser deparser) (ast function-form))
+
+(defmethod deparse ((deparser deparser) (ast function-form) path)
   (list 'function
-	(deparse deparser (form-object ast))))
-(defmethod deparse ((deparser deparser) (ast progn-form))
+	(deparse-path deparser (form-object ast) path)))
+
+(defmethod deparse ((deparser deparser) (ast progn-form) path)
   (list* 'progn
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast var-binding))
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast var-binding) path)
   (if (or (form-value ast)
 	  (nso-macrop (form-sym ast))) ;(SYMBOL-MACROLET ((A NIL)) A) must not be converted to (SYMBOL-MACROLET ((A)) A)
-      (list (deparse deparser (form-sym ast))
+      (list (deparse-path deparser (form-sym ast) path)
 	    (if (typep (form-value ast) 'form)
-		(deparse deparser (form-value ast))
+		(deparse-path deparser (form-value ast) path)
 		(form-value ast)))
-      (deparse deparser (form-sym ast))))
-(defmethod deparse ((deparser deparser) (ast let-form))
+      (deparse-path deparser (form-sym ast) path)))
+
+(defmethod deparse ((deparser deparser) (ast let-form) path)
   (list* 'let
-	 (mapcar (lambda (binding) (deparse deparser binding)) (form-bindings ast))
-	 (deparse-body deparser ast t nil)))
-(defmethod deparse ((deparser deparser) (ast let*-form))
+	 (deparse-path-list deparser (form-bindings ast) path)
+	 (deparse-body deparser ast path t nil)))
+
+(defmethod deparse ((deparser deparser) (ast let*-form) path)
   (list* 'let*
-	 (mapcar (lambda (binding) (deparse deparser binding)) (form-bindings ast))
-	 (deparse-body deparser ast t nil)))
-(defmethod deparse ((deparser deparser) (ast block-form))
+	 (deparse-path-list deparser (form-bindings ast) path)
+	 (deparse-body deparser ast path t nil)))
+
+(defmethod deparse ((deparser deparser) (ast block-form) path)
   (list* 'block
-	 (deparse deparser (form-blo ast))
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast fun-binding))
-  (list* (deparse deparser (form-sym ast))
-	 (deparse deparser (form-llist ast))
-	 (deparse-body deparser ast t t)))
-(defmethod deparse ((deparser deparser) (ast flet-form))
+	 (deparse-path deparser (form-blo ast) path)
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast fun-binding) path)
+  (list* (deparse-path deparser (form-sym ast) path)
+	 (deparse-path deparser (form-llist ast) path)
+	 (deparse-body deparser ast path t t)))
+
+(defmethod deparse ((deparser deparser) (ast flet-form) path)
   (list* 'flet
-	 (mapcar (lambda (binding) (deparse deparser binding)) (form-bindings ast))
-	 (deparse-body deparser ast t nil)))
-(defmethod deparse ((deparser deparser) (ast labels-form))
+	 (deparse-path-list deparser (form-bindings ast) path)
+	 (deparse-body deparser ast path t nil)))
+
+(defmethod deparse ((deparser deparser) (ast labels-form) path)
   (list* 'labels
-	 (mapcar (lambda (binding) (deparse deparser binding)) (form-bindings ast))
-	 (deparse-body deparser ast t nil)))
-(defmethod deparse ((deparser deparser) (ast lambda-form))
+	 (deparse-path-list deparser (form-bindings ast) path)
+	 (deparse-body deparser ast path t nil)))
+
+(defmethod deparse ((deparser deparser) (ast lambda-form) path)
   (list* 'lambda
-	 (deparse deparser (form-llist ast))
-	 (deparse-body deparser ast t t)))
-(defmethod deparse ((deparser deparser) (ast return-from-form))
+	 (deparse-path deparser (form-llist ast) path)
+	 (deparse-body deparser ast path t t)))
+
+(defmethod deparse ((deparser deparser) (ast return-from-form) path)
   (list* 'return-from
-	 (deparse deparser (form-blo ast))
+	 (deparse-path deparser (form-blo ast) path)
 	 (when (form-value ast)
-	   (list (deparse deparser (form-value ast))))))
-(defmethod deparse ((deparser deparser) (ast locally-form))
+	   (list (deparse-path deparser (form-value ast) path)))))
+
+(defmethod deparse ((deparser deparser) (ast locally-form) path)
   (list* 'locally
-	 (deparse-body deparser ast t nil)))
-(defmethod deparse ((deparser deparser) (ast the-form))
+	 (deparse-body deparser ast path t nil)))
+
+(defmethod deparse ((deparser deparser) (ast the-form) path)
   (list 'the
 	(form-type ast) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-	(deparse deparser (form-value ast))))
-(defmethod deparse ((deparser deparser) (ast if-form))
+	(deparse-path deparser (form-value ast) path)))
+
+(defmethod deparse ((deparser deparser) (ast if-form) path)
   (list* 'if
-	 (deparse deparser (form-test ast))
-	 (deparse deparser (form-then ast))
+	 (deparse-path deparser (form-test ast) path)
+	 (deparse-path deparser (form-then ast) path)
 	 (when (form-else ast)
-	   (list (deparse deparser (form-else ast))))))
-(defmethod deparse ((deparser deparser) (ast var-writing))
-  (list (nso-name (form-var ast)) (deparse deparser (form-value ast))))
-(defmethod deparse ((deparser deparser) (ast setq-form))
+	   (list (deparse-path deparser (form-else ast) path)))))
+
+(defmethod deparse ((deparser deparser) (ast var-writing) path)
+  (list (deparse-path deparser (form-var ast) path)
+	(deparse-path deparser (form-value ast) path)))
+
+(defmethod deparse ((deparser deparser) (ast setq-form) path)
   (list* 'setq
-	 (apply #'nconc (loop for var in (form-vars ast) collect (deparse deparser var)))))
-(defmethod deparse ((deparser deparser) (ast catch-form))
+	 (apply #'nconc (deparse-path-list deparser (form-vars ast) path))))
+
+(defmethod deparse ((deparser deparser) (ast catch-form) path)
   (list* 'catch
-	 (deparse deparser (form-tag ast))
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast throw-form))
+	 (deparse-path deparser (form-tag ast) path)
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast throw-form) path)
   (list* 'throw
-	 (deparse deparser (form-tag ast))
-	 (deparse deparser (form-value ast))))
-(defmethod deparse ((deparser deparser) (ast eval-when-form))
+	 (deparse-path deparser (form-tag ast) path)
+	 (deparse-path deparser (form-value ast) path)))
+
+(defmethod deparse ((deparser deparser) (ast eval-when-form) path)
   (list* 'eval-when
 	 (form-situations ast) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast load-time-value-form))
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast load-time-value-form) path)
   (list 'load-time-value
-	(deparse deparser (form-value ast))
+	(deparse-path deparser (form-value ast) path)
 	(form-readonly ast))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-(defmethod deparse ((deparser deparser) (ast quote-form))
+
+(defmethod deparse ((deparser deparser) (ast quote-form) path)
   (list 'quote
 	(form-object ast))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-(defmethod deparse ((deparser deparser) (ast multiple-value-call-form))
-  (list* 'multiple-value-call
-	 (deparse deparser (form-function ast))
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast multiple-value-prog1-form))
-  (list* 'multiple-value-prog1
-	 (deparse deparser (form-values ast))
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast progv-form))
-  (list* 'progv
-	 (deparse deparser (form-symbols ast))
-	 (deparse deparser (form-values ast))
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast unwind-protect-form))
-  (list* 'unwind-protect
-	 (deparse deparser (form-protected ast))
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast application-form))
-  (list* (deparse deparser (form-fun ast))
-	 (mapcar (lambda (argument) (deparse deparser argument)) (form-arguments ast))))
-(defmethod deparse ((deparser deparser) (ast macroapplication-form))
-  (list* (deparse deparser (form-fun ast))
-	 (form-arguments ast)))
-(defmethod deparse ((deparser deparser) (ast symbol-macrolet-form))
-  (list* 'symbol-macrolet
-	 (mapcar (lambda (binding) (deparse deparser binding)) (form-bindings ast))
-	 (deparse-body deparser ast t nil)))
-(defmethod deparse ((deparser deparser) (ast macrolet-form))
-  (list* 'macrolet
-	 (mapcar (lambda (binding) (deparse deparser binding)) (form-bindings ast))
-	 (deparse-body deparser ast t nil)))
-(defmethod deparse ((deparser deparser) (ast tagbody-form))
-  (list* 'tagbody
-	 (deparse-body deparser ast nil nil)))
-(defmethod deparse ((deparser deparser) (ast tagpoint))
-  (deparse deparser (form-tag ast)))
-(defmethod deparse ((deparser deparser) (ast go-form))
-  (list 'go
-	(deparse deparser (form-tag ast))))
 
-(defclass deparser-map-ast (deparser)
+(defmethod deparse ((deparser deparser) (ast multiple-value-call-form) path)
+  (list* 'multiple-value-call
+	 (deparse-path deparser (form-function ast) path)
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast multiple-value-prog1-form) path)
+  (list* 'multiple-value-prog1
+	 (deparse-path deparser (form-values ast) path)
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast progv-form) path)
+  (list* 'progv
+	 (deparse-path deparser (form-symbols ast) path)
+	 (deparse-path deparser (form-values ast) path)
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast unwind-protect-form) path)
+  (list* 'unwind-protect
+	 (deparse-path deparser (form-protected ast) path)
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast application-form) path)
+  (list* (deparse-path deparser (form-fun ast) path)
+	 (deparse-path-list deparser (form-arguments ast) path)))
+
+(defmethod deparse ((deparser deparser) (ast macroapplication-form) path)
+  (list* (deparse-path deparser (form-fun ast) path)
+	 (form-arguments ast)))
+
+(defmethod deparse ((deparser deparser) (ast symbol-macrolet-form) path)
+  (list* 'symbol-macrolet
+	 (deparse-path-list deparser (form-bindings ast) path)
+	 (deparse-body deparser ast path t nil)))
+
+(defmethod deparse ((deparser deparser) (ast macrolet-form) path)
+  (list* 'macrolet
+	 (deparse-path-list deparser (form-bindings ast) path)
+	 (deparse-body deparser ast path t nil)))
+
+(defmethod deparse ((deparser deparser) (ast tagbody-form) path)
+  (list* 'tagbody
+	 (deparse-body deparser ast path nil nil)))
+
+(defmethod deparse ((deparser deparser) (ast tagpoint) path)
+  (deparse-path deparser (form-tag ast) path))
+
+(defmethod deparse ((deparser deparser) (ast go-form) path)
+  (list 'go
+	(deparse-path deparser (form-tag ast) path)))
+
+;; MAP-AST
+
+(defclass deparser-map-ast-before (deparser)
+  ((function :initarg :function :initform (constantly nil) :accessor deparser-function :type function :documentation "The function called.")
+   (result :initarg :result :accessor deparser-result :type t :documentation "The last result returned by #'DEPARSE."))
+  (:documentation "A deparser that calls FUNCTION before every deparsing step."))
+
+(defmethod deparse :before ((deparser deparser-map-ast-before) ast path)
+  (setf (deparser-result deparser)
+	(multiple-value-list (funcall (deparser-function deparser) ast path))))
+
+(defclass deparser-map-ast-after (deparser)
   ((function :initarg :function :initform (constantly nil) :accessor deparser-function :type function :documentation "The function called.")
    (result :initarg :result :accessor deparser-result :type t :documentation "The last result returned by #'DEPARSE."))
   (:documentation "A deparser that calls FUNCTION after every deparsing step."))
 
-(defmethod deparse :after ((deparser deparser-map-ast) ast)
-  (setf (deparser-result deparser) (multiple-value-list (funcall (deparser-function deparser) ast))))
+(defmethod deparse :after ((deparser deparser-map-ast-after) ast path)
+  (setf (deparser-result deparser)
+	(multiple-value-list (funcall (deparser-function deparser) ast path))))
 
-(defun map-ast (function ast &key (deparser-class 'deparser-map-ast))
+(defun map-ast (function ast &key (deparser-class 'deparser-map-ast-before))
   "Recursively call FUNCTION with all objects occurring in the AST in the left-to-right order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
-FUNCTION is called with one parameter: the current AST.
+FUNCTION is called with one parameter: the current AST1, and a PATH that describes the position of AST1 in AST.
+DEPARSER-CLASS can be an instance of classes DEPARSER-MAP-AST-AFTER or DEPARSER-MAP-AST-BEFORE, or a subclass of these.
 Return the last returned multiple values of FUNCTION."
   (declare (optimize (debug 3)))
   ;;TODO: FIXME: the DEPARSE-* functions above do not call RECURSE-FUNCTION for some slots (those which are not parsed by #'PARSE). Come up with a scheme that allows an adapted RECURSE-FUNCTION to know what type those unparsed slots are (e.g. type specifiers). The slots to which this applies is marked above with "TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)".
   (let ((deparser (make-instance deparser-class :function function)))
-    (deparse deparser ast)
+    (deparse deparser ast nil)
     (apply #'values (deparser-result deparser))))
