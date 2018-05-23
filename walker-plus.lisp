@@ -175,6 +175,7 @@
 (defmethod walker:deparse ((deparser walker:deparser) (ast defun-form))
   (list* 'defun
 	 (walker:deparse deparser (walker:form-sym ast))
+	 (walker:deparse deparser (walker:form-llist ast))
 	 (walker:deparse-body deparser ast t t)))
 (defmethod walker:deparse ((deparser walker:deparser) (ast declaim-form))
   (list* 'declaim
