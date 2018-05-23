@@ -71,7 +71,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :make-parser
    :make-ast
    ;; DECLARATIONS
-   :declspec :parent :declspec-parent :user :form-parent
+   :declspec :parent :declspec-parent :source :declspec-source :user
+   :form-parent :form-source
    :declspec-type :type :declspec-type :vars :declspec-vars
    :declspec-ftype :type :declspec-type :funs :declspec-funs
    :declspec-optimize :qualities :declspec-qualities
@@ -89,7 +90,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-declaration-and-documentation-in-body
    :parse
    ;; LAMBDA LISTS
-   :argument :parent :argument-parent :var :argument-var :user :form-parent
+   :argument :parent :argument-parent :source :argument-source :var :argument-var :user
+   :form-parent :form-source
    :whole-argument
    :environment-argument
    :required-argument
@@ -98,7 +100,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :body-argument
    :key-argument :keywordp :argument-keywordp :keyword :argument-keyword
    :aux-argument :init :argument-init
-   :llist :parent :llist-parent :user :form-parent
+   :llist :parent :llist-parent :source :llist-source :user
+   :form-parent :form-source
    :ordinary-llist :required :llist-required :optional :llist-optional :rest :llist-rest :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
    :macro-llist :whole :llist-whole :environment :llist-environment :required :llist-required :optional :llist-optional :rest :llist-rest :body :llist-body :key :llist-key :allow-other-keys :llist-allow-other-keys :aux :llist-aux
    :parse-required-argument
@@ -108,14 +111,14 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :parse-macro-lambda-list
    ;; FORMS and Utility Functions
    :form :parent :form-parent :source :form-source :user
-   :object-form :object :form-object :user
-   :var-reading :parent :form-parent :var :form-var
-   :var-writing :parent :form-parent :var :form-var
+   :object-form :object :form-object
+   :var-reading :var :form-var
+   :var-writing :parent :form-parent :source :form-source :var :form-var :user
    :body-form :body :form-body
    :special-form
    :function-form :object :form-object
    :progn-form
-   :binding :parent :form-parent :sym :form-sym :user
+   :binding :parent :form-parent :source :form-source :sym :form-sym :user
    :var-binding :value :form-value
    :bindings-form :bindings :form-bindings :declspecs :form-declspecs
    :var-bindings-form
@@ -471,13 +474,17 @@ You may pass any keyword option accepted by (MAKE-INSTANCE TYPE ...)."
 
 (defclass declspec ()
   ((parent :initarg :parent :accessor declspec-parent)
-   (source :initarg :source :accessor nso-source :type list :documentation "The source of the declspec.")
+   (source :initarg :source :accessor declspec-source :type list :documentation "The source of the declspec.")
    (user :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
 (defmethod form-parent ((ast declspec))
   (declspec-parent ast))
 (defmethod (setf form-parent) (value (ast declspec))
   (setf (declspec-parent ast) value))
+(defmethod form-source ((ast declspec))
+  (declspec-source ast))
+(defmethod (setf form-source) (value (ast declspec))
+  (setf (declspec-source ast) value))
 (defclass declspec-type (declspec)
   ((type :initarg :type :accessor declspec-type)
    (vars :initarg :vars :accessor declspec-vars :type list)))
@@ -790,7 +797,7 @@ Return the parsed abstract syntax tree (AST)."))
 
 (defclass argument ()
   ((parent :initarg :parent :accessor argument-parent :type functiondef)
-   (source :initarg :source :accessor form-source :documentation "The source of the argument.")
+   (source :initarg :source :accessor argument-source :documentation "The source of the argument.")
    (var :initarg :var :accessor argument-var :type var)
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
@@ -798,6 +805,10 @@ Return the parsed abstract syntax tree (AST)."))
   (argument-parent ast))
 (defmethod (setf form-parent) (value (ast argument))
   (setf (argument-parent ast) value))
+(defmethod form-source ((ast argument))
+  (argument-source ast))
+(defmethod (setf form-source) (value (ast argument))
+  (setf (argument-source ast) value))
 (defclass whole-argument (argument)
   ())
 (defclass environment-argument (argument)
@@ -819,13 +830,17 @@ Return the parsed abstract syntax tree (AST)."))
 (defclass llist ()
   ((parent :initarg :parent :accessor llist-parent
 	   :documentation "The FUNCTIONDEF this LLIST is defined in.")
-   (source :initarg :source :accessor nso-source :type list :documentation "The source of the lambda list.")
+   (source :initarg :source :accessor llist-source :type list :documentation "The source of the lambda list.")
    (user :initform nil :initarg :user :accessor user
 	 :documentation "Arbitrary user-definable slot.")))
 (defmethod form-parent ((ast llist))
   (llist-parent ast))
 (defmethod (setf form-parent) (value (ast llist))
   (setf (llist-parent ast) value))
+(defmethod form-source ((ast llist))
+  (llist-source ast))
+(defmethod (setf form-source) (value (ast llist))
+  (setf (llist-source ast) value))
 (defclass ordinary-llist (llist)
   ((required :initarg :required :accessor llist-required :type list :documentation "list, with each element of type REQUIRED-ARGUMENT")
    (optional :initarg :optional :accessor llist-optional :type list :documentation "list, with each element of type OPTIONAL-ARGUMENT")
@@ -1133,7 +1148,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   ())
 (defclass binding ()
   ((parent :initarg :parent :accessor form-parent :documentation "the LET-FORM, LET*-FORM, FLET-FORM, LABELS-FORM, SYMBOL-MACROLET-FORM, or MACROLET-FORM in which the binding is defined.")
-   (source :initarg :source :accessor nso-source :type list :documentation "The source of the binding.")
+   (source :initarg :source :accessor form-source :type list :documentation "The source of the binding.")
    (sym :initarg :sym :accessor form-sym :type sym)
    (user :initform nil :initarg :user :accessor user)))
 (defclass var-binding (binding)
