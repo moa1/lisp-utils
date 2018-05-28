@@ -173,6 +173,9 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; DEPARSER
    :deparser
    :deparse
+   :orderer
+   :eval-order
+   :eval-order-list
    :deparse-path
    :deparse-path-list
    :deparse-body
@@ -1257,10 +1260,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream "body:~S" (form-body object))))
 (defmethod print-object ((object var-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (when *print-detailed-walker-objects*
-      (format stream "~S" (form-sym object))
-      (when (form-value object)
-	(format stream " ~S" (form-value object))))))
+    (format stream "~S" (form-sym object))
+    (when (form-value object)
+      (format stream " ~S" (form-value object)))))
 (defun format-body (object declspecsp documentationp)
   (if (and documentationp (form-documentation object))
       (if (or (null declspecsp) (null (form-declspecs object)))
@@ -2375,12 +2377,27 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	 (declare (ignorable documentation declspecs))
 	 ,(make-cond 'documentation 'declspecs 'body)))))
 
+(defclass orderer ()
+  ()
+  (:documentation "An instance of this class is the first argument to every #'EVAL-ORDER method. Inherit from it if you want to customize the list of accessors returned by #'EVAL-ORDER."))
+
+(defgeneric eval-order (orderer ast)
+  (:documentation "Return the list of accessors of AST describing the order in which slots are defined in AST."))
+
+(defun eval-order-list (orderer ast-list)
+  (apply #'nconc (mapcar (lambda (ast) (eval-order orderer ast)) ast-list)))
+
 ;; NSOs
 
 (defmethod deparse ((deparser deparser) (nso nso) path)
   (nso-name nso))
+(defmethod eval-order ((orderer orderer) (ast nso))
+  (error "this cannot happen, since NSOs can be in ASTs only in the form of VAR-READING or VAR-WRITING (and maybe in PROGV or FUNCALL or APPLY)."))
 
 ;; DECLSPECs
+
+(defmethod eval-order ((orderer orderer) (ast declspec))
+  nil)
 
 (defmethod deparse ((deparser deparser) (declspec declspec-type) path)
   (list* 'type
@@ -2427,6 +2444,8 @@ Returns three values: a list containing the lexical namespaces, a list containin
 
 (defmethod deparse ((deparser deparser) (argument required-argument) path)
   (deparse-path deparser (argument-var argument) path))
+(defmethod eval-order ((orderer orderer) (ast required-argument))
+  nil)
 
 (defmethod deparse ((deparser deparser) (argument optional-argument) path)
   (cons (deparse deparser (argument-var argument) path)
@@ -2434,12 +2453,19 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	  (cons (deparse-path deparser (argument-init argument) path)
 		(when (argument-suppliedp argument)
 		  (list (deparse-path deparser (argument-suppliedp argument) path)))))))
+(defmethod eval-order ((orderer orderer) (ast optional-argument))
+  (when (argument-init ast)
+    `(,#'argument-init)))
 
 (defmethod deparse ((deparser deparser) (argument rest-argument) path)
   (deparse-path deparser (argument-var argument) path))
+(defmethod eval-order ((orderer orderer) (ast rest-argument))
+  nil)
 
 (defmethod deparse ((deparser deparser) (argument body-argument) path)
   (deparse-path deparser (argument-var argument) path))
+(defmethod eval-order ((orderer orderer) (ast body-argument))
+  nil)
 
 (defmethod deparse ((deparser deparser) (argument key-argument) path)
   (cons (if (argument-keywordp argument)
@@ -2451,11 +2477,16 @@ Returns three values: a list containing the lexical namespaces, a list containin
 		(when (argument-suppliedp argument)
 		  (cons (deparse-path deparser (argument-suppliedp argument) path)
 			nil))))))
+(defmethod eval-order ((orderer orderer) (ast key-argument))
+  (when (argument-init ast)
+    `(,#'argument-init)))
 
 (defmethod deparse ((deparser deparser) (argument aux-argument) path)
   (cons (deparse-path deparser (argument-var argument) path)
 	(when (argument-init argument)
 	  (deparse-path deparser (argument-init argument) path))))
+(defmethod eval-order ((orderer orderer) (ast aux-argument))
+  nil)
 
 (defmethod deparse ((deparser deparser) (llist ordinary-llist) path)
   (nconc
@@ -2465,6 +2496,13 @@ Returns three values: a list containing the lexical namespaces, a list containin
    (when (llist-key llist) (cons '&key (deparse-path-list deparser (llist-key llist) path)))
    (when (llist-allow-other-keys llist) (list '&allow-other-keys))
    (when (llist-aux llist) (cons '&aux (deparse-path-list deparser (llist-aux llist) path)))))
+(defmethod eval-order ((orderer orderer) (ast ordinary-llist))
+  (nconc
+   (eval-order-list orderer (llist-required ast))
+   (when (llist-optional ast) (eval-order-list orderer (llist-optional ast)))
+   (when (llist-rest ast) (eval-order orderer (llist-rest ast)))
+   (when (llist-key ast) (eval-order-list orderer (llist-key ast)))
+   (when (llist-aux ast) (eval-order-list orderer (llist-aux ast)))))
 
 (defmethod deparse ((deparser deparser) (llist macro-llist) path)
   (nconc
@@ -2477,21 +2515,38 @@ Returns three values: a list containing the lexical namespaces, a list containin
    (when (llist-key llist) (cons '&key (deparse-path-list deparser (llist-key llist) path)))
    (when (llist-allow-other-keys llist) (list '&allow-other-keys))
    (when (llist-aux llist) (cons '&aux (deparse-path-list deparser (llist-aux llist) path)))))
+(defmethod eval-order ((orderer orderer) (ast macro-llist))
+  (nconc
+   (when (llist-whole ast) (eval-order orderer (llist-whole ast)))
+   (when (llist-environment ast) (eval-order orderer (llist-environment ast)))
+   (eval-order-list orderer (llist-required ast))
+   (when (llist-rest ast) (eval-order orderer (llist-rest ast)))
+   (when (llist-body ast) (eval-order orderer (llist-body ast)))
+   (when (llist-key ast) (eval-order-list orderer (llist-key ast)))
+   (when (llist-aux ast) (eval-order-list orderer (llist-aux ast)))))
 
 ;; FORMS
 (defmethod deparse ((deparser deparser) (ast object-form) path)
   (form-object ast))
+(defmethod eval-order ((orderer orderer) (ast object-form))
+  nil)
 
 (defmethod deparse ((deparser deparser) (ast var-reading) path)
   (nso-name (form-var ast)))
+(defmethod eval-order ((orderer orderer) (ast var-reading))
+  nil)
 
 (defmethod deparse ((deparser deparser) (ast function-form) path)
   (list 'function
 	(deparse-path deparser (form-object ast) path)))
+(defmethod eval-order ((orderer orderer) (ast function-form))
+  nil)
 
 (defmethod deparse ((deparser deparser) (ast progn-form) path)
   (list* 'progn
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast progn-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast var-binding) path)
   (if (or (form-value ast)
@@ -2501,56 +2556,79 @@ Returns three values: a list containing the lexical namespaces, a list containin
 		(deparse-path deparser (form-value ast) path)
 		(form-value ast)))
       (deparse-path deparser (form-sym ast) path)))
+(defmethod eval-order ((orderer orderer) (ast var-binding))
+  `(,#'form-value))
 
 (defmethod deparse ((deparser deparser) (ast let-form) path)
   (list* 'let
 	 (deparse-path-list deparser (form-bindings ast) path)
 	 (deparse-body deparser ast path t nil)))
+(defmethod eval-order ((orderer orderer) (ast let-form))
+  `(,#'form-bindings ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast let*-form) path)
   (list* 'let*
 	 (deparse-path-list deparser (form-bindings ast) path)
 	 (deparse-body deparser ast path t nil)))
+(defmethod eval-order ((orderer orderer) (ast let*-form))
+  `(#'form-bindings ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast block-form) path)
   (list* 'block
 	 (deparse-path deparser (form-blo ast) path)
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast block-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast fun-binding) path)
   (list* (deparse-path deparser (form-sym ast) path)
 	 (deparse-path deparser (form-llist ast) path)
 	 (deparse-body deparser ast path t t)))
+(defmethod eval-order ((orderer orderer) (ast fun-binding))
+  `(,#'form-llist ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast flet-form) path)
   (list* 'flet
 	 (deparse-path-list deparser (form-bindings ast) path)
 	 (deparse-body deparser ast path t nil)))
+(defmethod eval-order ((orderer orderer) (ast flet-form))
+  `(,#'form-bindings ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast labels-form) path)
   (list* 'labels
 	 (deparse-path-list deparser (form-bindings ast) path)
 	 (deparse-body deparser ast path t nil)))
+(defmethod eval-order ((orderer orderer) (ast labels-form))
+  `(,#'form-bindings ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast lambda-form) path)
   (list* 'lambda
 	 (deparse-path deparser (form-llist ast) path)
 	 (deparse-body deparser ast path t t)))
+(defmethod eval-order ((orderer orderer) (ast lambda-form))
+  `(,#'form-llist ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast return-from-form) path)
   (list* 'return-from
 	 (deparse-path deparser (form-blo ast) path)
 	 (when (form-value ast)
 	   (list (deparse-path deparser (form-value ast) path)))))
+(defmethod eval-order ((orderer orderer) (ast return-from-form))
+  (when (form-value ast)
+    `(,#'form-value)))
 
 (defmethod deparse ((deparser deparser) (ast locally-form) path)
   (list* 'locally
 	 (deparse-body deparser ast path t nil)))
+(defmethod eval-order ((orderer orderer) (ast locally-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast the-form) path)
   (list 'the
 	(form-type ast) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
 	(deparse-path deparser (form-value ast) path)))
+(defmethod eval-order ((orderer orderer) (ast the-form))
+  `(,#'form-value))
 
 (defmethod deparse ((deparser deparser) (ast if-form) path)
   (list* 'if
@@ -2558,88 +2636,126 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	 (deparse-path deparser (form-then ast) path)
 	 (when (form-else ast)
 	   (list (deparse-path deparser (form-else ast) path)))))
+(defmethod eval-order ((orderer orderer) (ast if-form))
+  `(,#'form-test ,#'form-then ,#'form-else))
 
 (defmethod deparse ((deparser deparser) (ast var-writing) path)
   (list (deparse-path deparser (form-var ast) path)
 	(deparse-path deparser (form-value ast) path)))
+(defmethod eval-order ((orderer orderer) (ast var-writing))
+  `(,#'form-value))
 
 (defmethod deparse ((deparser deparser) (ast setq-form) path)
   (list* 'setq
 	 (apply #'nconc (deparse-path-list deparser (form-vars ast) path))))
+(defmethod eval-order ((orderer orderer) (ast setq-form))
+  (eval-order-list orderer (form-vars ast)))
 
 (defmethod deparse ((deparser deparser) (ast catch-form) path)
   (list* 'catch
 	 (deparse-path deparser (form-tag ast) path)
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast catch-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast throw-form) path)
   (list* 'throw
 	 (deparse-path deparser (form-tag ast) path)
 	 (deparse-path deparser (form-value ast) path)))
+(defmethod eval-order ((orderer orderer) (ast throw-form))
+  `(,#'form-value))
 
 (defmethod deparse ((deparser deparser) (ast eval-when-form) path)
   (list* 'eval-when
 	 (form-situations ast) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast eval-when-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast load-time-value-form) path)
   (list 'load-time-value
 	(deparse-path deparser (form-value ast) path)
 	(form-readonly ast))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
+(defmethod eval-order ((orderer orderer) (ast load-time-value-form))
+  `(,#'form-value))
 
 (defmethod deparse ((deparser deparser) (ast quote-form) path)
   (list 'quote
 	(form-object ast))) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
+(defmethod eval-order ((orderer orderer) (ast quote-form))
+  nil)
 
 (defmethod deparse ((deparser deparser) (ast multiple-value-call-form) path)
   (list* 'multiple-value-call
 	 (deparse-path deparser (form-function ast) path)
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast multiple-value-call-form))
+  `(,#'form-function ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast multiple-value-prog1-form) path)
   (list* 'multiple-value-prog1
 	 (deparse-path deparser (form-values ast) path)
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast multiple-value-prog1-form))
+  `(,#'form-values ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast progv-form) path)
   (list* 'progv
 	 (deparse-path deparser (form-symbols ast) path)
 	 (deparse-path deparser (form-values ast) path)
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast progv-form))
+  `(,#'form-symbols ,#'form-values ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast unwind-protect-form) path)
   (list* 'unwind-protect
 	 (deparse-path deparser (form-protected ast) path)
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast unwind-protect-form))
+  `(,#'form-protected ,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast application-form) path)
   (list* (deparse-path deparser (form-fun ast) path)
 	 (deparse-path-list deparser (form-arguments ast) path)))
+(defmethod eval-order ((orderer orderer) (ast application-form))
+  `(,#'form-arguments))
 
 (defmethod deparse ((deparser deparser) (ast macroapplication-form) path)
   (list* (deparse-path deparser (form-fun ast) path)
 	 (form-arguments ast)))
+(defmethod eval-order ((orderer orderer) (ast macroapplication-form))
+  `(,#'form-arguments))
 
 (defmethod deparse ((deparser deparser) (ast symbol-macrolet-form) path)
   (list* 'symbol-macrolet
 	 (deparse-path-list deparser (form-bindings ast) path)
 	 (deparse-body deparser ast path t nil)))
+(defmethod eval-order ((orderer orderer) (ast symbol-macrolet-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast macrolet-form) path)
   (list* 'macrolet
 	 (deparse-path-list deparser (form-bindings ast) path)
 	 (deparse-body deparser ast path t nil)))
+(defmethod eval-order ((orderer orderer) (ast macrolet-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast tagbody-form) path)
   (list* 'tagbody
 	 (deparse-body deparser ast path nil nil)))
+(defmethod eval-order ((orderer orderer) (ast tagbody-form))
+  `(,#'form-body))
 
 (defmethod deparse ((deparser deparser) (ast tagpoint) path)
   (deparse-path deparser (form-tag ast) path))
+(defmethod eval-order ((orderer orderer) (ast tagpoint))
+  nil)
 
 (defmethod deparse ((deparser deparser) (ast go-form) path)
   (list 'go
 	(deparse-path deparser (form-tag ast) path)))
+(defmethod eval-order ((orderer orderer) (ast go-form))
+  nil)
 
 ;; MAP-AST
 

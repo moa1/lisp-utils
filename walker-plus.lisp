@@ -16,6 +16,7 @@
    ;;:parse is exported from package WALKER
    ;; DEPARSER
    ;;:deparse is exported from package WALKER
+   ;;:eval-order is exported from package WALKER
    ;; ARGUMENTS AND LAMBDA LISTS
    :arguments-assign-to-lambda-list
    ;; DEAD CODE ANALYSIS
@@ -165,35 +166,50 @@
 	 (walker:deparse-path-list deparser (walker:form-vars ast) path)
 	 (walker:deparse-path deparser (walker:form-values ast) path)
 	 (walker:deparse-body deparser ast path t nil)))
+(defmethod walker:eval-order ((orderer walker:orderer) (ast multiple-value-bind-form))
+  `(,#'walker:form-values ,#'form-body ast))
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast values-form) path)
   (list* 'values
 	 (walker:deparse-path-list deparser (walker:form-values ast) path)))
+(defmethod walker:eval-order ((orderer walker:orderer) (ast values-form))
+  `(,#'form-values))
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast nth-value-form) path)
   (list* 'nth-value
 	 (walker:deparse-path deparser (walker:form-value ast) path)
 	 (walker:deparse-path deparser (walker:form-values ast) path)))
+(defmethod walker:eval-order ((orderer walker:orderer) (ast nth-value-form))
+  `(,#'walker:form-value ,#'walker:form-values))
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast defun-form) path)
   (list* 'defun
 	 (walker:deparse-path deparser (walker:form-sym ast) path)
 	 (walker:deparse-path deparser (walker:form-llist ast) path)
 	 (walker:deparse-body deparser ast path t t)))
+(defmethod walker:eval-order ((orderer walker:orderer) (ast defun-form))
+  `(,#'walker:form-llist ,#'walker:form-body))
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast declaim-form) path)
   (list* 'declaim
 	 (walker:deparse-path deparser (walker:form-declspecs ast) path)))
+(defmethod walker:eval-order ((orderer walker:orderer) (ast declaim-form))
+  nil)
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast funcall-form) path)
   (list* 'funcall
 	 (walker:deparse-path deparser (walker:form-var ast) path)
 	 (walker:deparse-path-list deparser (walker:form-arguments ast) path)))
+(defmethod walker:eval-order ((orderer walker:orderer) (ast funcall-form))
+  `(,#'walker:form-var ,#'walker:form-arguments))
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast assert-form) path)
   ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
   (list 'assert
 	(walker:deparse-path deparser (walker:form-test ast) path)))
+(defmethod walker:eval-order ((orderer walker:orderer) (ast assert-form))
+  ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
+  `(,#'walker:form-test))
 
 ;;;; ARGUMENTS AND LAMBDA LISTS
 
