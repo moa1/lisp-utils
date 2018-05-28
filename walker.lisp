@@ -2333,25 +2333,47 @@ Returns three values: a list containing the lexical namespaces, a list containin
   (:documentation "Generate from the abstract syntax tree AST the corresponding Lisp forms with DEPARSER. PATH is a list describing the position of AST in the abstract syntax tree, whose root form is NIL."))
 
 (defmacro deparse-path (deparser form path)
-  "Deparse the form FORM, i.e. call (DEPARSE ,DEPARSER ,FORM ,PATH) with an appropriate PATH."
-  (let ((form-path (car form))
-	(ast (cadr form)))
+  "Deparse the form FORM, i.e. call (DEPARSE ,DEPARSER ,FORM ,PATH1) with an appropriate PATH1 describing the position of FORM in the abstract syntax tree, and constructed from PATH and FORM."
+  (destructuring-bind (form-path form-ast) form
     (assert (symbolp form-path))
-    ;;(assert (typep ast '(member declspec argument llist ast)))
-    (assert (symbolp ast))
+    (assert (symbolp form-ast)) ;(assert (typep form-ast '(member declspec argument llist ast)))
     (assert (symbolp path))
-    `(deparse ,deparser ,form (cons ',form-path ,path))))
+    `(deparse ,deparser ,form (cons (list ',form-path ,form-ast) ,path))))
 
 (defmacro deparse-path-list (deparser form-list path)
-  "Deparse the list of forms FORMS-LIST, i.e. call (MAPCAR (LAMBDA (X) (DEPARSE ,DEPARSER X ,PATH)) ,FORM-LIST), and pass a PATH describing the position of X in the AST (abstract syntax tree)."
-  (let ((form-path (car form-list))
-	(ast (cadr form-list)))
+  "Deparse the list of forms FORMS-LIST, i.e. call (MAPCAR (LAMBDA (X) (DEPARSE ,DEPARSER X ,PATH)) ,FORM-LIST), and pass a PATH describing the position of X in the AST (abstract syntax tree), and constructed from PATH and FORM-LIST."
+  (destructuring-bind (form-path form-ast) form-list
     (assert (symbolp form-path))
-    ;;(assert (typep ast '(member declspec argument llist ast)))
-    (assert (symbolp ast))
+    (assert (symbolp form-ast)) ;(assert (typep form-ast '(member declspec argument llist ast)))
     (assert (symbolp path))
     `(loop for i from 0 for form in ,form-list collect
-	  (deparse ,deparser form (cons (list ',form-path i) ,path)))))
+	  (deparse ,deparser form (cons (list i ',form-path ,form-ast) ,path)))))
+
+(defmacro deparse-body (deparser ast path declspecsp documentationp)
+  (declare (type boolean declspecsp documentationp))
+  (flet ((make-cond (documentation declspecs body)
+	   `(cond
+	      ,@(append
+		 (when (and documentationp declspecsp)
+		   `(((and ,documentation ,declspecs)
+		      (cons ,documentation (cons ,declspecs ,body)))))
+		 (when documentationp
+		   `((,documentation
+		      (list* ,documentation ,body))))
+		 (when declspecsp
+		   `((,declspecs
+		      (list* ,declspecs ,body)))))
+	      (t
+	       ,body))))
+    (let ((ast-sym ast)
+	  (ast (gensym "AST")))
+      `(let* ((,ast ,ast-sym)
+	      ;; TODO: FIXME: (FORM-DOCUMENTATION ,AST) is not passed to DEPARSER (because it is not parsed by #'PARSE)
+	      (documentation ,(if documentationp `(if (form-documentation ,ast) (form-documentation ,ast) nil) `nil))
+	      (declspecs ,(if declspecsp `(if (form-declspecs ,ast) (cons 'declare (deparse-path-list ,deparser (form-declspecs ,ast) ,path)) nil) `nil))
+	      (body (deparse-path-list ,deparser (form-body ,ast) ,path)))
+	 (declare (ignorable documentation declspecs))
+	 ,(make-cond 'documentation 'declspecs 'body)))))
 
 ;; NSOs
 
@@ -2457,23 +2479,6 @@ Returns three values: a list containing the lexical namespaces, a list containin
    (when (llist-aux llist) (cons '&aux (deparse-path-list deparser (llist-aux llist) path)))))
 
 ;; FORMS
-(defun deparse-body (deparser ast path declspecsp documentationp)
-  (flet ((debody (ast)
-	   (deparse-path-list deparser (form-body ast) path))
-	 (dedeclspecs (ast)
-	   (deparse-path-list deparser (form-declspecs ast) path)))
-    (if (and documentationp (form-documentation ast))
-	(if (and declspecsp (form-declspecs ast))
-	    (list* (form-documentation ast) ;TODO: FIXME: this is not passed to DEPARSER (because it is not parsed by #'PARSE)
-		   (cons 'declare (dedeclspecs ast))
-		   (debody ast))
-	    (list* (form-documentation ast)
-		   (debody ast)))
-	(if (and declspecsp (form-declspecs ast))
-	    (list* (cons 'declare (dedeclspecs ast))
-		   (debody ast))
-	    (debody ast)))))
-
 (defmethod deparse ((deparser deparser) (ast object-form) path)
   (form-object ast))
 
@@ -2656,13 +2661,14 @@ Returns three values: a list containing the lexical namespaces, a list containin
   (setf (deparser-result deparser)
 	(multiple-value-list (funcall (deparser-function deparser) ast path))))
 
-(defun map-ast (function ast &key (deparser-class 'deparser-map-ast-before))
+(defun map-ast (function ast &key (deparser-class 'deparser-map-ast-before) path)
   "Recursively call FUNCTION with all objects occurring in the AST in the left-to-right order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
 FUNCTION is called with one parameter: the current AST1, and a PATH that describes the position of AST1 in AST.
 DEPARSER-CLASS can be an instance of classes DEPARSER-MAP-AST-AFTER or DEPARSER-MAP-AST-BEFORE, or a subclass of these.
+PATH is the path leading to AST. Use a value different from NIL if your AST is embedded in another abstract syntax tree, and you want to have the path for AST being passed to FUNCTION have the suffix PATH.
 Return the last returned multiple values of FUNCTION."
   (declare (optimize (debug 3)))
   ;;TODO: FIXME: the DEPARSE-* functions above do not call RECURSE-FUNCTION for some slots (those which are not parsed by #'PARSE). Come up with a scheme that allows an adapted RECURSE-FUNCTION to know what type those unparsed slots are (e.g. type specifiers). The slots to which this applies is marked above with "TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)".
   (let ((deparser (make-instance deparser-class :function function)))
-    (deparse deparser ast nil)
+    (deparse deparser ast path)
     (apply #'values (deparser-result deparser))))
