@@ -47,6 +47,7 @@
   ((var :initarg :sym :accessor walker:form-var :type walker:var)
    (arguments :initarg :arguments :accessor walker:form-arguments :type list :documentation "list of FORMs")))
 (defclass assert-form (walker:form)
+  ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
   ((test :initarg :test :accessor walker:form-test :type walker:form)))
 
 ;;;; END OF FORMS
@@ -74,6 +75,7 @@
     (loop for arg in (walker:form-arguments object) do
 	 (format stream " ~S" arg))))
 (defmethod print-object ((object assert-form) stream)
+  ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S" (walker:form-test object))))
 
@@ -149,6 +151,7 @@
     (walker:parse-macro-or-function-application parser nil fun arg-forms parent source)))
 
 (defmethod walker:parse-form ((parser parser-plus) (head (eql 'assert)) rest parent source)
+  ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
   (assert (consp rest) () "Cannot parse ASSERT-form ~S" (cons head rest))
   (let* ((current (walker:make-ast parser 'assert-form :parent parent :source source))
 	 (parsed-test (walker:parse parser (car rest) current)))
@@ -181,6 +184,7 @@
 	 (walker:deparse deparser (walker:form-var ast))
 	 (mapcar (lambda (arg) (walker:deparse deparser arg)) (walker:form-arguments ast))))
 (defmethod walker:deparse ((deparser walker:deparser) (ast assert-form))
+  ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
   (list 'assert
 	(walker:deparse deparser (walker:form-test ast))))
 
@@ -512,6 +516,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	 (remove-dead-body! dead)))
       (walker:quote-form nil)
       (walker-plus:assert-form
+       ;; TODO FIXME: this should be extended to allow the full ANSI Common Lisp ASSERT.
        (recurse! (walker:form-test ast)))
       (walker:fun-binding
        (let* ((dead nil)
