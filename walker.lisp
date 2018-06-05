@@ -353,7 +353,7 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (:documentation "Shallow-copies PARSER. Must be defined for all user-defined subclasses of PARSER."))
 (defmethod copy-parser ((parser parser))
   "Shallow-copies PARSER. Must be defined for all user-defined subclasses of PARSER."
-  (make-instance 'parser
+  (make-instance (type-of parser)
 		 :lexical-namespace (parser-lexical-namespace parser)
 		 :free-namespace (parser-free-namespace parser)))
 
@@ -1914,7 +1914,7 @@ If you want the default free Common Lisp namespace, pass ':PARSER (MAKE-PARSER)'
   (:documentation "Parser that collects the namespaces encountered at the symbol HERESYMBOL."))
 
 (defmethod copy-parser ((parser parser-namespace-at))
-  (make-instance 'parser-namespace-at
+  (make-instance (type-of parser)
 		 :lexical-namespace (parser-lexical-namespace parser)
 		 :free-namespace (parser-free-namespace parser)
 		 :heresymbol (parser-heresymbol parser)

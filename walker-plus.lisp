@@ -85,7 +85,7 @@
   (:documentation "Subclass of WALKER:PARSER used for parsing the additional forms defined in walker-plus.lisp."))
 
 (defmethod walker:copy-parser ((parser parser-plus))
-  (make-instance 'parser-plus
+  (make-instance (type-of parser)
 		 :lexical-namespace (walker:parser-lexical-namespace parser)
 		 :free-namespace (walker:parser-free-namespace parser)))
 
