@@ -349,19 +349,11 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
    (free-namespace :initarg :free-namespace :initform (make-empty-free-namespace) :accessor parser-free-namespace :documentation "The free namespace of the parser"))
   (:documentation "The state of the parser. To customize WALKER, inherit from this class."))
 
-(defclass parser-copy (parser)
-  ()
-  (:documentation "The state of the parser, which is copy-able. Do not inhert from this class, but make your class a subclass of PARSER."))
-
-(defmethod print-object ((parser parser-copy) stream)
-  (print-unreadable-object (parser stream :type t :identity t)
-    (format stream "lexical: ~W~%free: ~W" (parser-lexical-namespace parser) (parser-free-namespace parser))))
-
 (defgeneric copy-parser (parser)
   (:documentation "Shallow-copies PARSER. Must be defined for all user-defined subclasses of PARSER."))
-(defmethod copy-parser ((parser parser-copy))
+(defmethod copy-parser ((parser parser))
   "Shallow-copies PARSER. Must be defined for all user-defined subclasses of PARSER."
-  (make-instance 'parser-copy
+  (make-instance 'parser
 		 :lexical-namespace (parser-lexical-namespace parser)
 		 :free-namespace (parser-free-namespace parser)))
 
@@ -440,11 +432,11 @@ The new parser copy shares namespace structure with the original PARSER."))
   (assert (symbolp symbol) () "Invalid symbol name ~S" symbol)
   (default-namespace-lookup/create symbol-type symbol parser (make-ast parser 'tag :name symbol :freep t :sites nil :source symbol))) ;do not bind :DEFINITION
 
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (setf parser (augment-lexical-namespace (make-instance 'var :name 'a :freep nil :sites nil) parser))
   (assert (namespace-lookup 'var 'a (parser-lexical-namespace parser)))
   (assert (null (namespace-var (parser-free-namespace parser)))))
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (namespace-lookup/create 'var 'a parser)
   (assert (null (namespace-var (parser-lexical-namespace parser))))
   (assert (namespace-lookup 'var 'a (parser-free-namespace parser))))
@@ -460,7 +452,7 @@ The new parser copy shares namespace structure with the original PARSER."))
 (unless (boundp '+common-lisp-variables+)
   (defconstant +common-lisp-variables+ '(* ** *** *BREAK-ON-SIGNALS* *COMPILE-FILE-PATHNAME* *COMPILE-FILE-TRUENAME* *COMPILE-PRINT* *COMPILE-VERBOSE* *DEBUG-IO* *DEBUGGER-HOOK* *DEFAULT-PATHNAME-DEFAULTS* *ERROR-OUTPUT* *FEATURES* *GENSYM-COUNTER* *LOAD-PATHNAME* *LOAD-PRINT* *LOAD-TRUENAME* *LOAD-VERBOSE* *MACROEXPAND-HOOK* *MODULES* *PACKAGE* *PRINT-ARRAY* *PRINT-BASE* *PRINT-CASE* *PRINT-CIRCLE* *PRINT-ESCAPE* *PRINT-GENSYM* *PRINT-LENGTH* *PRINT-LEVEL* *PRINT-LINES* *PRINT-MISER-WIDTH* *PRINT-PPRINT-DISPATCH* *PRINT-PRETTY* *PRINT-RADIX* *PRINT-READABLY* *PRINT-RIGHT-MARGIN* *QUERY-IO* *RANDOM-STATE* *READ-BASE* *READ-DEFAULT-FLOAT-FORMAT* *READ-EVAL* *READ-SUPPRESS* *READTABLE* *STANDARD-INPUT* *STANDARD-OUTPUT* *TERMINAL-IO* *TRACE-OUTPUT* + ++ +++ - / // /// ARRAY-DIMENSION-LIMIT ARRAY-RANK-LIMIT ARRAY-TOTAL-SIZE-LIMIT BOOLE-1 BOOLE-2 BOOLE-AND BOOLE-ANDC1 BOOLE-ANDC2 BOOLE-C1 BOOLE-C2 BOOLE-CLR BOOLE-EQV BOOLE-IOR BOOLE-NAND BOOLE-NOR BOOLE-ORC1 BOOLE-ORC2 BOOLE-SET BOOLE-XOR CALL-ARGUMENTS-LIMIT CHAR-CODE-LIMIT DOUBLE-FLOAT-EPSILON DOUBLE-FLOAT-NEGATIVE-EPSILON INTERNAL-TIME-UNITS-PER-SECOND LAMBDA-LIST-KEYWORDS LAMBDA-PARAMETERS-LIMIT LEAST-NEGATIVE-DOUBLE-FLOAT LEAST-NEGATIVE-LONG-FLOAT LEAST-NEGATIVE-NORMALIZED-DOUBLE-FLOAT LEAST-NEGATIVE-NORMALIZED-LONG-FLOAT LEAST-NEGATIVE-NORMALIZED-SHORT-FLOAT LEAST-NEGATIVE-NORMALIZED-SINGLE-FLOAT LEAST-NEGATIVE-SHORT-FLOAT LEAST-NEGATIVE-SINGLE-FLOAT LEAST-POSITIVE-DOUBLE-FLOAT LEAST-POSITIVE-LONG-FLOAT LEAST-POSITIVE-NORMALIZED-DOUBLE-FLOAT LEAST-POSITIVE-NORMALIZED-LONG-FLOAT LEAST-POSITIVE-NORMALIZED-SHORT-FLOAT LEAST-POSITIVE-NORMALIZED-SINGLE-FLOAT LEAST-POSITIVE-SHORT-FLOAT LEAST-POSITIVE-SINGLE-FLOAT LONG-FLOAT-EPSILON LONG-FLOAT-NEGATIVE-EPSILON MOST-NEGATIVE-DOUBLE-FLOAT MOST-NEGATIVE-FIXNUM MOST-NEGATIVE-LONG-FLOAT MOST-NEGATIVE-SHORT-FLOAT MOST-NEGATIVE-SINGLE-FLOAT MOST-POSITIVE-DOUBLE-FLOAT MOST-POSITIVE-FIXNUM MOST-POSITIVE-LONG-FLOAT MOST-POSITIVE-SHORT-FLOAT MOST-POSITIVE-SINGLE-FLOAT MULTIPLE-VALUES-LIMIT NIL PI SHORT-FLOAT-EPSILON SHORT-FLOAT-NEGATIVE-EPSILON SINGLE-FLOAT-EPSILON SINGLE-FLOAT-NEGATIVE-EPSILON T) "The list of special variables defined in Common Lisp."))
 
-(defun make-parser (&rest rest &key (type 'parser-copy) (variables +common-lisp-variables+) (functions +common-lisp-functions+) (macros +common-lisp-macros+) &allow-other-keys)
+(defun make-parser (&rest rest &key (type 'parser) (variables +common-lisp-variables+) (functions +common-lisp-functions+) (macros +common-lisp-macros+) &allow-other-keys)
   "Return a free namespace in which the list of VARIABLES, FUNCTIONS, and MACROS are defined.
 By default, variables, functions, and macros available in package COMMON-LISP are present.
 You may pass any keyword option accepted by (MAKE-INSTANCE TYPE ...)."
@@ -681,40 +673,40 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
     (assert (proper-list-p body) () "Not a proper list: ~S" body)
     (parse-declare body nil)))
 
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (multiple-value-bind (body declspecs) (parse-declaration-in-body parser '(declare (type fixnum)) nil)
     (assert (and (equal body '(declare (type fixnum))) (null declspecs)))))
 ;;TODO: test that (parse-declaration-in-body '((declare ()) 5) nil nil nil) throws an error.
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (multiple-value-bind (body declspecs) (parse-declaration-in-body parser '((declare (type fixnum a)) 5) nil)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type)))
     (assert (nso-freep (car (declspec-vars (car declspecs)))))
     (assert (eq (car (declspec-vars (car declspecs))) (namespace-lookup 'var 'a (parser-free-namespace parser))))
     (assert (not (namespace-boundp 'fun 'a (parser-free-namespace parser))))))
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (multiple-value-bind (body declspecs) (parse-declaration-in-body parser '((declare (ftype (function () fixnum) a)) 5) nil)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun 'a (parser-free-namespace parser))))
     (assert (not (namespace-boundp 'var 'a (parser-free-namespace parser))))))
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (multiple-value-bind (body declspecs) (parse-declaration-in-body parser '((declare (ftype (function () fixnum) (setf a))) 5) nil)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ftype)))
     (assert (nso-freep (car (declspec-funs (car declspecs)))))
     (assert (eq (car (declspec-funs (car declspecs))) (namespace-lookup 'fun '(setf a) (parser-free-namespace parser))))
     (assert (not (namespace-boundp 'var '(setf a) (parser-free-namespace parser))))))
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (multiple-value-bind (body declspecs) (parse-declaration-in-body parser '((declare (optimize (debug 3) speed)) 5) nil)
     (assert (equal body '(5)))
     (assert (let ((d (car declspecs))) (and (typep d 'declspec-optimize) (equal (declspec-qualities d) '((debug . 3) (speed . nil))))))))
-(let ((parser (make-instance 'parser-copy)))
+(let ((parser (make-instance 'parser)))
   (multiple-value-bind (body declspecs) (parse-declaration-in-body parser '((declare (ignore a (function b))) 5) nil)
     (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-ignore)))
     (assert (let ((syms (declspec-syms (car declspecs)))) (typep (car syms) 'var) (typep (cadr syms) 'fun)))
     (assert (eq (car (declspec-syms (car declspecs))) (namespace-lookup 'var 'a (parser-free-namespace parser))))
     (assert (eq (cadr (declspec-syms (car declspecs))) (namespace-lookup 'fun 'b (parser-free-namespace parser))))))
 (multiple-value-bind (body declspecs)
-    (parse-declaration-in-body (make-instance 'parser-copy)
+    (parse-declaration-in-body (make-instance 'parser)
 			       '((declare (type fixnum) (ftype (function () t))) (declare (optimize (speed 3)) (ignore)))
 			       nil)
   (assert (equal body nil))
@@ -723,7 +715,7 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
   (assert (typep (elt declspecs 2) 'declspec-optimize))
   (assert (typep (elt declspecs 3) 'declspec-ignore)))
 (multiple-value-bind (body declspecs)
-    (parse-declaration-in-body (make-instance 'parser-copy) '((declare (inline f1 f2)) (declare (notinline f1))) nil)
+    (parse-declaration-in-body (make-instance 'parser) '((declare (inline f1 f2)) (declare (notinline f1))) nil)
   (assert (equal body nil))
   (assert (let ((inl (elt declspecs 0)))
 	    (and (typep inl 'declspec-inline)
@@ -733,7 +725,7 @@ Note that this function does not parse types, it just stores them in DECLSPEC-ob
 	    (and (typep notinl 'declspec-notinline)
 		 (eq (nso-name (car (declspec-funs notinl))) 'f1)))))
 (multiple-value-bind (body declspecs)
-    (parse-declaration-in-body (make-instance 'parser-copy) '((declare (special a))) nil)
+    (parse-declaration-in-body (make-instance 'parser) '((declare (special a))) nil)
   (assert (equal body nil))
   (assert (let ((spec (elt declspecs 0)))
 	    (and (typep spec 'declspec-special)
@@ -759,7 +751,7 @@ Side-effects: Adds references of the created DECLSPEC-objects to the DECLSPEC-sl
 	     (t
 	      (return (values body-rest declspecs documentation))))))))
 
-(multiple-value-bind (body declspecs documentation) (parse-declaration-and-documentation-in-body (make-instance 'parser-copy) '((declare (type number a)) "doc" (declare (type fixnum a)) 5) nil)
+(multiple-value-bind (body declspecs documentation) (parse-declaration-and-documentation-in-body (make-instance 'parser) '((declare (type number a)) "doc" (declare (type fixnum a)) 5) nil)
   (assert (and (equal body '(5)) (typep (car declspecs) 'declspec-type) (typep (cadr declspecs) 'declspec-type) (equal documentation "doc"))))
 
 (defmethod print-object ((object declspec-type) stream)
@@ -1788,7 +1780,7 @@ restart
 	 (readonly (cadr rest)))
     (assert (position (cadr rest) '(nil t)) () "READ-ONLY-P in LOAD-TIME-VALUE-form ~S must be either NIL or T, but is ~S" (cons head rest) readonly)
 	      (let* ((current (make-ast parser 'load-time-value-form :parent parent :source source :readonly readonly))
-		     (parsed-value (parse (make-instance 'parser-copy :free-namespace (parser-free-namespace parser)) value-form current))) ;Note that dynamic variables must be parsed: in the form (LOAD-TIME-VALUE *A*), *A* must refer to the global *A*.
+		     (parsed-value (parse (make-instance 'parser :free-namespace (parser-free-namespace parser)) value-form current))) ;Note that dynamic variables must be parsed: in the form (LOAD-TIME-VALUE *A*), *A* must refer to the global *A*.
 		(setf (form-value current) parsed-value)
 		current)))
 
@@ -1908,7 +1900,7 @@ restart
     (t
      (error "Function or macro application must start with a symbol, but is~%~W" source))))
 
-(defun parse-with-namespace (form &key (parser (make-parser :variables nil :functions nil :macros nil)))
+(defun parse-with-namespace (form &key (parser-type 'parser) (parser (make-parser :type parser-type :variables nil :functions nil :macros nil)))
   "Parse FORM using the PARSER, and any occurring declarations using DECLSPEC-PARSER. Use FREE-NAMESPACE as the free namespace.
 If you want the default free Common Lisp namespace, pass ':PARSER (MAKE-PARSER)'."
   (parse parser form nil))
