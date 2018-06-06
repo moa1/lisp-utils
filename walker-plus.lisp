@@ -1,4 +1,4 @@
-(defpackage :walker-plus
+ (defpackage :walker-plus
   (:documentation "Parsers and deparsers for some more forms.")
   (:use :cl)
   (:export
@@ -31,7 +31,7 @@
 
 ;;;; FORMS
 
-(defclass multiple-value-bind-form (walker:form walker:body-form)
+(defclass multiple-value-bind-form (walker:form walker:body-mixin)
   ((vars :initarg :vars :accessor walker:form-vars :type list :documentation "list of VARs")
    (values :initarg :values :accessor walker:form-values :type form)
    (declspecs :initarg :declspecs :accessor walker:form-declspecs :type list)))
@@ -377,11 +377,11 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 		    (assert (not (null ast))))))
 	   (find-abort-form (dead1 dead2 and-or)
 	     (cond
-	       ((and (or (typep dead1 'walker:block-naming-form) (typep dead1 'walker:tagbody-form))
-		     (or (typep dead2 'walker:block-naming-form) (typep dead2 'walker:tagbody-form)))
+	       ((and (or (typep dead1 'walker:block-naming-mixin) (typep dead1 'walker:tagbody-form))
+		     (or (typep dead2 'walker:block-naming-mixin) (typep dead2 'walker:tagbody-form)))
 		;; find the innermost form and return it.
 		(find-innermost-form dead1 dead2))
-	       ((or (typep dead1 'walker:block-naming-form) (typep dead1 'walker:tagbody-form))
+	       ((or (typep dead1 'walker:block-naming-mixin) (typep dead1 'walker:tagbody-form))
 		(ecase and-or
 		  (:and (and dead2 dead1)) ;the order is important
 		  (:or (or dead1 dead2)))) ;the order is important

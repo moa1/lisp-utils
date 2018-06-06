@@ -113,19 +113,19 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :form :parent :form-parent :source :form-source :user
    :object-form :object :form-object
    :var-reading :var :form-var
-   :body-form :body :form-body
+   :body-mixin :body :form-body
    :special-form
    :function-form :object :form-object
    :progn-form
    :binding :parent :form-parent :source :form-source :sym :form-sym :user
    :var-binding :value :form-value
-   :bindings-form :bindings :form-bindings :declspecs :form-declspecs
-   :var-bindings-form
-   :fun-bindings-form
+   :bindings-mixin :bindings :form-bindings :declspecs :form-declspecs
+   :var-bindings-mixin
+   :fun-bindings-mixin
    :let-form
    :let*-form
    :functiondef :parent :form-parent :llist :form-llist :declspecs :form-declspecs :documentation :form-documentation
-   :block-naming-form :blo :form-blo
+   :block-naming-mixin :blo :form-blo
    :block-form
    :fun-binding
    :flet-form
@@ -215,7 +215,7 @@ For example, in (LET ((X 1)) (DECLARE (SPECIAL X)) (LET ((X 2)) (LET ((OLD-X X) 
    (definition :initarg :definition :accessor nso-definition :type (or binding llist)
 	       :documentation "The parsed object it is defined in, NIL if not known.
 For VARs and FUNs it is of type (OR BINDING LLIST)),
-for BLOs it is an instance of a subclass of BLOCK-NAMING-FORM),
+for BLOs it is an instance of a subclass of BLOCK-NAMING-MIXIN),
 for TAGs it is an instance of class TAGBODY-FORM (or a subclass of that).")
    (sites :initform nil :initarg :sites :accessor nso-sites :type list
 	  :documentation "List of forms where this NSO is used, excluding the definition. For example, for FUN-nsos it is the list of APPLICATION-FORMs and FUNCTION-forms. For TAG-nsos, it is the list of GO-FORMs.")
@@ -1128,14 +1128,14 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass var-reading (form)
   ((var :initarg :var :accessor form-var :documentation "The VAR being read"))
   (:documentation "VAR is being accessed for reading. CLHS 3.1.2.1.1 Symbols as Forms. Note that this form is not to be used for variable declarations. This is a subclass of FORM, so that all elements of a correct Lisp form are a type of FORM."))
-(defclass body-form ()
+(defclass body-mixin ()
   ((body :initarg :body :accessor form-body :type list :documentation "list of FORMs"))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
 (defclass special-form (form)
   ())
 (defclass function-form (special-form)
   ((object :initarg :object :accessor form-object :type (or fun lambda-form))))
-(defclass progn-form (special-form body-form)
+(defclass progn-form (special-form body-mixin)
   ())
 (defclass binding ()
   ((parent :initarg :parent :accessor form-parent :documentation "the LET-FORM, LET*-FORM, FLET-FORM, LABELS-FORM, SYMBOL-MACROLET-FORM, or MACROLET-FORM in which the binding is defined.")
@@ -1144,41 +1144,41 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
    (user :initform nil :initarg :user :accessor user)))
 (defclass var-binding (binding)
   ((value :initarg :value :accessor form-value :documentation "Either NIL if not given, or the form initializing the variable, or the expansion form of the symbol macro." :type (or null form t))))
-(defclass bindings-form ()
+(defclass bindings-mixin ()
   ((bindings :initarg :bindings :accessor form-bindings :type list :documentation "list of VAR-BINDINGs, or FUN-BINDINGs")
    (declspecs :initarg :declspecs :accessor form-declspecs :type list :documentation "list of DECLSPECs"))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
-(defclass var-bindings-form (bindings-form)
+(defclass var-bindings-mixin (bindings-mixin)
   () (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
-(defclass fun-bindings-form (bindings-form)
+(defclass fun-bindings-mixin (bindings-mixin)
   () (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
-(defclass let-form (special-form var-bindings-form body-form)
+(defclass let-form (special-form var-bindings-mixin body-mixin)
   ())
-(defclass let*-form (special-form var-bindings-form body-form)
+(defclass let*-form (special-form var-bindings-mixin body-mixin)
   ())
-(defclass functiondef (body-form)
+(defclass functiondef (body-mixin)
   ((parent :initarg :parent :accessor form-parent)
    (llist :initarg :llist :accessor form-llist :type llist)
    (declspecs :initarg :declspecs :accessor form-declspecs :type list)
    (documentation :initarg :documentation :accessor form-documentation :type (or nil string)))
   (:documentation "The definition of a function or macro function without name. The name is provided by class BINDING."))
-(defclass block-naming-form ()
+(defclass block-naming-mixin ()
   ((blo :initarg :blo :accessor form-blo :type blo))
   (:documentation "Note: objects of this type must never be created, only subtypes of this type."))
-(defclass block-form (special-form block-naming-form body-form)
+(defclass block-form (special-form block-naming-mixin body-mixin)
   ())
-(defclass fun-binding (binding block-naming-form functiondef)
+(defclass fun-binding (binding block-naming-mixin functiondef)
   ())
-(defclass flet-form (special-form fun-bindings-form body-form)
+(defclass flet-form (special-form fun-bindings-mixin body-mixin)
   ())
-(defclass labels-form (special-form fun-bindings-form body-form)
+(defclass labels-form (special-form fun-bindings-mixin body-mixin)
   ())
 (defclass lambda-form (special-form functiondef)
   ())
 (defclass return-from-form (special-form)
   ((blo :initarg :blo :accessor form-blo :type blo)
    (value :initarg :value :accessor form-value :type (or null form))))
-(defclass locally-form (special-form body-form)
+(defclass locally-form (special-form body-mixin)
   ((declspecs :initarg :declspecs :accessor form-declspecs :type list)))
 (defclass the-form (special-form)
   ((type :initarg :type :accessor form-type :type (or symbol list))
@@ -1196,26 +1196,26 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
   (:documentation "VAR is being accessed for writing. CLHS 3.1.2.1.1 Symbols as Forms"))
 (defclass setq-form (special-form)
   ((vars :initarg :vars :accessor form-vars :type list :documentation "list of VAR-WRITINGs")))
-(defclass catch-form (special-form body-form)
+(defclass catch-form (special-form body-mixin)
   ((tag :initarg :tag :accessor form-tag :type form)))
 (defclass throw-form (special-form)
   ((tag :initarg :tag :accessor form-tag :type form)
    (value :initarg :value :accessor form-value :type form)))
-(defclass eval-when-form (special-form body-form)
+(defclass eval-when-form (special-form body-mixin)
   ((situations :initarg :situations :accessor form-situations :type list)))
 (defclass load-time-value-form (special-form)
   ((value :initarg :value :accessor form-value :type list)
    (readonly :initarg :readonly :accessor form-readonly :type boolean)))
 (defclass quote-form (special-form)
   ((object :initarg :object :accessor form-object :type t)))
-(defclass multiple-value-call-form (special-form body-form)
+(defclass multiple-value-call-form (special-form body-mixin)
   ((function :initarg :function :accessor form-function :type form))) ;note that this slot is not called FUN, because slots named FUN in other FORM-classes mean "of type FUN".
-(defclass multiple-value-prog1-form (special-form body-form)
+(defclass multiple-value-prog1-form (special-form body-mixin)
   ((values :initarg :values :accessor form-values :type form)))
-(defclass progv-form (special-form body-form)
+(defclass progv-form (special-form body-mixin)
   ((symbols :initarg :symbols :accessor form-symbols :type form)
    (values :initarg :values :accessor form-values :type form)))
-(defclass unwind-protect-form (special-form body-form)
+(defclass unwind-protect-form (special-form body-mixin)
   ((protected :initarg :protected :accessor form-protected :type form)))
 (defclass application-form (form)
   ((fun :initarg :fun :accessor form-fun :type (or fun lambda-form))
@@ -1225,12 +1225,12 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defclass macroapplication-form (application-form)
   ((lexicalnamespace :initarg :lexicalnamespace :accessor form-lexicalnamespace :type lexicalnamespace :documentation "The lexical namespace at the macro application form")
    (freenamespace :initarg :freenamespace :accessor form-freenamespace :type freenamespace :documentation "The free namespace at the macro application form")))
-(defclass symbol-macrolet-form (special-form var-bindings-form body-form)
+(defclass symbol-macrolet-form (special-form var-bindings-mixin body-mixin)
   ())
-(defclass macrolet-form (special-form fun-bindings-form body-form)
+(defclass macrolet-form (special-form fun-bindings-mixin body-mixin)
   ())
-(defclass tagbody-form (special-form body-form)
-  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAGPOINT)") ;do not inherit from BODY-FORM, otherwise slot DOCUMENTATION would be allowed here
+(defclass tagbody-form (special-form body-mixin)
+  ((body :initarg :body :accessor form-body :type list :documentation "list of elements of type (OR FORM TAGPOINT)") ;do not inherit from BODY-MIXIN, otherwise slot DOCUMENTATION would be allowed here
    (tags :initarg :tags :accessor form-tags :type list :documentation "The list of all tags defined in the TAGBODY.")))
 (defclass tagpoint (form)
   ((tag :initarg :tag :accessor form-tag :documentation "The TAG"))
@@ -1263,7 +1263,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
       (if (or (null declspecsp) (null (form-declspecs object)))
 	  (format nil "body:~S" (form-body object))
 	  (format nil "~S body:~S" (cons 'declare (form-declspecs object)) (form-body object)))))
-(defmethod print-object ((object bindings-form) stream)
+(defmethod print-object ((object bindings-mixin) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (if *print-detailed-walker-objects*
 	(format stream "BINDINGS:~S ~A" (form-bindings object) (format-body object t nil))
