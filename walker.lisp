@@ -1094,27 +1094,25 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
     (format stream ")")))
 (defmethod print-object ((object ordinary-llist) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (when *print-detailed-walker-objects*
-      (format stream "~S" (append
-			   (llist-required object)
-			   (let ((it (llist-optional object))) (when it (cons '&optional it)))
-			   (let ((it (llist-rest object))) (when it (list '&rest it)))
-			   (let ((it (llist-key object))) (when it (cons '&key it)))
-			   (let ((it (llist-allow-other-keys object))) (when it (list '&allow-other-keys)))
-			   (let ((it (llist-aux object))) (when it (cons '&aux it))))))))
+    (format stream "~S" (append
+			 (llist-required object)
+			 (let ((it (llist-optional object))) (when it (cons '&optional it)))
+			 (let ((it (llist-rest object))) (when it (list '&rest it)))
+			 (let ((it (llist-key object))) (when it (cons '&key it)))
+			 (let ((it (llist-allow-other-keys object))) (when it (list '&allow-other-keys)))
+			 (let ((it (llist-aux object))) (when it (cons '&aux it)))))))
 (defmethod print-object ((object macro-llist) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (when *print-detailed-walker-objects*
-      (format stream "~S" (append
-			   (let ((it (llist-whole object))) (when it (list '&whole it)))
-			   (let ((it (llist-environment object))) (when it (list '&environment it)))
-			   (llist-required object)
-			   (let ((it (llist-optional object))) (when it (cons '&optional it)))
-			   (let ((it (llist-rest object))) (when it (list '&rest it)))
-			   (let ((it (llist-body object))) (when it (list '&body it)))
-			   (let ((it (llist-key object))) (when it (cons '&key it)))
-			   (let ((it (llist-allow-other-keys object))) (when it (list '&allow-other-keys)))
-			   (let ((it (llist-aux object))) (when it (cons '&aux it))))))))
+    (format stream "~S" (append
+			 (let ((it (llist-whole object))) (when it (list '&whole it)))
+			 (let ((it (llist-environment object))) (when it (list '&environment it)))
+			 (llist-required object)
+			 (let ((it (llist-optional object))) (when it (cons '&optional it)))
+			 (let ((it (llist-rest object))) (when it (list '&rest it)))
+			 (let ((it (llist-body object))) (when it (list '&body it)))
+			 (let ((it (llist-key object))) (when it (cons '&key it)))
+			 (let ((it (llist-allow-other-keys object))) (when it (list '&allow-other-keys)))
+			 (let ((it (llist-aux object))) (when it (cons '&aux it)))))))
 
 ;;;; FORMS and Utility Functions
 
