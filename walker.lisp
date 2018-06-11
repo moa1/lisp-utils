@@ -1269,8 +1269,9 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 	(format stream "body:~S" (form-body object)))))
 (defmethod print-object ((object fun-binding) stream)
   (print-unreadable-object (object stream :type t :identity t)
-    (when *print-detailed-walker-objects*
-      (format stream "~S ~S ~A" (form-fun object) (if (slot-boundp object 'llist) (form-llist object) 'llist-unbound) (if (slot-boundp object 'body) (format-body object t t) 'body-unbound)))))
+    (if *print-detailed-walker-objects*
+	(format stream "~S ~S ~A" (form-fun object) (if (slot-boundp object 'llist) (form-llist object) 'llist-unbound) (if (slot-boundp object 'body) (format-body object t t) 'body-unbound))
+	(format stream "~S" (form-fun object)))))
 (defmethod print-object ((object lambda-form) stream)
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~S ~A" (form-llist object) (format-body object t t))))
