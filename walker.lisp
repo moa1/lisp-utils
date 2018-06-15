@@ -1609,13 +1609,12 @@ restart
 		 (let* ((body-form (cdr def))
 			(block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
 			(blo (make-ast parser 'blo :name block-name :freep nil :sites nil :source block-name))
-			(binding (make-ast parser 'fun-binding :parent current :source def :blo blo))
 			(macrop (ecase head ((flet labels) nil) ((macrolet) t)))
 			(parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 			(fun (if (eq head 'labels)
 				 (namespace-lookup 'fun name (parser-lexical-namespace parser))
-				 (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil :source def)))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake FUN, and we want to have it when parsing the body.
-		   (setf (form-fun binding) fun)
+				 (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil :source def))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake FUN, and we want to have it when parsing the body.
+			(binding (make-ast parser 'fun-binding :parent current :source def :sym fun :blo blo)))
 		   (setf (nso-definition fun) binding)
 		   (setf (nso-definition blo) binding)
 		   (parse-and-set-functiondef (augment-lexical-namespace blo parser) body-form parse-lambda-list-function binding) ;note that the augmented LEXICAL-NAMESPACE is not returned, so the BLO binding is temporary.
@@ -2120,7 +2119,18 @@ Returns three values: a list containing the lexical namespaces, a list containin
 	 (body-b (form-body-2 ast)))
     (assert (equal llist-a llist-binit))
     (assert (not (equal llist-a body-a)))
-    (assert (not (equal llist-b body-b)))))
+    (assert (not (equal llist-b body-b))))
+  (let* ((ast (parse-with-namespace '(flet ((fa (&optional (a (fa))))) (fa))))
+	 (binding (form-binding-1 ast))
+	 (fa (form-fun binding))
+	 (llist-a-init-fun (form-fun (argument-init (car (llist-optional (form-llist binding)))))))
+    (assert (not (eql llist-a-init-fun fa))))
+  (let* ((ast (parse-with-namespace '(labels ((fa (&optional (a (fa))))) (fa))))
+	 (binding (form-binding-1 ast))
+	 (fa (form-fun binding))
+	 (llist-a-init-fun (form-fun (argument-init (car (llist-optional (form-llist binding)))))))
+    (assert (eql llist-a-init-fun fa))))
+
 (test-parse-lambda-list)
 
 (defun test-parse-block-reference ()
@@ -2779,14 +2789,14 @@ Returns three values: a list containing the lexical namespaces, a list containin
   (setf (deparser-result deparser)
 	(multiple-value-list (funcall (deparser-function deparser) ast path))))
 
-(defun map-ast (function ast &key (deparser-class 'deparser-map-ast-before) path)
+(defun map-ast (function ast &key (deparser-type 'deparser-map-ast-before) path)
   "Recursively call FUNCTION with all objects occurring in the AST in the left-to-right order in which they appear in the original Lisp form (except that documentation and DECLARE-expressions are always visited in this order, but TODO: FIXME: currently documentation is not passed to FUNCTION at all).
 FUNCTION is called with one parameter: the current AST1, and a PATH that describes the position of AST1 in AST.
-DEPARSER-CLASS can be an instance of classes DEPARSER-MAP-AST-AFTER or DEPARSER-MAP-AST-BEFORE, or a subclass of these.
+DEPARSER-TYPE can be an instance of classes DEPARSER-MAP-AST-BEFORE or DEPARSER-MAP-AST-AFTER, or a subclass of these. If DEPARSER-TYPE is of type DEPARSER-MAP-AST-BEFORE, then function is called on an encapsulating form before being called on the encapsulated forms; if DEPARSER-TYPE is of type DEPARSER-MAP-AST-AFTER, then after.
 PATH is the path leading to AST. Use a value different from NIL if your AST is embedded in another abstract syntax tree, and you want to have the path for AST being passed to FUNCTION have the suffix PATH.
 Return the last returned multiple values of FUNCTION."
   (declare (optimize (debug 3)))
   ;;TODO: FIXME: the DEPARSE-* functions above do not call RECURSE-FUNCTION for some slots (those which are not parsed by #'PARSE). Come up with a scheme that allows an adapted RECURSE-FUNCTION to know what type those unparsed slots are (e.g. type specifiers). The slots to which this applies is marked above with "TODO: FIXME: this is not passed to RECURSE-FUNCTION (because it is not parsed by #'PARSE)".
-  (let ((deparser (make-instance deparser-class :function function)))
+  (let ((deparser (make-instance deparser-type :function function)))
     (deparse deparser ast path)
     (apply #'values (deparser-result deparser))))
