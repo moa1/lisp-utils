@@ -167,6 +167,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    :ast-inside-ast-p
    :parse-body
    :parse-form
+   :parse-var-binding
+   :parse-fun-binding
    :parse-macro-or-function-application
    :parse-with-namespace
    :parser-namespace-at
@@ -1469,7 +1471,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 ;;;; END OF FORMs and Utility Functions
 
-(defun parse-and-set-functiondef (parser form parse-lambda-list-function current-functiondef)
+(defmethod parse-and-set-functiondef ((parser parser) form parse-lambda-list-function current-functiondef)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
 PARSE-LAMBDA-LIST-FUNCTION must be a function that accepts (PARSER LAMBDA-LIST CURRENT-FUNCTIONDEF), parses the LAMBDA-LIST and returns two values: 1. the new LLIST, i.e. an instance of (a subclass of) class LLIST. 2. the lexical namespace of PARSER augmented by the variables in LAMBDA-LIST.
 Side-effects: Creates yet unknown free variables and functions and adds them to the free namespace of PARSER."
@@ -1517,7 +1519,7 @@ If EQL-MEANS-INSIDE is non-NIL, then returns T if (EQL INNER-AST OUTER-AST)."
 ;; TODO: FIXME: distinguish in all ASSERTs and ERRORs (in all functions, especially the #'PARSE functions) between errors that are recognized as syntax errors because the input form is impossible in Common Lisp, and errors that are due to me having made programming mistakes.
 ;; TODO: FIXME: Must handle arbitrary nonsense input gracefully. (see comment near #'PROPER-LIST-P.)
 
-(defun parse-body (parser body current)
+(defmethod parse-body ((parser parser) body current)
   "Parse the forms in BODY."
   (assert (proper-list-p body) () "Body is not a proper list: ~S" body)
   (loop for form in body collect
@@ -1578,6 +1580,41 @@ restart
     (setf (form-body current) parsed-body)
     current))
 
+(defmethod parse-var-binding ((parser parser) head definition parent)
+  (ecase head
+    ((let let*)
+     (assert (or (symbolp definition) (and (consp definition) (symbolp (car definition)) (or (null (cdr definition)) (null (cddr definition))))) () "cannot parse definition in ~S-form:~%~S" head definition))
+    ((symbol-macrolet)
+     (assert (and (consp definition) (symbolp (car definition)) (not (null (car definition))) (not (null (cdr definition))) (null (cddr definition))) () "cannot parse definition in ~S-form:~%~S" head definition)))
+  (let* ((name (if (consp definition) (car definition) definition))
+	 (value-form-present-p (consp definition))
+	 (value-form (if (consp definition) (cadr definition) nil))
+	 (binding (make-ast parser 'var-binding :parent parent :source definition))
+	 (parsed-value (ecase head ((let* let) (if value-form-present-p (parse parser value-form binding) nil)) ((symbol-macrolet) value-form)))
+	 (macrop (ecase head ((let* let) nil) ((symbol-macrolet) t)))
+	 (var (make-ast parser 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil :source name)))
+    (setf (form-var binding) var
+	  (form-value binding) parsed-value)
+    binding))
+
+(defmethod parse-fun-binding ((parser parser) head definition parent)
+  (assert (and (consp definition) (valid-function-name-p (car definition)) (not (null (cdr definition)))) () "cannot parse definition in ~S-form:~%~S" head definition)
+  (multiple-value-bind (fun-type name) (valid-function-name-p (car definition))
+    (assert (or (not (eq head 'macrolet)) (symbolp name)) () "macro function name in ~S-definition must be a SYMBOL, but is ~S" head (car definition))
+    (let* ((body-form (cdr definition))
+	   (block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
+	   (blo (make-ast parser 'blo :name block-name :freep nil :sites nil :source block-name))
+	   (macrop (ecase head ((flet labels) nil) ((macrolet) t)))
+	   (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
+	   (fun (if (eq head 'labels)
+		    (namespace-lookup 'fun name (parser-lexical-namespace parser))
+		    (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil :source definition))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake FUN, and we want to have it when parsing the body.
+	   (binding (make-ast parser 'fun-binding :parent parent :source definition :sym fun :blo blo)))
+      (setf (nso-definition fun) binding)
+      (setf (nso-definition blo) binding)
+      (parse-and-set-functiondef (augment-lexical-namespace blo parser) body-form parse-lambda-list-function binding) ;note that the augmented LEXICAL-NAMESPACE is not returned, so the BLO binding is temporary.
+      binding)))
+
 ;; TODO: FIXME: maybe I have to handle something specially in FLET and LABELS. The CLHS on FLET and LABELS says: "Also, within the scope of flet, global setf expander definitions of the function-name defined by flet do not apply. Note that this applies to (defsetf f ...), not (defmethod (setf f) ...)." What does that mean?
 (defun parse-let*-flet-labels-symbol-macrolet-macrolet (parser head rest parent source)
   (assert (and (consp rest) (listp (car rest))) () "cannot parse ~S-form:~%~S" head (cons head rest))
@@ -1586,82 +1623,49 @@ restart
 	 (form-type (ecase head ((let) 'let-form) ((let*) 'let*-form) ((flet) 'flet-form) ((labels) 'labels-form) ((symbol-macrolet) 'symbol-macrolet-form) ((macrolet) 'macrolet-form)))
 	 (current (make-ast parser form-type :source (cons head rest) :parent parent :source source :body nil))) ;:BINDINGS and :DECLSPECS are defined below
     (assert (proper-list-p definitions) () "Not a proper list: ~S" definitions)
-    (labels ((make-var-binding (def parser)
-	       (ecase head
-		 ((let let*)
-		  (assert (or (symbolp def) (and (consp def) (symbolp (car def)) (or (null (cdr def)) (null (cddr def))))) () "cannot parse definition in ~S-form:~%~S" head def))
-		 ((symbol-macrolet)
-		  (assert (and (consp def) (symbolp (car def)) (not (null (car def))) (not (null (cdr def))) (null (cddr def))) () "cannot parse definition in ~S-form:~%~S" head def)))
-	       (let* ((name (if (consp def) (car def) def))
-		      (value-form-present-p (consp def))
-		      (value-form (if (consp def) (cadr def) nil))
-		      (binding (make-ast parser 'var-binding :parent current :source def))
-		      (parsed-value (ecase head ((let* let) (if value-form-present-p (parse parser value-form binding) nil)) ((symbol-macrolet) value-form)))
-		      (macrop (ecase head ((let* let) nil) ((symbol-macrolet) t)))
-		      (var (make-ast parser 'var :name name :freep nil :definition binding :declspecs nil :macrop macrop :sites nil :source name)))
-		 (setf (form-var binding) var
-		       (form-value binding) parsed-value)
-		 binding))
-	     (make-fun-binding (def parser)
-	       (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def)
-	       (multiple-value-bind (fun-type name) (valid-function-name-p (car def))
-		 (assert (or (not (eq head 'macrolet)) (symbolp name)) () "macro function name in ~S-definition must be a SYMBOL, but is ~S" head (car def))
-		 (let* ((body-form (cdr def))
-			(block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-			(blo (make-ast parser 'blo :name block-name :freep nil :sites nil :source block-name))
-			(macrop (ecase head ((flet labels) nil) ((macrolet) t)))
-			(parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
-			(fun (if (eq head 'labels)
-				 (namespace-lookup 'fun name (parser-lexical-namespace parser))
-				 (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil :source def))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake FUN, and we want to have it when parsing the body.
-			(binding (make-ast parser 'fun-binding :parent current :source def :sym fun :blo blo)))
-		   (setf (nso-definition fun) binding)
-		   (setf (nso-definition blo) binding)
-		   (parse-and-set-functiondef (augment-lexical-namespace blo parser) body-form parse-lambda-list-function binding) ;note that the augmented LEXICAL-NAMESPACE is not returned, so the BLO binding is temporary.
-		   binding))))
-      (multiple-value-bind (parsed-bindings new-parser)
-	  (let ((parse-value-function (ecase head ((let let* symbol-macrolet) #'make-var-binding) ((flet labels macrolet) #'make-fun-binding))))
-	    (cond
-	      ((find head '(let flet symbol-macrolet macrolet))
-	       (let* ((parsed-bindings (loop for def in definitions collect
-					    (funcall parse-value-function def parser)))
-		      (parsed-syms (loop for binding in parsed-bindings collect
-					(form-sym binding)))
-		      (new-parser parser))
-		 (loop for fun in parsed-syms do
-		      (setf new-parser (augment-lexical-namespace fun new-parser)))
-		 (values parsed-bindings new-parser)))
-	      ((eq head 'let*)
-	       (let* ((new-parser parser)
-		      (parsed-bindings (loop for def in definitions collect
-					    (let* ((parsed-binding (funcall parse-value-function def new-parser))
-						   (parsed-var (form-var parsed-binding)))
-					      (setf new-parser (augment-lexical-namespace parsed-var new-parser))
-					      parsed-binding))))
-		 (values parsed-bindings new-parser)))
-	      ((eq head 'labels)
-	       (loop for def in definitions do
-		    (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def))
-	       (let* ((fake-funs (loop for def in definitions collect
-				      (let ((name (nth-value 1 (valid-function-name-p (car def)))))
-					(make-ast parser 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil :source def)))) ;:DEFINITION will be set in #'MAKE-FUN-BINDING
-		      (new-parser (let ((parser parser))
-				    (loop for fun in fake-funs do
-					 (setf parser (augment-lexical-namespace fun parser)))
-				    parser))
-		      (parsed-bindings (loop for def in definitions for fun in fake-funs collect
-					    (let ((parsed-binding (funcall parse-value-function def new-parser)))
-					      (setf (nso-definition fun) parsed-binding)
-					      (setf (form-fun parsed-binding) fun)
-					      parsed-binding))))
-		 (values parsed-bindings new-parser)))
-	      (t (error "unknown HEAD"))))
-	(multiple-value-bind (body parsed-declspecs)
-	    (parse-declaration-in-body new-parser body current)
-	  (setf (form-bindings current) parsed-bindings)
-	  (setf (form-declspecs current) parsed-declspecs)
-	  (setf (form-body current) (parse-body new-parser body current))
-	  current)))))
+    (multiple-value-bind (parsed-bindings new-parser)
+	(let ((parse-value-function (ecase head ((let let* symbol-macrolet) #'parse-var-binding) ((flet labels macrolet) #'parse-fun-binding))))
+	  (cond
+	    ((find head '(let flet symbol-macrolet macrolet))
+	     (let* ((parsed-bindings (loop for def in definitions collect
+					  (funcall parse-value-function parser head def current)))
+		    (parsed-syms (loop for binding in parsed-bindings collect
+				      (form-sym binding)))
+		    (new-parser parser))
+	       (loop for fun in parsed-syms do
+		    (setf new-parser (augment-lexical-namespace fun new-parser)))
+	       (values parsed-bindings new-parser)))
+	    ((eq head 'let*)
+	     (let* ((new-parser parser)
+		    (parsed-bindings (loop for def in definitions collect
+					  (let* ((parsed-binding (funcall parse-value-function new-parser head def current))
+						 (parsed-var (form-var parsed-binding)))
+					    (setf new-parser (augment-lexical-namespace parsed-var new-parser))
+					    parsed-binding))))
+	       (values parsed-bindings new-parser)))
+	    ((eq head 'labels)
+	     (loop for def in definitions do
+		  (assert (and (consp def) (valid-function-name-p (car def)) (not (null (cdr def)))) () "cannot parse definition in ~S-form:~%~S" head def))
+	     (let* ((fake-funs (loop for def in definitions collect
+				    (let ((name (nth-value 1 (valid-function-name-p (car def)))))
+				      (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop nil :sites nil :source def)))) ;:DEFINITION will be set in #'PARSE-FUN-BINDING
+		    (new-parser (let ((parser parser))
+				  (loop for fun in fake-funs do
+				       (setf parser (augment-lexical-namespace fun parser)))
+				  parser))
+		    (parsed-bindings (loop for def in definitions for fun in fake-funs collect
+					  (let ((parsed-binding (funcall parse-value-function new-parser head def current)))
+					    (setf (nso-definition fun) parsed-binding)
+					    (setf (form-fun parsed-binding) fun)
+					    parsed-binding))))
+	       (values parsed-bindings new-parser)))
+	    (t (error "unknown HEAD"))))
+      (multiple-value-bind (body parsed-declspecs)
+	  (parse-declaration-in-body new-parser body current)
+	(setf (form-bindings current) parsed-bindings)
+	(setf (form-declspecs current) parsed-declspecs)
+	(setf (form-body current) (parse-body new-parser body current))
+	current))))
 
 (defmethod parse-form ((parser parser) (head (eql 'let)) rest parent source)
   (parse-let*-flet-labels-symbol-macrolet-macrolet parser head rest parent source))
@@ -1879,7 +1883,7 @@ restart
       (push current (nso-sites tag))
       current)))
 
-(defun parse-macro-or-function-application (parser macrop fun arg-forms parent source)
+(defmethod parse-macro-or-function-application ((parser parser) macrop fun arg-forms parent source)
   (let* ((current (if macrop
 		      (make-ast parser 'macroapplication-form :parent parent :source source :fun fun :recursivep (is-recursive fun parent) :lexicalnamespace (parser-lexical-namespace parser) :freenamespace (parser-free-namespace parser))
 		      (make-ast parser 'application-form :parent parent :source source :fun fun :recursivep (is-recursive fun parent))))
