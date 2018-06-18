@@ -1471,7 +1471,7 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 
 ;;;; END OF FORMs and Utility Functions
 
-(defmethod parse-and-set-functiondef ((parser parser) form parse-lambda-list-function current-functiondef)
+(defmethod parse-and-set-functiondef ((parser parser) form parse-lambda-list-function block-name current-functiondef)
   "Parse FORM, which must be of the form (LAMBDA-LIST &BODY BODY) and set the slots of the CURRENT-FUNCTIONDEF-object to the parsed values.
 PARSE-LAMBDA-LIST-FUNCTION must be a function that accepts (PARSER LAMBDA-LIST CURRENT-FUNCTIONDEF), parses the LAMBDA-LIST and returns two values: 1. the new LLIST, i.e. an instance of (a subclass of) class LLIST. 2. the lexical namespace of PARSER augmented by the variables in LAMBDA-LIST.
 Side-effects: Creates yet unknown free variables and functions and adds them to the free namespace of PARSER."
@@ -1486,6 +1486,10 @@ Side-effects: Creates yet unknown free variables and functions and adds them to 
       (multiple-value-bind (new-llist parser-in-functiondef)
 	  (funcall parse-lambda-list-function parser lambda-list current-functiondef)
 	(setf (form-llist current-functiondef) new-llist)
+	(unless (null block-name)
+	  (let* ((blo (make-ast parser 'blo :name block-name :freep nil :definition current-functiondef :sites nil :source block-name)))
+	    (setf (form-blo current-functiondef) blo)
+	    (setf parser-in-functiondef (augment-lexical-namespace blo parser-in-functiondef))))
 	(multiple-value-bind (body parsed-declspecs parsed-documentation)
 	    (parse-declaration-and-documentation-in-body parser-in-functiondef body current-functiondef)
 	  (setf (form-declspecs current-functiondef) parsed-declspecs)
@@ -1603,16 +1607,14 @@ restart
     (assert (or (not (eq head 'macrolet)) (symbolp name)) () "macro function name in ~S-definition must be a SYMBOL, but is ~S" head (car definition))
     (let* ((body-form (cdr definition))
 	   (block-name (ecase fun-type ((fun) name) ((setf-fun) (cadr name)))) ;CLHS Glossary "function block name" defines "If the function name is a list whose car is setf and whose cadr is a symbol, its function block name is the symbol that is the cadr of the function name."
-	   (blo (make-ast parser 'blo :name block-name :freep nil :sites nil :source block-name))
 	   (macrop (ecase head ((flet labels) nil) ((macrolet) t)))
 	   (parse-lambda-list-function (if macrop #'parse-macro-lambda-list #'parse-ordinary-lambda-list))
 	   (fun (if (eq head 'labels)
 		    (namespace-lookup 'fun name (parser-lexical-namespace parser))
 		    (make-ast parser 'fun :name name :freep nil :declspecs nil :macrop macrop :sites nil :source definition))) ;for a LABELS-form, the LEXICAL-NAMESPACE already contains a fake FUN, and we want to have it when parsing the body.
-	   (binding (make-ast parser 'fun-binding :parent parent :source definition :sym fun :blo blo)))
+	   (binding (make-ast parser 'fun-binding :parent parent :source definition :sym fun))) ;BLO is set by #'PARSE-AND-SET-FUNCTIONDEF
       (setf (nso-definition fun) binding)
-      (setf (nso-definition blo) binding)
-      (parse-and-set-functiondef (augment-lexical-namespace blo parser) body-form parse-lambda-list-function binding) ;note that the augmented LEXICAL-NAMESPACE is not returned, so the BLO binding is temporary.
+      (parse-and-set-functiondef parser body-form parse-lambda-list-function block-name binding)
       binding)))
 
 ;; TODO: FIXME: maybe I have to handle something specially in FLET and LABELS. The CLHS on FLET and LABELS says: "Also, within the scope of flet, global setf expander definitions of the function-name defined by flet do not apply. Note that this applies to (defsetf f ...), not (defmethod (setf f) ...)." What does that mean?
@@ -1683,7 +1685,7 @@ restart
 (defmethod parse-form ((parser parser) (head (eql 'lambda)) rest parent source)
   (let* ((lambda-list-and-body rest)
 	 (current (make-ast parser 'lambda-form :parent parent :source source)))
-    (parse-and-set-functiondef parser lambda-list-and-body #'parse-ordinary-lambda-list current)
+    (parse-and-set-functiondef parser lambda-list-and-body #'parse-ordinary-lambda-list nil current)
     current))
 
 (defmethod parse-form ((parser parser) (head (eql 'block)) rest parent source)
