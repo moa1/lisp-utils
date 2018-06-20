@@ -84,21 +84,16 @@
 ARG must be either a positive integer or a positive float."
   (declare (type (or (integer 1 *) float) arg))
   (assert (> arg 0) () "ARG is neither a positive integer nor a positive float, but has value ~A" arg)
-  ;; TODO: add random number generator for floats.
   (cond
-    ((typep arg 'single-float)
+    ((typep arg 'float)
      (cond
        ((= arg 1.0)
-	(/ (float (random-64bits random-state)) (expt 2 64)))
+	(* (ash (random-64bits random-state) -11) (/ 1.0 (ash 1 53))))
        (t
-	(error "TODO random float"))))
-    ((typep arg 'double-float)
-     (cond
-       ((= arg 1.0)
-	(/ (float (random-64bits random-state)) (expt 2 64)))
-       (t
-	(error "TODO random float"))))
+	;; TODO: I'm not sure this preserves all random bits for every possible ARG.
+	(* (ash (random-64bits random-state) -11) (/ 1.0 (ash 1 53)) arg))))
     ((< arg (expt 2 64))
+     ;; TODO: FIXME: this biases random numbers to the low numbers. For demonstration, just think of (RANDOM-64BITS) not generating 64 bits, but only 3, i.e. random integers in [0;8). Let's say we want to generate a random integer in the range [0;6). We can generate the possible outputs for every possible random integer in [0;8), like so (LOOP FOR I BELOW 8 COLLECT (MOD I 6)) == (0 1 2 3 4 5 0 1). This means that the numbers (0 1) have twice the probability of being generated than the numbers (2 3 4 5).
      (mod (random-64bits random-state) arg))
     (t
      (do ((i (ash arg -64) (ash i -64))
