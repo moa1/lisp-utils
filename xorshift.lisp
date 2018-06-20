@@ -17,7 +17,7 @@
 (in-package :xorshift)
 
 ;;;; The paper can be downladed from http://www.jstatsoft.org/v08/i14/.
-;;;; Also see the article "xorshift* / xorshift+ generators and the PRNG shootout".
+;;;; Also see the article "xorshift* / xorshift+ generators and the PRNG shootout" at http://prng.di.unimi.it/.
 
 (defstruct (xorshift1024*-random-state (:constructor %make-xorshift1024*-random-state))
   (s (make-array 16 :element-type '(unsigned-byte 64) :initial-contents '(0 1 2 3  4 5 6 7  8 9 10 11  12 13 14 15) :fill-pointer nil :adjustable nil) :type (vector (unsigned-byte 64) 16))
