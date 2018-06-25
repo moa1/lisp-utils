@@ -167,13 +167,13 @@
 	 (walker:deparse-path deparser (walker:form-values ast) path)
 	 (walker:deparse-body deparser ast path t nil)))
 (defmethod walker:eval-order ((orderer walker:orderer) (ast multiple-value-bind-form))
-  `(,#'walker:form-values ,#'form-body ast))
+  `(,#'walker:form-values ,#'walker:form-body))
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast values-form) path)
   (list* 'values
 	 (walker:deparse-path-list deparser (walker:form-values ast) path)))
 (defmethod walker:eval-order ((orderer walker:orderer) (ast values-form))
-  `(,#'form-values))
+  `(,#'walker:form-values))
 
 (defmethod walker:deparse ((deparser walker:deparser) (ast nth-value-form) path)
   (list* 'nth-value
