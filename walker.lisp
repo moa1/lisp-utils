@@ -651,6 +651,7 @@ Note that this function does not do recursive parsing when an argument or return
 (defmethod parse-declspecs ((parser parser) declspecs parent)
   "Example: (PARSE-DECLSPECS PARSER '((TYPE FIXNUM A B C) (IGNORE A)) (MAKE-EMPTY-LEXICAL-NAMESPACE) (MAKE-EMPTY-FREE-NAMESPACE) NIL)"
   (assert (proper-list-p declspecs) () "Declaration specifications must be a proper list, but are ~S" declspecs)
+  ;; TODO: the CLHS for "Declaration TYPE" says that the syntax for type declarations can be both (TYPE TYPESPEC VAR*) and (TYPESPEC VAR*). Implement this in the fallback method of #'PARSE-DECLSPEC. And since I do not consider interpreting types in package WALKER, any TYPESPEC should be accepted.
   (loop for declspec in declspecs collect
        (parse-declspec-expr parser declspec parent)))
 
