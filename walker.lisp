@@ -92,6 +92,7 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; LAMBDA LISTS
    :argument :parent :argument-parent :source :argument-source :var :argument-var :user
    :form-parent :form-source
+   :argument-init-mixin
    :whole-argument
    :environment-argument
    :required-argument
@@ -811,15 +812,16 @@ Return the parsed abstract syntax tree (AST)."))
   (argument-source ast))
 (defmethod (setf form-source) (value (ast argument))
   (setf (argument-source ast) value))
+(defclass argument-init-mixin ()
+  ((init :initarg :init :accessor argument-init :type (or null form) :documentation "NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)")))
 (defclass whole-argument (argument)
   ())
 (defclass environment-argument (argument)
   ())
 (defclass required-argument (argument)
   ())
-(defclass optional-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null form) :documentation "NIL means it was not specified, and then the parser does not assign a default initial form. (e.g. DEFTYPE would have * by default instead of NIL, but it's not the parser's job to define semantics.)")
-   (suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var) :documentation "NIL means not present")))
+(defclass optional-argument (argument argument-init-mixin)
+  ((suppliedp :initarg :suppliedp :accessor argument-suppliedp :type (or null var) :documentation "NIL means not present")))
 (defclass rest-argument (argument)
   ())
 (defclass body-argument (argument)
@@ -827,8 +829,8 @@ Return the parsed abstract syntax tree (AST)."))
 (defclass key-argument (optional-argument)
   ((keywordp :initarg :keywordp :accessor argument-keywordp :type boolean :documentation "NIL means not present")
    (keyword :initarg :keyword :accessor argument-keyword :type symbol :documentation "has no meaning if KEYWORDP==NIL")))
-(defclass aux-argument (argument)
-  ((init :initarg :init :accessor argument-init :type (or null form))))
+(defclass aux-argument (argument argument-init-mixin)
+  ())
 (defclass llist ()
   ((parent :initarg :parent :accessor llist-parent
 	   :documentation "The FUNCTIONDEF this LLIST is defined in.")
