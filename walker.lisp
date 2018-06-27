@@ -61,6 +61,8 @@ Type declarations are parsed, but the contained types are neither parsed nor int
    ;; PARSERS
    :parser :lexical-namespace :parser-lexical-namespace :free-namespace :parser-free-namespace
    :copy-parser
+   :parser-boundp
+   :parser-lookup
    ;; NAMESPACES again
    :augment-lexical-namespace
    :augment-free-namespace
@@ -360,6 +362,24 @@ Note that CLHS Glossary on \"function name\" defines it as \"A symbol or a list 
   (make-instance (type-of parser)
 		 :lexical-namespace (parser-lexical-namespace parser)
 		 :free-namespace (parser-free-namespace parser)))
+
+(defmethod parser-boundp-or-lookup ((parser parser) symbol-type symbol &key error-if-unbound)
+  (flet ((try (namespace)
+	   (and (namespace-boundp symbol-type symbol namespace)
+		(namespace-lookup symbol-type symbol namespace))))
+    (or (try (parser-lexical-namespace parser))
+	(try (parser-free-namespace parser))
+	(if error-if-unbound
+	    (error "SYMBOL ~A with NSO-type ~S not bound in ~S" symbol symbol-type parser)
+	    nil))))
+
+(defmethod parser-boundp ((parser parser) symbol-type symbol)
+  "Return the content bound to symbol SYMBOL, which is of type SYMBOL-TYPE, in the lexical or free namespace in PARSER, or NIL if it is not present."
+  (parser-boundp-or-lookup parser symbol-type symbol))
+
+(defmethod parser-lookup ((parser parser) symbol-type symbol)
+  "Look up symbol SYMBOL, which is of type SYMBOL-TYPE, in the lexical or free namespace of PARSER, or raise an error otherwise."
+  (parser-boundp-or-lookup parser symbol-type symbol :error-if-unbound t))
 
 (defgeneric make-ast (parser type &rest arguments)
   (:documentation "This method is called to create an instance or part of an AST. Override to set e.g. a custom USER slot."))
