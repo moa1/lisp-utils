@@ -220,9 +220,9 @@ Type declarations are parsed, but the contained types are neither parsed nor int
 For example, in (LET ((X 1)) (DECLARE (SPECIAL X)) (LET ((X 2)) (LET ((OLD-X X) (X 3)) (DECLARE (SPECIAL X)) (LIST OLD-X X)))), there are two VAR-instances with name 'X and :FREEP==T.")
    (definition :initarg :definition :accessor nso-definition :type (or binding llist)
 	       :documentation "The parsed object it is defined in, NIL if not known.
-For VARs and FUNs it is of type (OR BINDING LLIST)),
-for BLOs it is an instance of a subclass of BLOCK-NAMING-MIXIN),
-for TAGs it is an instance of class TAGBODY-FORM (or a subclass of that).")
+For VARs it is of type (OR VAR-BINDING LLIST), for FUNs it is of type FUN-BINDING,
+for BLOs it is an instance of a subclass of BLOCK-NAMING-MIXIN,
+for TAGs it is an instance of class TAGBODY-FORM.")
    (sites :initform nil :initarg :sites :accessor nso-sites :type list
 	  :documentation "List of forms where this NSO is used, excluding the definition. For example, for FUN-nsos it is the list of APPLICATION-FORMs and FUNCTION-forms. For TAG-nsos, it is the list of GO-FORMs.")
    (source :initarg :source :accessor nso-source :type list :documentation "The source of the NSO.")
