@@ -215,7 +215,8 @@
 
 (defmethod arguments-assign-to-lambda-list ((parser walker:parser) (llist walker:ordinary-llist) arguments)
   "LLIST is a parsed ordinary (TODO: or macro) lambda list. ARGUMENTS is the parsed list of arguments, i.e. (FORM-ARGUMENTS APPLICATION-FORM). PARSER is needed to allow subclassing multiple PARSERs and #'ARGUMENTS-ASSIGN-TO-LAMBDA-LIST for different purposes.
-Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMENTS) as values."
+Returns an alist, with VARs (from the LLIST) as keys and FORMs (from ARGUMENTS) as values."
+  ;; TODO: FIXME: currently, #'ARGUMENTS-ASSIGN-TO-LAMBDA-LIST needs ARGUMENTS whose values are parsed by #'WALKER:PARSE. This means that if keyword name arguments (for example :TEST in '(FIND 1 '(2 1 3) :TEST #'EQ)) are in package KEYWORD, they should be passed as WALKER:OBJECT-FORMs, not as WALKER:VAR-READINGs. Currently, #'ARGUMENTS-ASSIGN-TO-LAMBDA-LIST assumes that keyword name arguments are WALKER:VAR-READINGs.
   ;; take the LLIST as scaffold and assign ARGUMENTS to it.
   (let ((result nil)
 	(original-arguments arguments))
@@ -242,15 +243,20 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 	      (set-result! (walker:argument-var arg) (pop arguments))
 	      (when (walker:argument-suppliedp arg)
 		(set-result! (walker:argument-suppliedp arg) (walker:make-object t arg))))))
+      (unless (or (walker:llist-rest llist) (walker:llist-key llist))
+	(assert (null arguments) () "Superfluous arguments: ~W" arguments))
       (when (walker:llist-rest llist)
 	(set-result! (walker:argument-var (walker:llist-rest llist)) arguments))
-      (assert (evenp (length arguments)) () "Odd number of arguments to &KEY: ~W" arguments)
+      (when (walker:llist-key llist)
+	(assert (evenp (length arguments)) () "Odd number of arguments to &KEY: ~W" arguments))
       (labels ((find-name (name arguments)
 		 (if (null arguments)
 		     nil
-		     (if (eql (walker:nso-name (walker:form-var (car arguments))) name)
+		     (let ((arg (car arguments)))
+		       (if (and (typep arg 'walker:var-reading)
+				(eql (walker:nso-name (walker:form-var arg)) name))
 			 arguments
-			 (find-name name (cddr arguments))))))
+			 (find-name name (cddr arguments)))))))
 	(loop for arg in (walker:llist-key llist) do
 	     (let* ((name (keyword-name arg))
 		    (cdr (find-name name arguments)))
@@ -263,15 +269,17 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 		  (set-result! (walker:argument-var arg) (cadr cdr))
 		  (when (walker:argument-suppliedp arg)
 		    (set-result! (walker:argument-suppliedp arg) (walker:make-nil arg)))))))
-	;; keyword argument checking is suppressed if &ALLOW-OTHER-KEYS is present
+	;; keyword argument checking is suppressed if &ALLOW-OTHER-KEYS is present, see CLHS "3.4.1.4 Specifiers for keyword parameters"
 	(unless (or (walker:llist-allow-other-keys llist)
 		    (cadr (find-name :allow-other-keys arguments)))
 	  (labels ((check (rest)
 		     (if (null rest)
 			 t
-			 (and (or (position (walker:nso-name (walker:form-var (car rest))) (walker:llist-key llist) :key #'keyword-name :test #'eql)
-				  (error "Unknown keyword argument name ~S~%in keyword list ~S" (walker:nso-name (car rest)) (mapcar #'keyword-name (walker:llist-key llist))))
-			      (check (cddr rest))))))
+			 (let ((arg (car rest)))
+			   (and (walker:llist-key llist)
+				(or (position (walker:nso-name (walker:form-var arg)) (walker:llist-key llist) :key #'keyword-name :test #'eql)
+				    (error "Unknown keyword argument name ~S~%in keyword list ~S" (walker:nso-name arg) (mapcar #'keyword-name (walker:llist-key llist)))))
+			   (check (cddr rest))))))
 	    (check arguments))))
       (loop for arg in (walker:llist-aux llist) do
 	   (set-result! (walker:argument-var arg) (init-form arg)))
@@ -290,8 +298,8 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 		 t)
 	       (:no-error (x)
 		 (declare (ignore x))
-		 (error "~W should have given an error,~%but gave ~W"
-			(list 'arguments-assign-to-lambda-list parser llist-list) result)))))
+		 (error "(ARGUMENTS-ASSIGN-TO-LAMBDA-LIST ~S ~S)~%should have given an error,~%but gave ~W"
+			llist-list arguments result)))))
 	 (assert-result (llist-list argument-list desired-result-alist)
 	   (let* ((form `(labels ((f ,llist-list nil)) (f ,@argument-list)))
 		  (ast (walker:parse-with-namespace form))
@@ -311,7 +319,7 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
 			      (type-of (cdr cons))
 			      (value-of (cdr cons)))))
 	       (let ((obtained-result-alist (mapcar #'result-to-alist result)))
-		 (assert (equal desired-result-alist obtained-result-alist) () "~S~%on arguments ~S~%wanted ~S~%but gave ~S" (list 'arguments-assign-to-lambda-list llist-list) argument-list desired-result-alist obtained-result-alist))))))
+		 (assert (equal desired-result-alist obtained-result-alist) () "(ARGUMENTS-ASSIGN-TO-LAMBDA-LIST ~S ~S)~%wanted ~S~%but gave ~S" llist-list argument-list desired-result-alist obtained-result-alist))))))
     (assert-result '(a b c) '(1 2 3) '((a walker:object-form 1) (b walker:object-form 2) (c walker:object-form 3)))
     (assert-error '(a) '(1 2))
     (assert-error '(a b) '(1))
@@ -321,6 +329,9 @@ Returns an alist, with VARs (from the ARGUMENTS) as keys and FORMs (from ARGUMEN
     (assert-result '(a &optional b (c t cp)) '(1 2) '((a walker:object-form 1) (b walker:object-form 2) (c walker:object-form t) (cp walker:object-form nil)))
     (assert-result '(a &optional b (c t cp)) '(1 2 3) '((a walker:object-form 1) (b walker:object-form 2) (c walker:object-form 3) (cp walker:object-form t)))
     ;;works correctly, but testing for (C (WALKER:VAR b)) is not implemented: (assert-result '(a &optional b (c b)) '(1 2) '((a walker:object-form 1) (b walker:object-form 2) (c walker:var b)))
+    (assert-error '(a &optional b) '(1 2 3))
+    (assert-result '(&rest r) '(1 2) '((r cons (1 2))))
+    (assert-result '(a &optional b &rest r) '(1 2 3) '((a walker:object-form 1) (b walker:object-form 2) (r cons (3))))
     (assert-error '(a &rest r &key b (c t)) '())
     (assert-result '(a &rest r &key b (c t)) '(1) '((a walker:object-form 1) (r null nil) (b walker:object-form nil) (c walker:object-form t)))
     (assert-error '(a &rest r &key b (c t)) '(1 2))
