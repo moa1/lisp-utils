@@ -1487,10 +1487,10 @@ CLHS Figure 3-18. Lambda List Keywords used by Macro Lambda Lists: A macro lambd
 (defmethod (setf form-fun) (value (ast fun-binding))
   (setf (form-sym ast) value))
 
-(defun make-nil (parent &key (user nil))
-  (make-instance 'walker:object-form :parent parent :object nil :user user :source nil))
-(defun make-object (object parent &key (user nil))
-  (make-instance 'walker:object-form :parent parent :object object :user user :source object))
+(defmethod make-nil ((parser parser) parent &key (user nil))
+  (make-ast parser 'walker:object-form  :parent parent :object nil :user user :source nil))
+(defmethod make-object ((parser parser) object parent &key (user nil))
+  (make-ast parser 'walker:object-form :parent parent :object object :user user :source object))
 
 ;;;; END OF FORMs and Utility Functions
 
