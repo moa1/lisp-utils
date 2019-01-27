@@ -1410,6 +1410,32 @@ COMPILE-BATCH is the number of compiled calls to FUNCTION which are made not by 
       t
       (and (listp object) (null (cdr (last object))))))
 
+(defun any-hash-table-entry (ht &optional default-key default-value)
+  "Return any key and value stored in hash-table HT, or the values DEFAULT-KEY and DEFAULT-VALUE."
+  (with-hash-table-iterator (next ht)
+    (multiple-value-bind (present-p key value) (next)
+    (if present-p
+	(values key value)
+	(values default-key default-value)))))
+
+(defun any-hash-table-key (ht &optional default-key)
+  "Return any key stored in hash-table HT, or DEFAULT-KEY."
+  (with-hash-table-iterator (next ht)
+    (multiple-value-bind (present-p key value) (next)
+      (declare (ignore value))
+      (if present-p
+	  key
+	  default-key))))
+
+(defun any-hash-table-value (ht &optional default-value)
+  "Return any value stored in hash-table HT, or DEFAULT-VALUE."
+  (with-hash-table-iterator (next ht)
+    (multiple-value-bind (present-p key value) (next)
+      (declare (ignore key))
+      (if present-p
+	  value
+	  default-value))))
+
 ;;(defun sequence-assemble (sequences starts ends)
 ;;  "creates a sequence of type "
 
